@@ -19,11 +19,7 @@
     const shell = document.getElementById('portal-content');
     const clients = data.getClients();
     document.body.classList.add('has-local-access');
-    const formStyles = document.createElement('link');
-    formStyles.rel = 'stylesheet';
-    formStyles.href = new URL('form-pilot.css', financeStyles.href).href;
-    document.head.appendChild(formStyles);
-    shell.innerHTML = `<section class="local-access"><div class="access-brand-panel"><span class="access-brand">luxury finds</span><p>Tu selección, tus pedidos y tus entregas en un solo lugar.</p></div><div class="access-form-panel"><div class="form-heading"><span class="form-step">Paso 01 · Acceso local</span><h1>Elige tu perfil.</h1><p>Selecciona una clienta para previsualizar su portal. Este acceso es únicamente para desarrollo y no sustituye autenticación real.</p></div><div class="form-group"><label for="client-preview-search">Buscar clienta</label><div class="input-with-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg><input id="client-preview-search" type="search" placeholder="Nombre, teléfono o Instagram" autocomplete="off"></div></div><div class="form-group"><span class="field-label">Perfiles disponibles</span><div class="client-preview-list" id="client-preview-list">${clientPreviewButtons(clients)}</div><p class="client-preview-empty" id="client-preview-empty" hidden>No encontramos una clienta con esa búsqueda.</p></div></div></section>`;
+    shell.innerHTML = `<section class="split-form"><div class="split-form-brand"><span class="split-form-brand-mark">luxury finds</span><p>Tu selección, tus pedidos y tus entregas en un solo lugar.</p></div><div class="split-form-panel"><div class="form-heading"><span class="form-step">Paso 01 · Acceso local</span><h1>Elige tu perfil.</h1><p>Selecciona una clienta para previsualizar su portal. Este acceso es únicamente para desarrollo y no sustituye autenticación real.</p></div><div class="form-group"><label for="client-preview-search">Buscar clienta</label><div class="input-with-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg><input id="client-preview-search" type="search" placeholder="Nombre, teléfono o Instagram" autocomplete="off"></div></div><div class="form-group"><span class="field-label">Perfiles disponibles</span><div class="client-preview-list" id="client-preview-list">${clientPreviewButtons(clients)}</div><p class="client-preview-empty" id="client-preview-empty" hidden>No encontramos una clienta con esa búsqueda.</p></div></div></section>`;
     document.getElementById('client-preview-search').addEventListener('input', event => filterClientPreview(event.target.value));
   }
 
@@ -86,7 +82,55 @@
 
   function renderDeliveries(client, orders) {
     const deliveries = orders.filter(order => order.entrega);
-    return `<div class="portal-heading"><h1>Mis entregas</h1><p>Fechas y lugares programados</p></div>${deliveries.map(order => `<section class="portal-card delivery-card"><span class="eyebrow">Pedido #${order.id}</span><h2>${new Date(order.entrega.fecha + 'T00:00:00').toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</h2><p>${order.entrega.hora}</p><p>${order.entrega.location === 'indeco' ? 'Indeco de 8' : 'Villas del Encanto'}</p><ul>${order.products.filter(item => item.status !== 'cancelled').map(item => `<li>${item.name}</li>`).join('')}</ul></section>`).join('') || '<div class="empty-portal">No tienes entregas programadas.</div>'}`;
+    return `<div class="portal-heading"><h1>Mis entregas</h1><p>Fechas y lugares programados</p></div><a class="btn-secondary" href="preferencias.html">Editar mis preferencias de entrega →</a>${deliveries.map(order => `<section class="portal-card delivery-card"><span class="eyebrow">Pedido #${order.id}</span><h2>${new Date(order.entrega.fecha + 'T00:00:00').toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</h2><p class="num">${order.entrega.hora}</p><p>${order.entrega.location === 'indeco' ? 'Indeco de 8' : 'Villas del Encanto'}</p><ul>${order.products.filter(item => item.status !== 'cancelled').map(item => `<li>${item.name}</li>`).join('')}</ul></section>`).join('') || '<div class="empty-portal">No tienes entregas programadas.</div>'}`;
+  }
+
+  function renderPreferences(client) {
+    const prefs = client.deliveryPreferences || {};
+    const days = prefs.days || [];
+    const dayOptions = [['lun','Lun'],['mar','Mar'],['mie','Mié'],['jue','Jue'],['vie','Vie'],['sab','Sáb']];
+    const locationOptions = [['indeco','Indeco de 8'],['villas','Villas del Encanto']];
+    const windowOptions = [['manana','9:00 – 13:00'],['tarde','16:00 – 19:00']];
+    return `<div class="form-heading"><span class="form-step">Mis entregas · Preferencias</span><h1>¿Cómo prefieres recibir tus pedidos?</h1><p>Lo usamos como referencia para proponerte fecha y hora. No agenda una entrega por sí sola.</p></div>
+      <form id="preferences-form">
+        <div class="form-group"><span class="field-label">¿Qué días te acomoda recibir pedidos?</span><div class="chip-group" data-field="days" data-multi="true">${dayOptions.map(([v,l]) => `<button type="button" class="chip${days.includes(v) ? ' is-selected' : ''}" data-value="${v}">${l}</button>`).join('')}</div></div>
+        <div class="form-group"><span class="field-label">Punto de entrega</span><div class="chip-group" data-field="location">${locationOptions.map(([v,l]) => `<button type="button" class="chip${prefs.location === v ? ' is-selected' : ''}" data-value="${v}">${l}</button>`).join('')}</div></div>
+        <div class="form-group"><span class="field-label">Horario</span><div class="chip-group" data-field="window">${windowOptions.map(([v,l]) => `<button type="button" class="chip${prefs.window === v ? ' is-selected' : ''}" data-value="${v}"><span class="num">${l}</span></button>`).join('')}</div></div>
+        <div class="form-group"><label for="pref-notes">Notas para tu shopper (opcional)</label><div class="input-with-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg><textarea id="pref-notes" placeholder="Ej. tocar el timbre, dejar con el guardia...">${prefs.notes || ''}</textarea></div></div>
+        <div class="form-group" style="display:flex;gap:12px;flex-wrap:wrap"><button type="submit" class="btn-primary" id="pref-save">Guardar preferencias</button><a href="entregas.html" class="btn-secondary">Cancelar</a></div>
+      </form>`;
+  }
+
+  function wirePreferencesForm(client) {
+    const form = document.getElementById('preferences-form');
+    if (!form) return;
+    form.querySelectorAll('.chip-group').forEach(group => {
+      const multi = group.dataset.multi === 'true';
+      group.addEventListener('click', event => {
+        const chip = event.target.closest('.chip');
+        if (!chip) return;
+        if (multi) {
+          chip.classList.toggle('is-selected');
+        } else {
+          [...group.children].forEach(c => c.classList.remove('is-selected'));
+          chip.classList.add('is-selected');
+        }
+      });
+    });
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      const selectedDays = [...form.querySelector('[data-field="days"]').querySelectorAll('.chip.is-selected')].map(c => c.dataset.value);
+      const location = form.querySelector('[data-field="location"] .chip.is-selected')?.dataset.value || '';
+      const timeWindow = form.querySelector('[data-field="window"] .chip.is-selected')?.dataset.value || '';
+      const notes = document.getElementById('pref-notes').value.trim();
+      const clients = data.getClients();
+      const target = clients.find(c => String(c.id) === String(client.id));
+      if (target) target.deliveryPreferences = {days: selectedDays, location, window: timeWindow, notes};
+      data.saveClients(clients);
+      const btn = document.getElementById('pref-save');
+      btn.textContent = 'Guardado ✓';
+      setTimeout(() => { btn.textContent = 'Guardar preferencias'; }, 1600);
+    });
   }
 
   function renderPayments(client) {
@@ -96,7 +140,7 @@
   }
 
   function renderProfile(client) {
-    return `<div class="portal-heading"><h1>Mi perfil</h1><p>Información registrada en GlamStudio</p></div><section class="portal-card profile-card"><div><span>Nombre</span><strong>${client.name}</strong></div><div><span>Celular</span><strong>${client.phone || 'No registrado'}</strong></div><div><span>WhatsApp</span><strong>${client.whatsapp || 'No registrado'}</strong></div><div><span>Instagram</span><strong>${client.instagram ? '@' + client.instagram : 'No registrado'}</strong></div><div><span>Email</span><strong>${client.email || 'No registrado'}</strong></div><p>Para solicitar un cambio en tus datos, contacta a GlamStudio.</p></section>`;
+    return `<div class="portal-heading"><h1>Mi perfil</h1><p>Información registrada en Luxury Finds</p></div><section class="portal-card profile-card"><div><span>Nombre</span><strong>${client.name}</strong></div><div><span>Celular</span><strong>${client.phone || 'No registrado'}</strong></div><div><span>WhatsApp</span><strong>${client.whatsapp || 'No registrado'}</strong></div><div><span>Instagram</span><strong>${client.instagram ? '@' + client.instagram : 'No registrado'}</strong></div><div><span>Email</span><strong>${client.email || 'No registrado'}</strong></div><p>Para solicitar un cambio en tus datos, contacta a GlamStudio.</p></section>`;
   }
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -106,7 +150,8 @@
     document.getElementById('portal-client-name').textContent = client.name;
     document.getElementById('preview-warning').hidden = false;
     const page = document.body.dataset.clientPage;
-    const renderers = {home: renderHome, purchases: renderPurchases, payments: renderPayments, catalog: renderCatalog, deliveries: renderDeliveries, profile: renderProfile};
+    const renderers = {home: renderHome, purchases: renderPurchases, payments: renderPayments, catalog: renderCatalog, deliveries: renderDeliveries, profile: renderProfile, preferences: renderPreferences};
     document.getElementById('portal-content').innerHTML = renderers[page](client, orders);
+    if (page === 'preferences') wirePreferencesForm(client);
   });
 })();

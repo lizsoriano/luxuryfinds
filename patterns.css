@@ -1,0 +1,52 @@
+/* Sistema de componentes compartido — inputs, chips, botones, jerarquía de formulario.
+   Se carga después de design-tokens.css en toda página. Un solo set en toda la app. */
+
+/* ---------- Inputs ---------- */
+.input-with-icon{position:relative}
+.input-with-icon svg,.chip svg{fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round;stroke-width:1.5}
+.input-with-icon svg{color:var(--color-text-secondary);height:1.125rem;left:1.25rem;pointer-events:none;position:absolute;top:50%;transform:translateY(-50%);width:1.125rem}
+.input-with-icon input,.input-with-icon select,.input-with-icon textarea{background:var(--color-surface);border:0;border-radius:var(--radius-field);box-shadow:var(--shadow-card);color:var(--color-ink);height:var(--input-height);outline:0;padding:0 1.25rem 0 3.25rem;transition:box-shadow var(--duration-fast) var(--ease-standard);width:100%}
+.input-with-icon textarea{height:auto;min-height:7rem;padding:1rem 1.25rem 1rem 3.25rem;resize:vertical}
+.field input,.field select,.field textarea{background:var(--color-surface);border:0;border-radius:var(--radius-field);box-shadow:var(--shadow-card);color:var(--color-ink);height:var(--input-height);outline:0;padding:0 1.25rem;transition:box-shadow var(--duration-fast) var(--ease-standard);width:100%}
+.input-with-icon input::placeholder,.field input::placeholder,.input-with-icon textarea::placeholder{color:var(--color-text-secondary)}
+.input-with-icon input:focus,.field input:focus,.input-with-icon textarea:focus,.field textarea:focus,.input-with-icon select:focus,.field select:focus{box-shadow:var(--shadow-card-hover),0 0 0 2px var(--color-brand)}
+
+/* ---------- Chips: selección única o múltiple (días, categorías, filtros) ---------- */
+.chip-group{display:flex;flex-wrap:wrap;gap:var(--space-1)}
+.chip{align-items:center;background:var(--color-surface);border:0;border-radius:var(--radius-pill);box-shadow:var(--shadow-card);color:var(--color-ink);cursor:pointer;display:inline-flex;font-weight:500;gap:.5rem;height:2.75rem;padding:0 1.5rem;transition:background var(--duration-fast) var(--ease-standard),color var(--duration-fast) var(--ease-standard),box-shadow var(--duration-fast) var(--ease-standard)}
+.chip:hover{box-shadow:var(--shadow-card-hover)}
+.chip.is-selected{background:var(--color-brand);color:var(--color-surface);box-shadow:none}
+.chip:focus-visible{outline:0;box-shadow:0 0 0 2px var(--color-brand)}
+
+/* ---------- Botones ---------- */
+.btn-primary{align-items:center;background:var(--color-brand);border:0;border-radius:var(--radius-pill);color:var(--color-surface);cursor:pointer;display:inline-flex;font-weight:600;gap:.5rem;height:var(--button-height);justify-content:center;padding:0 2rem;transition:box-shadow var(--duration-fast) var(--ease-standard),transform var(--duration-fast) var(--ease-standard)}
+.btn-primary:hover{box-shadow:var(--shadow-card-hover);transform:translateY(-1px)}
+.btn-primary:active{transform:translateY(0)}
+.btn-secondary{align-items:center;background:var(--color-surface);border:0;border-radius:var(--radius-pill);box-shadow:var(--shadow-card);color:var(--color-ink);cursor:pointer;display:inline-flex;font-weight:600;gap:.5rem;height:var(--button-height);justify-content:center;padding:0 2rem;transition:box-shadow var(--duration-fast) var(--ease-standard),transform var(--duration-fast) var(--ease-standard)}
+.btn-secondary:hover{box-shadow:var(--shadow-card-hover);transform:translateY(-1px)}
+.btn-primary.full,.btn-secondary.full{width:100%}
+
+/* ---------- Jerarquía de formulario ---------- */
+.form-step{color:var(--color-brand);font-family:var(--font-mono);font-size:var(--font-size-caption);font-weight:600;letter-spacing:.16em;text-transform:uppercase}
+.form-heading{margin-bottom:var(--form-group-gap)}
+.form-heading h1{font-size:var(--font-size-heading-medium);font-weight:800;letter-spacing:-.02em;line-height:var(--line-height-heading);margin:var(--space-1) 0}
+.form-heading p{color:var(--color-text-secondary);font-weight:400;line-height:var(--line-height-body);margin:0;max-width:38rem}
+.form-group{margin-bottom:var(--form-field-gap)}
+.form-group>label,.field-label{color:var(--color-text-secondary);display:block;font-size:.875rem;font-weight:400;margin-bottom:var(--space-1)}
+.form-group>legend{color:var(--color-text-secondary);display:block;font-size:.875rem;font-weight:400;margin-bottom:var(--space-2);padding:0}
+
+/* ---------- Layout split-screen para formularios largos ---------- */
+.split-form{display:grid;grid-template-columns:2fr 3fr;min-height:100vh}
+.split-form-brand{background:var(--color-brand);color:var(--color-surface);display:flex;flex-direction:column;justify-content:space-between;padding:var(--space-6)}
+.split-form-brand-mark{font-size:var(--font-size-heading-small);font-weight:800;letter-spacing:-.02em}
+.split-form-brand p{font-size:var(--font-size-heading-medium);font-weight:800;line-height:var(--line-height-heading);margin:0;max-width:28rem}
+.split-form-panel{align-self:center;margin-inline:auto;max-width:46rem;padding:var(--space-8) var(--space-6);width:100%}
+@media(max-width:56.24rem){
+  .split-form{grid-template-columns:1fr;grid-template-rows:7.5rem auto}
+  .split-form-brand{justify-content:center;padding:var(--space-3)}
+  .split-form-brand p{font-size:var(--font-size-body-large);margin-top:var(--space-1)}
+  .split-form-panel{padding:var(--space-5) var(--space-3)}
+}
+
+/* ---------- Números: horas, precios, cantidades, códigos ---------- */
+.num{font-family:var(--font-mono)}

@@ -235,18 +235,21 @@ const slots = selectedLocation === 'indeco'
 
 ### Colores
 
-Edita variables CSS en `styles.css`:
+Fuente única de verdad: `design-tokens.css` (se importa primero en toda página). Paleta de marca: `--color-brand`, `--color-brand-hover`, `--color-brand-soft`, `--color-page`, `--color-surface`, `--color-ink`, `--color-accent`.
+
+Excepción admitida — semáforo de estados de pedido/cobranza, también en `design-tokens.css`:
 
 ```css
 :root {
-  --pk: #D4537E;  /* Color principal (rosa) */
-  --tl: #1D9E75;  /* Teal (confirmado) */
-  --am: #BA7517;  /* Ámbar (ordenado) */
-  --pu: #7F77DD;  /* Púrpura (entrega) */
-  --gr: #639922;  /* Verde (entregado) */
-  --co: #D85A30;  /* Coral (cancelado) */
+  --tl: #1d9e75;  /* confirmado */
+  --am: #ba7517;  /* ordenado / pendiente / parcial */
+  --pu: #7f77dd;  /* en camino */
+  --gr: #639922;  /* entregado */
+  --co: #d85a30;  /* cancelado / vencido */
 }
 ```
+
+`styles.css` y `client/portal.css` ya no declaran hex propios: sus variables (`--pk`, `--ink`, `--card`, etc.) son alias `var(...)` hacia estos tokens.
 
 ## Solución de Problemas
 

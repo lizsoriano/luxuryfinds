@@ -43,6 +43,21 @@
   --shadow-card-hover: 0 8px 32px rgb(143 74 92 / 10%);
   --shadow-float: 0 12px 40px rgb(143 74 92 / 12%);
 
+  /* Semáforo operativo: única excepción admitida a la paleta rosa/beige/blanco.
+     Usar solo para estados de pedido/cobranza (badges, bordes de lista), nunca para UI general. */
+  --tl: #1d9e75;   /* confirmado */
+  --tl-l: #e1f5ee;
+  --am: #ba7517;   /* ordenado / pendiente / parcial */
+  --am-l: #faeeda;
+  --pu: #7f77dd;   /* en camino */
+  --pu-l: #eeedfe;
+  --pu-d: #534ab7;
+  --gr: #639922;   /* entregado */
+  --gr-l: #eaf3de;
+  --co: #d85a30;   /* cancelado / vencido */
+  --co-l: #faece7;
+  --co-d: #993c1d;
+
   /* Typography */
   --font-display: "Playfair Display", Georgia, serif;
   --font-ui: "Jost", Arial, sans-serif;
