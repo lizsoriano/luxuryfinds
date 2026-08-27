@@ -1,0 +1,41 @@
+<script>location.replace('admin/agenda.html')</script><link rel="stylesheet" href="styles.css">
+
+<div class="app">
+  <div class="topbar">
+    <div class="logo">glam<span>studio</span></div>
+
+    <div class="nav">
+      <a href="pedidos.html">Pedidos</a>
+      <a href="catalogo.html">Catálogo</a>
+      <a href="por-ordenar.html">Por ordenar</a>
+      <a href="en-camino.html">En camino</a>
+      <a href="disponibles.html">Disponibles</a>
+      <a href="clientes.html">Clientes</a>
+      <a href="agenda.html" class="active">Mi agenda</a>
+    </div>
+  </div>
+
+  <div class="page active">
+    <h2 style="padding:20px">Mi Agenda</h2>
+    <div id="agenda" style="padding:20px"></div>
+  </div>
+</div>
+
+<div class="overlay" id="sched-modal" style="display:none" onclick="closeModal('sched-modal',event)"><div class="modal" onclick="event.stopPropagation()">
+  <div class="modal-title" id="sched-modal-title">Reagendar entrega</div><div class="aviso-box" id="sched-aviso" style="display:none"></div>
+  <div class="field"><label>Punto de entrega</label><div class="loc-cards">
+    <div class="loc-card" id="loc-indeco" onclick="selectLoc('indeco')"><div class="loc-name">Indeco de 8</div><div class="loc-hours">8:30 am – 12:30 pm</div></div>
+    <div class="loc-card" id="loc-villas" onclick="selectLoc('villas')"><div class="loc-name">Villas del Encanto</div><div class="loc-hours">4:00 pm – 8:00 pm</div></div>
+  </div></div>
+  <div class="field"><label>Fecha</label><input type="date" id="sched-date" onchange="updateSlots()"></div>
+  <div class="field" id="slots-wrap" style="display:none"><label>Horario</label><div class="slots" id="time-slots"></div></div>
+  <div class="field"><label>Notas</label><textarea id="sched-notes"></textarea></div>
+  <div class="modal-actions"><button class="btn-cancel-m" onclick="closeModal('sched-modal')">Cancelar</button><button class="btn-primary" onclick="saveSchedule()">Confirmar</button></div>
+</div></div>
+<div class="overlay" id="cancel-entrega-modal" style="display:none" onclick="closeModal('cancel-entrega-modal',event)"><div class="modal" onclick="event.stopPropagation()">
+  <div class="modal-title">Cancelar entrega</div><div class="field"><label>Motivo</label><textarea id="cancel-reason"></textarea></div>
+  <div class="modal-actions"><button class="btn-cancel-m" onclick="closeModal('cancel-entrega-modal')">Cerrar</button><button class="btn-primary" onclick="confirmCancelEntrega()">Cancelar entrega y avisar</button></div>
+</div></div>
+<div class="toast" id="toast"></div>
+
+<script src="js/shared/data.js"></script><script src="app.js"></script>

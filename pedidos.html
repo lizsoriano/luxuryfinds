@@ -1,0 +1,198 @@
+
+<script>location.replace('admin/pedidos.html')</script><link rel="stylesheet" href="styles.css">
+
+<div class="app">
+  <div class="topbar">
+    <div class="logo">glam<span>studio</span></div>
+    <div class="nav">
+  <a href="pedidos.html" class="active">Pedidos</a>
+  <a href="catalogo.html">Catálogo</a>
+  <a href="por-ordenar.html">Por ordenar</a>
+  <a href="en-camino.html">En camino</a>
+  <a href="disponibles.html">Disponibles</a>
+  <a href="clientes.html">Clientes</a>
+  <a href="agenda.html">Mi agenda</a>
+</div>
+  </div>
+
+  <!-- PEDIDOS (CORREGIDO) -->
+<div class="page active" id="page-pedidos">
+    <div class="stats">
+      <div class="sc"><div class="sc-l">Por ordenar · productos</div><div class="sc-n" id="s0" style="color:var(--co)">0</div></div>
+      <div class="sc"><div class="sc-l">En camino · productos</div><div class="sc-n" id="s1" style="color:var(--am)">0</div></div>
+      <div class="sc"><div class="sc-l">Disponibles · productos</div><div class="sc-n" id="s2" style="color:var(--pu)">0</div></div>
+      <div class="sc"><div class="sc-l">Entregados · productos</div><div class="sc-n" id="s3" style="color:var(--gr)">0</div></div>
+    </div>
+    <div style="margin-bottom:.875rem"><button class="btn-primary" onclick="openNewOrder()">+ Nuevo pedido</button></div>
+    <div class="orders-layout"><main><div class="columns" id="kanban"></div></main><aside class="pending-panel"><h2>Pendientes por ordenar</h2><div id="pending-products"></div></aside></div>
+  </div>
+
+  <!-- CATALOGO -->
+  <div class="page" id="page-catalogo">
+    <div class="hint-box">Exporta tu catálogo desde Tienda Nube: <strong>Productos → Exportar → CSV</strong> y súbelo aquí, o agrega productos manualmente.</div>
+    <div class="cat-toolbar">
+      <input class="search-box" type="text" placeholder="Buscar producto..." oninput="filterCatalog(this.value)" id="cat-search"/>
+      <label class="btn-secondary" style="cursor:pointer">Subir CSV <input type="file" accept=".csv" style="display:none" onchange="loadCSV(this)"/></label>
+      <button class="btn-primary" onclick="openAddProduct()">+ Agregar</button>
+    </div>
+    <div class="cat-grid" id="cat-grid"></div>
+  </div>
+
+  <!-- CLIENTE -->
+  <div class="page" id="page-cliente">
+    <div class="client-wrap">
+      <div style="text-align:center;padding:1.25rem 1rem .875rem;border-bottom:.5px solid var(--color-border-tertiary);margin-bottom:1.125rem">
+        <div style="font-size:19px;font-weight:500;color:var(--color-text-primary);margin-bottom:4px">Rastrear mi pedido</div>
+        <div style="font-size:12px;color:var(--color-text-secondary)">Agenda tu recolección con un día de anticipación</div>
+      </div>
+      <div style="background:var(--color-background-primary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:1.125rem;margin-bottom:1rem">
+        <div style="font-size:13px;font-weight:500;margin-bottom:.75rem;color:var(--color-text-primary)">Estado de tu pedido</div>
+        <div class="tracker-bar">
+          <div class="t-step"><div class="t-dot done">1</div><div class="t-label">Recibido</div></div>
+          <div class="t-line done"></div>
+          <div class="t-step"><div class="t-dot done">2</div><div class="t-label">Ordenado</div></div>
+          <div class="t-line"></div>
+          <div class="t-step"><div class="t-dot active">3</div><div class="t-label">En camino</div></div>
+          <div class="t-line"></div>
+          <div class="t-step"><div class="t-dot">4</div><div class="t-label">Entregado</div></div>
+        </div>
+        <div style="background:var(--am-l);border-radius:var(--border-radius-md);padding:8px 10px;font-size:11px;color:var(--am)">Tu pedido está listo — agenda tu recolección abajo con un día de anticipación</div>
+      </div>
+      <div style="background:var(--color-background-primary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:1.125rem">
+        <div style="font-size:13px;font-weight:500;margin-bottom:.875rem;color:var(--color-text-primary)">Elige punto de entrega</div>
+        <div class="loc-cards" id="cl-loc-cards">
+          <div class="loc-card" id="cl-loc-indeco" onclick="selectClientLoc('indeco')">
+            <div class="loc-icon">📍</div>
+            <div class="loc-name">Indeco de 8</div>
+            <div class="loc-hours">8:30 am – 12:30 pm</div>
+            <div class="loc-days">Lun – Sáb</div>
+          </div>
+          <div class="loc-card" id="cl-loc-villas" onclick="selectClientLoc('villas')">
+            <div class="loc-icon">📍</div>
+            <div class="loc-name">Villas del Encanto</div>
+            <div class="loc-hours">4:00 pm – 8:00 pm</div>
+            <div class="loc-days">Lun – Sáb</div>
+          </div>
+        </div>
+        <div class="field"><label>Fecha (mínimo mañana, lunes a sábado)</label><input type="date" id="cl-date" onchange="updateClientSlots()"/></div>
+        <div class="field" id="cl-slots-wrap" style="display:none">
+          <label>Horario disponible</label>
+          <div class="slots" id="cl-slots"></div>
+        </div>
+        <div class="field"><label>Tu nombre</label><input type="text" id="cl-name" placeholder="Nombre"/></div>
+        <div id="cl-date-warn" class="aviso-box" style="display:none"></div>
+        <button class="btn-primary" style="width:100%;margin-top:.5rem" onclick="clientSchedule()">Agendar recolección</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL NUEVO/EDITAR PEDIDO -->
+<div class="overlay" id="order-modal" style="display:none" onclick="closeModal('order-modal',event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-title" id="order-modal-title">Nuevo pedido</div>
+    <div class="field"><label>Clienta</label><input type="text" id="f-name" placeholder="Karen López"/></div>
+    <div class="field-row">
+      <div class="field"><label>WhatsApp</label><input type="text" id="f-phone" placeholder="52 81 xxxx xxxx"/></div>
+      <div class="field"><label>Canal</label><select id="f-source"><option>WhatsApp</option><option>Instagram</option></select></div>
+    </div>
+    <div class="field">
+      <label>Productos del pedido</label>
+      <input type="text" placeholder="Buscar..." oninput="filterProdOpts(this.value)" id="prod-search" style="margin-bottom:5px;width:100%;padding:7px 9px;border:.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);font-size:13px;background:var(--color-background-primary);color:var(--color-text-primary)"/>
+      <div class="prod-selector" id="prod-selector"></div>
+    </div>
+    <div class="field"><label>Notas</label><textarea id="f-notes" placeholder="Variante, tono, instrucciones..."></textarea></div>
+    <div class="modal-actions">
+      <button class="btn-cancel-m" onclick="closeModal('order-modal')">Cancelar</button>
+      <button class="btn-primary" onclick="saveOrder()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL AGENDAR / REAGENDAR ENTREGA -->
+<div class="overlay" id="sched-modal" style="display:none" onclick="closeModal('sched-modal',event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-title" id="sched-modal-title">Agendar entrega</div>
+    <div class="aviso-box" id="sched-aviso" style="display:none"></div>
+    <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:.875rem">Elige el punto de entrega para esta clienta:</div>
+
+    <div class="loc-cards">
+      <div class="loc-card" id="loc-indeco" onclick="selectLoc('indeco')">
+        <div class="loc-icon">📍</div>
+        <div class="loc-name">Indeco de 8</div>
+        <div class="loc-hours">8:30 – 12:30 am</div>
+        <div class="loc-days">Lun – Sáb</div>
+      </div>
+      <div class="loc-card" id="loc-villas" onclick="selectLoc('villas')">
+        <div class="loc-icon">📍</div>
+        <div class="loc-name">Villas del Encanto</div>
+        <div class="loc-hours">4:00 – 8:00 pm</div>
+        <div class="loc-days">Lun – Sáb</div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Fecha (mínimo mañana, lunes a sábado)</label>
+      <input type="date" id="sched-date" onchange="updateSlots()"/>
+    </div>
+    <div class="field" id="slots-wrap" style="display:none">
+      <label>Selecciona horario</label>
+      <div class="slots" id="time-slots"></div>
+    </div>
+    <div class="field"><label>Notas de entrega (opcional)</label><textarea id="sched-notes" placeholder="Instrucciones adicionales..."></textarea></div>
+    <div class="modal-actions">
+      <button class="btn-cancel-m" onclick="closeModal('sched-modal')">Cancelar</button>
+      <button class="btn-primary" onclick="saveSchedule()">Confirmar y agregar a Calendar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL CANCELAR ENTREGA -->
+<div class="overlay" id="cancel-entrega-modal" style="display:none" onclick="closeModal('cancel-entrega-modal',event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-title">Cancelar entrega</div>
+    <div class="aviso-box danger">Se enviará un WhatsApp automático a la clienta avisando de la cancelación y pidiéndole reagendar.</div>
+    <div class="field"><label>Motivo (aparecerá en el WhatsApp)</label><textarea id="cancel-reason" placeholder="Ej: Tuve un imprevisto, me avisas para reagendar..."></textarea></div>
+    <div class="modal-actions">
+      <button class="btn-cancel-m" onclick="closeModal('cancel-entrega-modal')">Cerrar</button>
+      <button class="btn-primary" style="background:var(--co);border-color:var(--co)" onclick="confirmCancelEntrega()">Cancelar entrega y avisar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL CANCELAR PRODUCTOS -->
+<div class="overlay" id="cancel-modal" style="display:none" onclick="closeModal('cancel-modal',event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-title">Cancelar productos</div>
+    <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:.75rem">Selecciona los que no se consiguieron. Se envía WhatsApp automático.</div>
+    <div class="cancel-prod-list" id="cancel-prod-list"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel-m" onclick="closeModal('cancel-modal')">Cerrar</button>
+      <button class="btn-primary" style="background:var(--co)" onclick="confirmCancelProds()">Notificar por WhatsApp</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL AGREGAR PRODUCTO -->
+<div class="overlay" id="prod-modal" style="display:none" onclick="closeModal('prod-modal',event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-title">Agregar producto</div>
+    <div class="field"><label>Nombre</label><input type="text" id="p-name" placeholder="Foundation MAC NC25"/></div>
+    <div class="field-row">
+      <div class="field"><label>Precio $</label><input type="number" id="p-price" placeholder="0"/></div>
+      <div class="field"><label>Emoji</label><input type="text" id="p-emoji" placeholder="💄" maxlength="2"/></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Categoría</label><input type="text" id="p-cat" placeholder="Base, labial..."/></div>
+      <div class="field"><label>Stock</label><select id="p-stock"><option value="1">Disponible</option><option value="0">Agotado</option></select></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel-m" onclick="closeModal('prod-modal')">Cancelar</button>
+      <button class="btn-primary" onclick="saveProduct()">Agregar</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="js/shared/data.js"></script><script src="app.js"></script>
