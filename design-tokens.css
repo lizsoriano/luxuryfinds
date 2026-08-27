@@ -1,35 +1,47 @@
 :root {
   color-scheme: light;
 
-  /* Core palette */
-  --color-page: #f7f8f9;
+  /* Color */
+  --color-page: #faf5f0;
   --color-surface: #ffffff;
-  --color-ink: #111111;
-  --color-text-secondary: #6b6b6b;
-  --color-border: #e8e8e8;
-  --color-overlay: rgb(17 17 17 / 48%);
-  --color-disabled-text: #8a8a8a;
-  --color-disabled-surface: #eeeeee;
+  --color-brand: #8f4a5c;
+  --color-brand-hover: #743a4a;
+  --color-brand-soft: #f6e3e6;
+  --color-accent: #e8c9a0;
+  --color-ink: #3a2b2e;
+  --color-text-secondary: #7d6a6d;
+  --color-border: #ece0d8;
+  --color-overlay: rgb(58 43 46 / 48%);
+  --color-disabled-text: var(--color-text-secondary);
+  --color-disabled-surface: var(--color-border);
 
   /* Interaction */
-  --color-hover-surface: #f1f2f3;
-  --color-pressed-surface: #e8e9ea;
-  --color-inverse-hover: #2b2b2b;
-  --color-inverse-pressed: #3b3b3b;
+  --color-hover-surface: var(--color-brand-soft);
+  --color-pressed-surface: var(--color-accent);
+  --color-inverse-hover: var(--color-brand-hover);
+  --color-inverse-pressed: var(--color-brand);
 
-  /* Semantic states: always pair these with text or an icon */
-  --color-success-text: #365c4a;
-  --color-success-surface: #edf3ef;
-  --color-success-border: #b9cbbf;
-  --color-warning-text: #6b572c;
-  --color-warning-surface: #f5f1e8;
-  --color-warning-border: #d4c59f;
-  --color-error-text: #70413f;
-  --color-error-surface: #f5eceb;
-  --color-error-border: #d9b9b6;
-  --color-info-text: #40576c;
-  --color-info-surface: #edf1f4;
-  --color-info-border: #bac7d1;
+  /* States: always pair these with text or an icon */
+  --color-success: #6b7d52;
+  --color-warning: #b8862b;
+  --color-error: #a33a3a;
+  --color-success-text: var(--color-success);
+  --color-success-surface: color-mix(in srgb, var(--color-success) 12%, var(--color-surface));
+  --color-success-border: color-mix(in srgb, var(--color-success) 38%, var(--color-surface));
+  --color-warning-text: var(--color-ink);
+  --color-warning-surface: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface));
+  --color-warning-border: color-mix(in srgb, var(--color-warning) 38%, var(--color-surface));
+  --color-error-text: var(--color-error);
+  --color-error-surface: color-mix(in srgb, var(--color-error) 10%, var(--color-surface));
+  --color-error-border: color-mix(in srgb, var(--color-error) 34%, var(--color-surface));
+  --color-info-text: var(--color-brand);
+  --color-info-surface: var(--color-brand-soft);
+  --color-info-border: var(--color-accent);
+
+  /* Warm tinted shadows */
+  --shadow-card: 0 4px 24px rgb(143 74 92 / 6%);
+  --shadow-card-hover: 0 8px 32px rgb(143 74 92 / 10%);
+  --shadow-float: 0 12px 40px rgb(143 74 92 / 12%);
 
   /* Typography */
   --font-display: "Playfair Display", Georgia, serif;
@@ -86,7 +98,7 @@
   --ease-out: ease-out;
 
   /* Focus and layers */
-  --focus-ring: 2px solid var(--color-ink);
+  --focus-ring: 2px solid var(--color-brand);
   --focus-offset: 3px;
   --layer-header: 20;
   --layer-overlay: 30;
