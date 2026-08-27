@@ -46,6 +46,7 @@
   /* Typography */
   --font-display: "Playfair Display", Georgia, serif;
   --font-ui: "Jost", Arial, sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --font-size-caption: 0.75rem;
   --font-size-category: 0.8125rem;
   --font-size-body: 0.9375rem;
@@ -88,7 +89,15 @@
   --border-width: 1px;
   --border-default: var(--border-width) solid var(--color-border);
   --radius-none: 0;
+  --radius-field: 0.75rem;
+  --radius-card: 1.25rem;
   --radius-circle: 50%;
+  --radius-pill: 999px;
+  --input-height: 3.5rem;
+  --chip-height: 2.75rem;
+  --button-height: 3.25rem;
+  --form-field-gap: 1.5rem;
+  --form-group-gap: 2.5rem;
 
   /* Motion */
   --duration-fast: 150ms;

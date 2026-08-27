@@ -18,10 +18,24 @@
   function showClientSelector() {
     const shell = document.getElementById('portal-content');
     const clients = data.getClients();
-    shell.innerHTML = `<section class="portal-card local-access"><span class="eyebrow">Vista local de desarrollo</span>
-      <h1>Selecciona una clienta para previsualizar su portal</h1>
-      <p>Esto no es autenticación y no debe publicarse como acceso seguro.</p>
-      <div class="client-preview-list">${clients.map(client => `<button onclick="selectPortalClient(${client.id})"><strong>${client.name}</strong><span>${client.whatsapp || client.phone || (client.instagram ? '@' + client.instagram : '')}</span></button>`).join('') || '<p>No hay clientes registrados.</p>'}</div></section>`;
+    document.body.classList.add('has-local-access');
+    const formStyles = document.createElement('link');
+    formStyles.rel = 'stylesheet';
+    formStyles.href = new URL('form-pilot.css', financeStyles.href).href;
+    document.head.appendChild(formStyles);
+    shell.innerHTML = `<section class="local-access"><div class="access-brand-panel"><span class="access-brand">luxury finds</span><p>Tu selección, tus pedidos y tus entregas en un solo lugar.</p></div><div class="access-form-panel"><div class="form-heading"><span class="form-step">Paso 01 · Acceso local</span><h1>Elige tu perfil.</h1><p>Selecciona una clienta para previsualizar su portal. Este acceso es únicamente para desarrollo y no sustituye autenticación real.</p></div><div class="form-group"><label for="client-preview-search">Buscar clienta</label><div class="input-with-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg><input id="client-preview-search" type="search" placeholder="Nombre, teléfono o Instagram" autocomplete="off"></div></div><div class="form-group"><span class="field-label">Perfiles disponibles</span><div class="client-preview-list" id="client-preview-list">${clientPreviewButtons(clients)}</div><p class="client-preview-empty" id="client-preview-empty" hidden>No encontramos una clienta con esa búsqueda.</p></div></div></section>`;
+    document.getElementById('client-preview-search').addEventListener('input', event => filterClientPreview(event.target.value));
+  }
+
+  function clientPreviewButtons(clients) {
+    return clients.map(client => `<button class="client-chip" type="button" data-search="${`${client.name} ${client.whatsapp || ''} ${client.phone || ''} ${client.instagram || ''}`.toLowerCase()}" onclick="selectPortalClient(${client.id})"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 21a8 8 0 0 1 16 0"></path></svg><span><strong>${client.name}</strong><small>${client.whatsapp || client.phone || (client.instagram ? '@' + client.instagram : '')}</small></span></button>`).join('') || '<p>No hay clientes registrados.</p>';
+  }
+
+  function filterClientPreview(value) {
+    const query = value.trim().toLowerCase();
+    const buttons = [...document.querySelectorAll('.client-chip')];
+    buttons.forEach(button => button.hidden = !button.dataset.search.includes(query));
+    document.getElementById('client-preview-empty').hidden = buttons.some(button => !button.hidden);
   }
 
   window.selectPortalClient = function(id) {
