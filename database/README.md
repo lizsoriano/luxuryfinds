@@ -1,34 +1,72 @@
-# Diseño relacional de Luxury Finds
+# Base de datos de Luxury Finds en Supabase
 
-El archivo `schema.sql` contiene el modelo PostgreSQL del Plan Maestro. Usa UUID para las entidades públicas, `timestamptz` para eventos y enteros en centavos MXN para todo importe.
+`schema.sql` instala el modelo relacional completo sobre Supabase PostgreSQL. Conserva UUID para entidades públicas, `timestamptz` para eventos y enteros en centavos MXN para importes.
+
+## Autenticación
+
+Supabase Auth es la única fuente de credenciales. `luxury_finds.clients.id` y `luxury_finds.admin_users.id` son a la vez PK y FK hacia `auth.users(id) ON DELETE CASCADE`. El esquema no guarda hashes ni fechas de cambio de contraseña.
+
+Primero se crea el usuario con Supabase Auth y después, desde un backend autorizado, se inserta su perfil usando exactamente el mismo UUID:
+
+```sql
+insert into luxury_finds.clients (
+  id, phone, first_name, last_name, email
+)
+values (
+  '<auth.users.id>', '<telefono>', '<nombre>', '<apellido>', '<email>'
+);
+```
+
+Los perfiles administrativos siguen el mismo patrón en `luxury_finds.admin_users`. No se deben crear administradores desde el navegador.
+
+## Seguridad
+
+Todas las tablas tienen Row Level Security habilitado. El catálogo anónimo solo expone productos públicos y activos, sus variantes e imágenes necesarias, categorías activas, marcas asociadas y términos publicados.
+
+Los clientes autenticados solo pueden consultar registros asociados a `auth.uid()`: perfil, pedidos, tickets, planes, cuotas, comprobantes, pagos, multas, reembolsos, entregas, notificaciones y aceptaciones. Los privilegios de columna excluyen `clients.internal_notes`, `orders.internal_notes` y otros metadatos administrativos.
+
+No existen políticas administrativas para clientes web. Las operaciones administrativas deben ejecutarse desde un backend seguro con la clave `service_role` o una conexión PostgreSQL protegida. Nunca se debe exponer la clave `service_role` en el frontend.
+
+Si se usará la Data API sobre el esquema personalizado, agrega `luxury_finds` en **Project Settings → API → Exposed schemas**. Los permisos y RLS del archivo siguen aplicándose.
+
+## Supabase Storage
+
+El script registra dos buckets:
+
+- `product-images`: público, para JPEG, PNG, WebP y AVIF.
+- `payment-proofs`: privado, para JPEG, PNG y PDF.
+
+Las claves `storage_key` e `image_storage_key_snapshot` guardan únicamente la ruta del objeto; ningún archivo binario se almacena en PostgreSQL.
+
+Los comprobantes deben subirse con esta estructura:
+
+```text
+<auth.users.id>/<nombre-unico-del-archivo>
+```
+
+Las políticas de Storage permiten a un cliente autenticado subir y consultar solamente objetos dentro de su propia carpeta. El backend administrativo puede acceder mediante `service_role` y debe entregar comprobantes mediante descargas autenticadas o URL firmadas.
+
+## Instalación mediante Supabase SQL Editor
+
+1. Crea un proyecto nuevo en Supabase.
+2. Abre **SQL Editor → New query**.
+3. Copia todo el contenido de `database/schema.sql`.
+4. Ejecuta la consulta completa una sola vez.
+5. Confirma que existan el esquema `luxury_finds` y los buckets en **Storage**.
+6. Ejecuta **Security Advisor** y comprueba que RLS permanezca habilitado.
+
+El script usa `citext` y `pgcrypto`, ambas extensiones compatibles con Supabase. No crea ni modifica tablas internas de `auth`; únicamente referencia la PK estable `auth.users(id)`. Sí registra buckets y políticas sobre `storage.objects`, que es la interfaz SQL documentada de Supabase Storage.
 
 ## Núcleo del modelo
 
-- `clients` es la propietaria de pedidos, tickets, pagos, entregas y notificaciones.
+- `clients` posee pedidos, tickets, pagos, entregas y notificaciones.
 - `products` contiene la ficha comercial; `product_variants` contiene SKU, atributos, precio y unidad de inventario.
 - `inventory_movements` es un libro inmutable. La existencia disponible se consulta mediante `variant_stock`.
 - `orders` agrupa una operación y `order_items` sus artículos. Cada artículo genera exactamente un `ticket`.
-- `tickets` guarda la fotografía histórica del artículo, variante, precio y modalidad. Los cambios futuros del catálogo no alteran la compra.
-- `payment_plans` representa tanto plan semanal como apartado. Solo los planes semanales tienen `installments`.
-- `payment_proofs` representa lo reportado y pendiente de validación. Solo al aprobarse se crea `payments`.
-- `payment_allocations` distribuye un pago entre cuotas y multas, soportando pagos parciales, anticipados o liquidación temprana.
-- Finanzas y logística son estados independientes en `tickets`.
-- Disponibilidades de entrega se dividen en `delivery_slots` de diez minutos; los índices parciales impiden dos reservaciones activas.
-- `terms_acceptances` conserva la versión aceptada por ticket y su primer pago.
-- `activity_logs` conserva actor, entidad y valores anterior/nuevo para auditoría.
+- `tickets` guarda la fotografía histórica del artículo, variante, precio y modalidad.
+- `payment_plans`, `installments`, `payment_proofs`, `payments` y `payment_allocations` conservan el flujo financiero existente.
+- Finanzas y logística permanecen como estados independientes en `tickets`.
+- `delivery_slots` mantiene intervalos de diez minutos y evita reservaciones activas duplicadas.
+- `terms_acceptances` y `activity_logs` mantienen aceptación legal y auditoría.
 
-## Reglas transaccionales
-
-Las restricciones locales están en SQL. Las reglas que dependen de varias filas están enumeradas al final de `schema.sql` y deben ejecutarse dentro de transacciones del servicio. Entre ellas están impedir inventario negativo, comprobar la suma de cuotas, distribuir pagos sin exceder su monto, calcular vencimientos en la zona horaria del negocio y detectar dos semanas consecutivas vencidas.
-
-Para asignar inventario de forma segura, la aplicación debe bloquear la variante o sus movimientos durante la transacción, comprobar `variant_stock` y crear el movimiento `ALLOCATION`. Una liberación crea `RELEASE`; una entrega crea el evento `DELIVERY` con delta cero porque la unidad ya dejó de estar disponible al asignarse.
-
-## Instalación
-
-Ejecutar contra una base PostgreSQL vacía con un rol autorizado para crear extensiones y esquemas:
-
-```powershell
-psql -v ON_ERROR_STOP=1 -d luxury_finds -f database/schema.sql
-```
-
-El script instala `citext` y `pgcrypto`, crea el esquema `luxury_finds`, tipos, tablas, índices, vistas y configuración inicial.
+Las validaciones entre varias filas enumeradas al final de `schema.sql` deben seguir ejecutándose dentro de transacciones del backend.

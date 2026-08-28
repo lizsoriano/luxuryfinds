@@ -1,5 +1,5 @@
 -- Luxury Finds - relational database design
--- Target: PostgreSQL 16+
+-- Target: Supabase PostgreSQL
 -- Monetary values are stored as integer MXN cents.
 
 BEGIN;
@@ -46,9 +46,8 @@ CREATE TYPE notification_type AS ENUM (
 CREATE TYPE incident_resolution AS ENUM ('REPLACEMENT_ORDER', 'AVAILABLE_PRODUCT', 'REFUND');
 
 CREATE TABLE admin_users (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   username citext NOT NULL UNIQUE,
-  password_hash text NOT NULL,
   display_name text NOT NULL,
   status account_status NOT NULL DEFAULT 'ACTIVE',
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -56,9 +55,8 @@ CREATE TABLE admin_users (
 );
 
 CREATE TABLE clients (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   phone varchar(20) NOT NULL UNIQUE,
-  password_hash text NOT NULL,
   first_name text NOT NULL,
   last_name text NOT NULL,
   instagram text,
@@ -69,7 +67,6 @@ CREATE TABLE clients (
   payment_plans_allowed boolean NOT NULL DEFAULT false,
   credit_balance_cents bigint NOT NULL DEFAULT 0 CHECK (credit_balance_cents >= 0),
   status account_status NOT NULL DEFAULT 'ACTIVE',
-  password_changed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -480,7 +477,7 @@ CREATE INDEX ix_notifications_unread ON notifications (client_id, created_at DES
 CREATE INDEX ix_delivery_slots_start ON delivery_slots (starts_at) WHERE is_enabled;
 CREATE INDEX ix_activity_entity ON activity_logs (entity_type, entity_id, created_at DESC);
 
-CREATE VIEW variant_stock AS
+CREATE VIEW variant_stock WITH (security_invoker = true) AS
 SELECT
   v.id AS variant_id,
   COALESCE(SUM(m.quantity_delta), 0)::bigint AS available_quantity
@@ -488,7 +485,7 @@ FROM product_variants v
 LEFT JOIN inventory_movements m ON m.variant_id = v.id
 GROUP BY v.id;
 
-CREATE VIEW ticket_balances AS
+CREATE VIEW ticket_balances WITH (security_invoker = true) AS
 SELECT
   t.id AS ticket_id,
   t.agreed_total_cents,
@@ -528,5 +525,250 @@ INSERT INTO app_settings (key, value, description) VALUES
   ('delivery_slot_minutes', '10'::jsonb, 'Delivery slot duration'),
   ('delivery_minimum_notice_days', '1'::jsonb, 'Minimum local calendar-day notice')
 ON CONFLICT (key) DO NOTHING;
+
+-- Supabase Data API security. RLS is enabled on every application table;
+-- tables without a policy remain accessible only to trusted backend roles.
+ALTER TABLE admin_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE clients ENABLE ROW LEVEL SECURITY;
+ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE brands ENABLE ROW LEVEL SECURITY;
+ALTER TABLE products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE product_variants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE product_images ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inventory_movements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE order_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payment_plans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE installments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payment_proofs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE late_fees ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payment_allocations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE refund_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE refunds ENABLE ROW LEVEL SECURITY;
+ALTER TABLE delivery_locations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE delivery_availabilities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE delivery_slots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE delivery_bookings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE terms_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE terms_acceptances ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE activity_logs ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON ALL TABLES IN SCHEMA luxury_finds FROM anon, authenticated;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA luxury_finds FROM anon, authenticated;
+GRANT USAGE ON SCHEMA luxury_finds TO anon, authenticated, service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA luxury_finds TO service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA luxury_finds TO service_role;
+
+-- Public catalog. No inventory movements, administrative metadata or private
+-- products are exposed to anonymous/authenticated browser clients.
+GRANT SELECT ON categories, brands, products, product_variants, product_images,
+  terms_versions TO anon, authenticated;
+
+CREATE POLICY categories_public_read ON categories
+  FOR SELECT TO anon, authenticated
+  USING (is_active);
+
+CREATE POLICY brands_public_read ON brands
+  FOR SELECT TO anon, authenticated
+  USING (EXISTS (
+    SELECT 1 FROM products p
+    WHERE p.brand_id = brands.id AND p.is_public AND p.is_active
+  ));
+
+CREATE POLICY products_public_read ON products
+  FOR SELECT TO anon, authenticated
+  USING (is_public AND is_active);
+
+CREATE POLICY product_variants_public_read ON product_variants
+  FOR SELECT TO anon, authenticated
+  USING (is_active AND EXISTS (
+    SELECT 1 FROM products p
+    WHERE p.id = product_variants.product_id AND p.is_public AND p.is_active
+  ));
+
+CREATE POLICY product_images_public_read ON product_images
+  FOR SELECT TO anon, authenticated
+  USING (EXISTS (
+    SELECT 1 FROM products p
+    WHERE p.id = product_images.product_id AND p.is_public AND p.is_active
+  ) AND (
+    variant_id IS NULL OR EXISTS (
+      SELECT 1 FROM product_variants v
+      WHERE v.id = product_images.variant_id
+        AND v.product_id = product_images.product_id
+        AND v.is_active
+    )
+  ));
+
+CREATE POLICY terms_versions_public_read ON terms_versions
+  FOR SELECT TO anon, authenticated
+  USING (is_active AND published_at <= now());
+
+-- Client profile. Column privileges deliberately omit internal_notes.
+GRANT SELECT (id, phone, first_name, last_name, instagram, email, address,
+  birth_date, payment_plans_allowed, credit_balance_cents, status, created_at,
+  updated_at) ON clients TO authenticated;
+
+CREATE POLICY clients_own_read ON clients
+  FOR SELECT TO authenticated
+  USING ((SELECT auth.uid()) = id);
+
+-- A client can read only the rows connected to their own auth.users UUID.
+-- Administrative writes and unrestricted reads require a trusted backend role.
+GRANT SELECT (id, client_id, origin, status, client_notes, created_at,
+  confirmed_at, cancelled_at, updated_at) ON orders TO authenticated;
+GRANT SELECT ON order_items, tickets, payment_plans, installments,
+  payment_proofs, late_fees, payment_allocations, delivery_bookings,
+  notifications, terms_acceptances TO authenticated;
+GRANT SELECT (id, ticket_id, proof_id, amount_cents, method, source,
+  effective_paid_at, uploaded_at, validated_at, reference, created_at)
+  ON payments TO authenticated;
+GRANT SELECT (id, ticket_id, client_id, status, account_holder_first_name,
+  account_holder_last_name, bank_name, reason, requested_at, updated_at)
+  ON refund_requests TO authenticated;
+GRANT SELECT (id, refund_request_id, amount_cents, refunded_at, method,
+  reference, reason, created_at) ON refunds TO authenticated;
+
+CREATE POLICY orders_own_read ON orders
+  FOR SELECT TO authenticated
+  USING ((SELECT auth.uid()) = client_id);
+
+CREATE POLICY order_items_own_read ON order_items
+  FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM orders o
+    WHERE o.id = order_items.order_id AND o.client_id = (SELECT auth.uid())
+  ));
+
+CREATE POLICY tickets_own_read ON tickets
+  FOR SELECT TO authenticated
+  USING ((SELECT auth.uid()) = client_id);
+
+CREATE POLICY payment_plans_own_read ON payment_plans
+  FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM tickets t
+    WHERE t.id = payment_plans.ticket_id AND t.client_id = (SELECT auth.uid())
+  ));
+
+CREATE POLICY installments_own_read ON installments
+  FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM payment_plans pp
+    JOIN tickets t ON t.id = pp.ticket_id
+    WHERE pp.id = installments.payment_plan_id
+      AND t.client_id = (SELECT auth.uid())
+  ));
+
+CREATE POLICY payment_proofs_own_read ON payment_proofs
+  FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM tickets t
+    WHERE t.id = payment_proofs.ticket_id AND t.client_id = (SELECT auth.uid())
+  ));
+
+CREATE POLICY payments_own_read ON payments
+  FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM tickets t
+    WHERE t.id = payments.ticket_id AND t.client_id = (SELECT auth.uid())
+  ));
+
+CREATE POLICY late_fees_own_read ON late_fees
+  FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM tickets t
+    WHERE t.id = late_fees.ticket_id AND t.client_id = (SELECT auth.uid())
+  ));
+
+CREATE POLICY payment_allocations_own_read ON payment_allocations
+  FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM payments p
+    JOIN tickets t ON t.id = p.ticket_id
+    WHERE p.id = payment_allocations.payment_id
+      AND t.client_id = (SELECT auth.uid())
+  ));
+
+CREATE POLICY refund_requests_own_read ON refund_requests
+  FOR SELECT TO authenticated
+  USING ((SELECT auth.uid()) = client_id);
+
+CREATE POLICY refunds_own_read ON refunds
+  FOR SELECT TO authenticated
+  USING (EXISTS (
+    SELECT 1 FROM refund_requests rr
+    WHERE rr.id = refunds.refund_request_id
+      AND rr.client_id = (SELECT auth.uid())
+  ));
+
+CREATE POLICY delivery_bookings_own_read ON delivery_bookings
+  FOR SELECT TO authenticated
+  USING ((SELECT auth.uid()) = client_id);
+
+CREATE POLICY notifications_own_read ON notifications
+  FOR SELECT TO authenticated
+  USING ((SELECT auth.uid()) = client_id);
+
+CREATE POLICY terms_acceptances_own_read ON terms_acceptances
+  FOR SELECT TO authenticated
+  USING ((SELECT auth.uid()) = client_id);
+
+-- Authenticated clients may see active delivery options, never their
+-- administrative creator metadata.
+GRANT SELECT ON delivery_locations, delivery_slots TO authenticated;
+GRANT SELECT (id, location_id, starts_at, ends_at, enabled_pickup,
+  enabled_didi, created_at) ON delivery_availabilities TO authenticated;
+
+CREATE POLICY delivery_locations_active_read ON delivery_locations
+  FOR SELECT TO authenticated
+  USING (is_active);
+
+CREATE POLICY delivery_availabilities_active_read ON delivery_availabilities
+  FOR SELECT TO authenticated
+  USING (starts_at > now() AND (enabled_pickup OR enabled_didi));
+
+CREATE POLICY delivery_slots_active_read ON delivery_slots
+  FOR SELECT TO authenticated
+  USING (is_enabled AND starts_at > now() AND EXISTS (
+    SELECT 1 FROM delivery_availabilities da
+    WHERE da.id = delivery_slots.availability_id
+      AND da.starts_at > now()
+      AND (da.enabled_pickup OR da.enabled_didi)
+  ));
+
+-- Security-invoker prevents views from bypassing the underlying table RLS.
+GRANT SELECT ON ticket_balances TO authenticated;
+
+-- Supabase Storage buckets. Product images are public; payment proofs require
+-- authenticated access and must live under <auth.uid()>/<filename>.
+INSERT INTO storage.buckets (id, name, public, allowed_mime_types)
+VALUES
+  ('product-images', 'product-images', true,
+    ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/avif']),
+  ('payment-proofs', 'payment-proofs', false,
+    ARRAY['image/jpeg', 'image/png', 'application/pdf'])
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  public = EXCLUDED.public,
+  allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+CREATE POLICY payment_proofs_storage_insert_own
+  ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id = 'payment-proofs'
+    AND (storage.foldername(name))[1] = (SELECT auth.uid()::text)
+  );
+
+CREATE POLICY payment_proofs_storage_select_own
+  ON storage.objects FOR SELECT TO authenticated
+  USING (
+    bucket_id = 'payment-proofs'
+    AND (storage.foldername(name))[1] = (SELECT auth.uid()::text)
+  );
 
 COMMIT;
