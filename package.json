@@ -14,6 +14,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.5",
+    "@supabase/supabase-js": "^2.112.4",
     "nitro": "^3.0.260610-beta",
     "react": "19.2.6",
     "react-dom": "19.2.6"

@@ -1,2 +1,24 @@
-import Link from "next/link"; import { Button } from "../../../components/ui/Button"; import { Card } from "../../../components/ui/Card"; import { Input } from "../../../components/ui/Fields"; import { SectionLabel } from "../../../components/ui/SectionLabel";
-export default function LoginPage(){return <main className="login-page"><div className="login-intro"><SectionLabel>BIENVENIDA DE NUEVO</SectionLabel><h1>Todo lo que elegiste,<em>en un solo lugar.</em></h1><p>Consulta tus compras, pagos, entregas y novedades de Luxury Finds.</p><div className="login-quote"><span>“</span><p>Tu cuenta privada te acompaña desde el primer pago hasta la entrega.</p></div></div><Card className="login-card"><div className="login-card-heading"><span>LF</span><h2>Inicia sesión</h2><p>Ingresa con los datos que te compartimos.</p></div><form><Input id="phone" label="Número de celular" inputMode="tel" placeholder="612 123 4567" autoComplete="tel"/><Input id="password" label="Contraseña" type="password" placeholder="Tu contraseña" autoComplete="current-password"/><Button type="button" fullWidth>Entrar a mi cuenta <span aria-hidden>→</span></Button></form><p className="login-help">¿Necesitas ayuda para entrar?<br/><Link href="/contacto">Escríbenos por WhatsApp</Link></p></Card></main>}
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { Card } from "../../../components/ui/Card";
+import { SectionLabel } from "../../../components/ui/SectionLabel";
+import { hasPublicSupabaseEnv } from "../../../lib/supabase/env";
+import { createServerSupabaseClient } from "../../../lib/supabase/server";
+import { LoginForm } from "./LoginForm";
+
+export const dynamic = "force-dynamic";
+
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string }>;
+}) {
+  const { next = "/cuenta" } = await searchParams;
+  if (hasPublicSupabaseEnv()) {
+    const supabase = await createServerSupabaseClient();
+    const { data } = await supabase.auth.getUser();
+    if (data.user) redirect(next.startsWith("/") && !next.startsWith("//") ? next : "/cuenta");
+  }
+
+  return <main className="login-page"><div className="login-intro"><SectionLabel>BIENVENIDA DE NUEVO</SectionLabel><h1>Todo lo que elegiste,<em>en un solo lugar.</em></h1><p>Consulta tus compras, pagos, entregas y novedades de Luxury Finds.</p><div className="login-quote"><span>“</span><p>Tu cuenta privada te acompaña desde el primer pago hasta la entrega.</p></div></div><Card className="login-card"><div className="login-card-heading"><span>LF</span><h2>Inicia sesión</h2><p>Ingresa con tus datos de Supabase Auth.</p></div>{hasPublicSupabaseEnv() ? <LoginForm next={next}/> : <p className="form-message form-error" role="alert">La conexión segura no está configurada en este entorno.</p>}<p className="login-help">¿Necesitas ayuda para entrar?<br/><Link href="/contacto">Escríbenos por WhatsApp</Link></p></Card></main>;
+}
