@@ -1,0 +1,5 @@
+import { ProductCard } from "../../../components/ui/ProductCard";
+import { PageHeader } from "../../../components/ui/PageHeader";
+import { mockProducts } from "../../../lib/mock-data";
+
+export default function CatalogPage() { return <main className="catalog-page"><div className="shell"><PageHeader eyebrow="UNA SELECCIÓN ESPECIAL" title={<>Encuentra tu próximo <em>favorito.</em></>} description="Moda, belleza y productos especiales disponibles para entrega inmediata o por pedido." /><div className="catalog-toolbar"><div className="filter-tabs" aria-label="Filtrar catálogo"><button className="active" type="button">Todo</button><button type="button">Entrega inmediata</button><button type="button">Por pedido</button></div><label className="catalog-sort"><span>Ordenar por</span><select><option>Recomendados</option><option>Precio: menor a mayor</option><option>Más recientes</option></select></label></div><div className="product-grid">{mockProducts.map((product) => <ProductCard product={product} key={product.id} />)}</div></div></main>; }

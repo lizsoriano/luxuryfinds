@@ -1,0 +1,1 @@
+export function LoadingState() { return <div className="loading-grid" aria-label="Cargando contenido" aria-busy="true">{[0,1,2].map((item) => <div className="skeleton-card" key={item}><span /><span /><span /></div>)}</div>; }
