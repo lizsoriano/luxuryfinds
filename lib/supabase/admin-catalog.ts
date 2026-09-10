@@ -78,17 +78,29 @@ type VariantRow = {
 
 export type StockMap = Map<string, number>;
 
+/**
+ * `.in("variant_id", ids)` is sent as a query string, so a large catalogue
+ * (thousands of variants at once, e.g. getInventoryKpis) can build a URL long
+ * enough for Vercel/Supabase's edge to reject it with a bare 400 Bad Request.
+ * Batching keeps every request's URL well under that limit.
+ */
+const STOCK_BATCH_SIZE = 150;
+
 /** Available stock comes from the inventory_movements ledger through variant_stock. */
 export async function getStockFor(variantIds: string[]): Promise<StockMap> {
   const map: StockMap = new Map();
   if (!variantIds.length) return map;
-  const { data, error } = await adminDb()
-    .from("variant_stock")
-    .select("variant_id, available_quantity")
-    .in("variant_id", variantIds);
-  if (error) throw new Error(error.message);
-  for (const row of data ?? []) {
-    map.set(row.variant_id as string, Number(row.available_quantity ?? 0));
+
+  for (let i = 0; i < variantIds.length; i += STOCK_BATCH_SIZE) {
+    const batch = variantIds.slice(i, i + STOCK_BATCH_SIZE);
+    const { data, error } = await adminDb()
+      .from("variant_stock")
+      .select("variant_id, available_quantity")
+      .in("variant_id", batch);
+    if (error) throw new Error(error.message);
+    for (const row of data ?? []) {
+      map.set(row.variant_id as string, Number(row.available_quantity ?? 0));
+    }
   }
   return map;
 }
