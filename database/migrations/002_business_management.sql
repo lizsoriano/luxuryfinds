@@ -119,10 +119,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_product_variants_barcode
 -- ---------------------------------------------------------------------------
 -- Widening only. Existing rows, CHECK constraints and writers keep working.
 
+DROP VIEW IF EXISTS variant_stock;
+
 ALTER TABLE inventory_movements
   ALTER COLUMN quantity_delta TYPE numeric(14,3);
-
-DROP VIEW IF EXISTS variant_stock;
 
 CREATE VIEW variant_stock WITH (security_invoker = true) AS
 SELECT

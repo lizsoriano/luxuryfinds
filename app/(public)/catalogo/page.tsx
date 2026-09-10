@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { ProductCard } from "../../../components/ui/ProductCard";
 import {
@@ -89,7 +90,7 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
   return (
     <main className="catalog-page">
       <div className="shell">
-        <p className="catalog-breadcrumb"><a href="/">Inicio</a> <span aria-hidden>.</span> Catálogo</p>
+        <p className="catalog-breadcrumb"><Link href="/">Inicio</Link> <span aria-hidden>.</span> Catálogo</p>
         <h1 className="catalog-title">Catálogo</h1>
 
         <form className="catalog-search" method="get" action=".">

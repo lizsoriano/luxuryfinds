@@ -14,6 +14,7 @@ import {
   PAYMENT_METHOD_LABELS,
 } from "../../../lib/format";
 import { getBalance, listCashSessions } from "../../../lib/supabase/admin-commerce";
+import { CancelSaleDialog } from "./CancelSaleDialog";
 
 export const dynamic = "force-dynamic";
 
@@ -166,6 +167,7 @@ export default async function BalancePage({ searchParams }: { searchParams: Prom
                     <th>Método</th>
                     <th>Estado</th>
                     <th className="numeric">Monto</th>
+                    <th aria-label="Acciones" />
                   </tr>
                 </thead>
                 <tbody>
@@ -194,6 +196,11 @@ export default async function BalancePage({ searchParams }: { searchParams: Prom
                       <td className="numeric" style={{ color: transaction.direction === "IN" ? "var(--success)" : "var(--danger)" }}>
                         {transaction.direction === "IN" ? "+" : "−"}
                         {formatMoney(transaction.amountCents)}
+                      </td>
+                      <td>
+                        {transaction.kind !== "EXPENSE" && transaction.status === "COMPLETED" ? (
+                          <CancelSaleDialog saleId={transaction.id} reference={transaction.reference} />
+                        ) : null}
                       </td>
                     </tr>
                   ))}

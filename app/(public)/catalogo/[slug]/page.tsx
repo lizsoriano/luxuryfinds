@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { Badge } from "../../../../components/ui/Badge";
 import { Button } from "../../../../components/ui/Button";
 import { getCatalogProductBySlug } from "../../../../lib/supabase/catalog";
@@ -20,7 +21,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
 
   return <main className="catalog-page">
     <div className="shell">
-      <p className="catalog-breadcrumb"><a href="/">Inicio</a> <span aria-hidden>.</span> <a href="/catalogo">Catálogo</a> <span aria-hidden>.</span> {product.name}</p>
+      <p className="catalog-breadcrumb"><Link href="/">Inicio</Link> <span aria-hidden>.</span> <Link href="/catalogo">Catálogo</Link> <span aria-hidden>.</span> {product.name}</p>
 
       <div className="product-detail">
         <div className="product-detail-gallery">

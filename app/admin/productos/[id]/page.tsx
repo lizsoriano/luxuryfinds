@@ -83,6 +83,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
             product_kind: product.product_kind,
             tax_rate_percent: product.tax_rate_percent,
             is_public: product.is_public,
+            weekly_plan_eligible: product.weekly_plan_eligible,
             variants: product.variants.map((variant) => ({
               id: variant.id,
               name: variant.name,

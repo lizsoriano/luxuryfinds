@@ -15,6 +15,7 @@ import {
   listProducts,
 } from "../../../lib/supabase/admin-catalog";
 import { setProductActiveAction } from "../productos/actions";
+import { InventoryMovementDialog } from "./InventoryMovementDialog";
 
 export const dynamic = "force-dynamic";
 
@@ -239,6 +240,12 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                           <Button href={`/admin/productos/${product.id}`} variant="secondary" size="small">
                             Editar
                           </Button>
+                          <InventoryMovementDialog
+                            variantId={variant.id}
+                            productName={product.name}
+                            variantName={variant.name}
+                            unitLabel={variant.unit_label}
+                          />
                           <ConfirmAction
                             action={setProductActiveAction}
                             fields={{ id: product.id, active: product.is_active ? "false" : "true" }}

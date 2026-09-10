@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import type { CartItem } from "../../../lib/cart/CartContext";
 import { createAdminSupabaseClient } from "../../../lib/supabase/admin";
 import { getAuthenticatedUser } from "../../../lib/supabase/auth";
-import { resolveOrderItems } from "../../../lib/supabase/orders";
+import { checkWeeklyPlanEligibility, resolveOrderItems } from "../../../lib/supabase/orders";
 import { getTelegramLinkUrl } from "../../../lib/telegram/env";
 import { sendTelegramMessage } from "../../../lib/telegram/send";
 
@@ -15,7 +15,17 @@ export type CreateOrderResult =
 const money = (cents: number) =>
   new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: 0 }).format(cents / 100);
 
-export async function createOrderAction(items: CartItem[]): Promise<CreateOrderResult> {
+/** Cart-level check the checkout UI calls to decide whether to offer WEEKLY_PLAN at all. */
+export async function getWeeklyPlanOptionAction(items: CartItem[]): Promise<{ eligible: boolean }> {
+  if (!Array.isArray(items) || items.length === 0) return { eligible: false };
+  return { eligible: await checkWeeklyPlanEligibility(items) };
+}
+
+export async function createOrderAction(
+  items: CartItem[],
+  paymentMode: "FULL" | "WEEKLY_PLAN" = "FULL",
+  numberOfWeeks?: number,
+): Promise<CreateOrderResult> {
   const { user } = await getAuthenticatedUser();
   if (!user) {
     // Never trust a client-supplied identity for who the order belongs to — the
@@ -25,6 +35,26 @@ export async function createOrderAction(items: CartItem[]): Promise<CreateOrderR
 
   if (!Array.isArray(items) || items.length === 0) {
     return { success: false, error: "Tu carrito está vacío." };
+  }
+
+  // The requested mode/term is re-validated here regardless of what the
+  // checkout UI showed — the client cannot be trusted to have re-checked
+  // eligibility since the page loaded.
+  let requestedPaymentMode: "FULL" | "WEEKLY_PLAN" = "FULL";
+  let requestedNumberOfWeeks: number | null = null;
+  if (paymentMode === "WEEKLY_PLAN") {
+    if (!Number.isInteger(numberOfWeeks) || (numberOfWeeks as number) < 4 || (numberOfWeeks as number) > 16) {
+      return { success: false, error: "Elige un número de semanas válido (4 a 16)." };
+    }
+    const eligible = await checkWeeklyPlanEligibility(items);
+    if (!eligible) {
+      return {
+        success: false,
+        error: "Uno o más productos de tu carrito ya no admiten plan semanal. Recarga la página e intenta de nuevo.",
+      };
+    }
+    requestedPaymentMode = "WEEKLY_PLAN";
+    requestedNumberOfWeeks = numberOfWeeks as number;
   }
 
   let resolved, skipped;
@@ -40,10 +70,22 @@ export async function createOrderAction(items: CartItem[]): Promise<CreateOrderR
 
   const admin = createAdminSupabaseClient();
 
+  // requested_payment_mode/requested_number_of_weeks only exist once
+  // database/migrations/004_weekly_plan_checkout.sql has been applied. They are
+  // only ever set here when WEEKLY_PLAN was actually requested, which itself
+  // requires that migration (checkWeeklyPlanEligibility above returns false
+  // otherwise) — so a FULL checkout never references these columns and keeps
+  // working unmodified before the migration runs.
+  const orderInsert: Record<string, unknown> = { client_id: user.id, origin: "WEBSITE", status: "DRAFT" };
+  if (requestedPaymentMode === "WEEKLY_PLAN") {
+    orderInsert.requested_payment_mode = requestedPaymentMode;
+    orderInsert.requested_number_of_weeks = requestedNumberOfWeeks;
+  }
+
   const { data: order, error: orderError } = await admin
     .schema("luxury_finds")
     .from("orders")
-    .insert({ client_id: user.id, origin: "WEBSITE", status: "DRAFT" })
+    .insert(orderInsert)
     .select("id")
     .single();
 

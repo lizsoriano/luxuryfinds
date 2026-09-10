@@ -388,3 +388,71 @@ export async function closeCashSessionAction(_state: ActionState, formData: Form
     return failure(describeError(error, "No fue posible cerrar la caja."));
   }
 }
+
+/**
+ * sales.status/cancelled_at/cancellation_reason already existed in
+ * database/migrations/002_business_management.sql but nothing wrote to them —
+ * every sale was permanently COMPLETED. Voiding one releases the inventory it
+ * allocated (skipping any line whose variant was since deleted, since
+ * inventory_movements.variant_id can't be null) and excludes it from Balance's
+ * totals, which only sum status = 'COMPLETED'.
+ */
+export async function cancelSaleAction(_state: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const actor = await requireAdminActor();
+    const saleId = String(formData.get("id") ?? "");
+    if (!saleId) return failure("Venta no encontrada.");
+
+    const reason = String(formData.get("reason") ?? "").trim();
+    if (!reason) return failure("Escribe el motivo de la cancelación.");
+
+    const db = adminDb();
+    const { data: sale, error: saleError } = await db
+      .from("sales")
+      .select("id, sale_number, status")
+      .eq("id", saleId)
+      .maybeSingle();
+    if (saleError) return failure(describeError(new Error(saleError.message), "No fue posible leer la venta."));
+    if (!sale) return failure("Venta no encontrada.");
+    if (sale.status !== "COMPLETED") return failure("Esta venta ya no se puede cancelar.");
+
+    const { data: items, error: itemsError } = await db
+      .from("sale_items")
+      .select("variant_id, quantity")
+      .eq("sale_id", saleId);
+    if (itemsError) return failure(describeError(new Error(itemsError.message), "No fue posible leer los artículos de la venta."));
+
+    const releasable = (items ?? []).filter((item) => item.variant_id);
+    if (releasable.length) {
+      const { error: releaseError } = await db.from("inventory_movements").insert(
+        releasable.map((item) => ({
+          variant_id: item.variant_id as string,
+          movement_type: "RELEASE" as const,
+          quantity_delta: Number(item.quantity),
+          sale_id: saleId,
+          reason: `Venta cancelada ${sale.sale_number}: ${reason}`,
+          created_by_admin_id: actor.id,
+        })),
+      );
+      if (releaseError) return failure(describeError(new Error(releaseError.message), "No fue posible liberar el inventario de la venta."));
+    }
+
+    const { error: cancelError } = await db
+      .from("sales")
+      .update({ status: "CANCELLED", cancelled_at: new Date().toISOString(), cancellation_reason: reason })
+      .eq("id", saleId);
+    if (cancelError) return failure(describeError(new Error(cancelError.message), "No fue posible cancelar la venta."));
+
+    await logActivity({
+      adminUserId: actor.id,
+      action: "SALE_CANCELLED",
+      entityType: "sales",
+      entityId: saleId,
+      newData: { reason },
+    });
+    revalidate();
+    return ok(`Venta ${sale.sale_number} cancelada.`);
+  } catch (error) {
+    return failure(describeError(error, "No fue posible cancelar la venta."));
+  }
+}

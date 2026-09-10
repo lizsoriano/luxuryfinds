@@ -24,6 +24,20 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 type ProductKind = "SIMPLE" | "VARIANTS" | "MEASURED";
 
+/**
+ * products.weekly_plan_eligible only exists once
+ * database/migrations/004_weekly_plan_checkout.sql has been applied. Rather
+ * than fail the whole create/update when it hasn't, retry once without that
+ * one field so the rest of the product still saves, and tell the admin why
+ * the checkbox didn't stick.
+ */
+function isMissingColumnError(message: string) {
+  return message.includes("does not exist") || message.includes("schema cache") || message.includes("Could not find the");
+}
+
+const WEEKLY_PLAN_MIGRATION_WARNING =
+  " El plan semanal no se guardó: aplica database/migrations/004_weekly_plan_checkout.sql en Supabase.";
+
 function revalidateCatalog() {
   revalidatePath("/admin/productos");
   revalidatePath("/admin/inventario");
@@ -189,23 +203,32 @@ export async function createProductAction(_state: ActionState, formData: FormDat
     const slug = await ensureUniqueSlug("products", slugify(name));
     const catalogType = String(formData.get("catalogType") ?? "IMMEDIATE") === "ON_DEMAND" ? "ON_DEMAND" : "IMMEDIATE";
 
-    const { data: product, error: productError } = await db
+    const weeklyPlanEligible = formData.get("weeklyPlanEligible") === "on";
+    const productFields = {
+      name,
+      slug,
+      description: String(formData.get("description") ?? "").trim() || null,
+      internal_code: String(formData.get("internalCode") ?? "").trim() || null,
+      category_id: categoryId,
+      catalog_type: catalogType,
+      product_kind: kind,
+      tax_rate_percent: taxRate,
+      is_public: formData.get("isPublic") === "on",
+      is_active: true,
+      created_by_admin_id: actor.id,
+    };
+
+    let weeklyPlanWarning = "";
+    let insertResult = await db
       .from("products")
-      .insert({
-        name,
-        slug,
-        description: String(formData.get("description") ?? "").trim() || null,
-        internal_code: String(formData.get("internalCode") ?? "").trim() || null,
-        category_id: categoryId,
-        catalog_type: catalogType,
-        product_kind: kind,
-        tax_rate_percent: taxRate,
-        is_public: formData.get("isPublic") === "on",
-        is_active: true,
-        created_by_admin_id: actor.id,
-      })
+      .insert({ ...productFields, weekly_plan_eligible: weeklyPlanEligible })
       .select("id")
       .single();
+    if (insertResult.error && isMissingColumnError(insertResult.error.message)) {
+      insertResult = await db.from("products").insert(productFields).select("id").single();
+      if (weeklyPlanEligible) weeklyPlanWarning = WEEKLY_PLAN_MIGRATION_WARNING;
+    }
+    const { data: product, error: productError } = insertResult;
     if (productError) return failure(describeError(new Error(productError.message), "No fue posible crear el producto."));
 
     const productId = product.id as string;
@@ -276,7 +299,7 @@ export async function createProductAction(_state: ActionState, formData: FormDat
       newData: { name, slug, kind, variants: parsed.variants.length },
     });
     revalidateCatalog();
-    return ok(`Producto "${name}" creado.${imageWarning}`);
+    return ok(`Producto "${name}" creado.${imageWarning}${weeklyPlanWarning}`);
   } catch (error) {
     return failure(describeError(error, "No fue posible crear el producto."));
   }
@@ -307,20 +330,29 @@ export async function updateProductAction(_state: ActionState, formData: FormDat
     const slug =
       previous.name === name ? previous.slug : await ensureUniqueSlug("products", slugify(name), id);
 
-    const { error } = await db
+    const weeklyPlanEligible = formData.get("weeklyPlanEligible") === "on";
+    const productUpdate = {
+      name,
+      slug,
+      description: String(formData.get("description") ?? "").trim() || null,
+      internal_code: String(formData.get("internalCode") ?? "").trim() || null,
+      category_id: categoryId,
+      catalog_type: String(formData.get("catalogType") ?? "IMMEDIATE") === "ON_DEMAND" ? "ON_DEMAND" : "IMMEDIATE",
+      tax_rate_percent: taxRate,
+      is_public: formData.get("isPublic") === "on",
+      updated_at: new Date().toISOString(),
+    };
+
+    let weeklyPlanWarning = "";
+    let updateResult = await db
       .from("products")
-      .update({
-        name,
-        slug,
-        description: String(formData.get("description") ?? "").trim() || null,
-        internal_code: String(formData.get("internalCode") ?? "").trim() || null,
-        category_id: categoryId,
-        catalog_type: String(formData.get("catalogType") ?? "IMMEDIATE") === "ON_DEMAND" ? "ON_DEMAND" : "IMMEDIATE",
-        tax_rate_percent: taxRate,
-        is_public: formData.get("isPublic") === "on",
-        updated_at: new Date().toISOString(),
-      })
+      .update({ ...productUpdate, weekly_plan_eligible: weeklyPlanEligible })
       .eq("id", id);
+    if (updateResult.error && isMissingColumnError(updateResult.error.message)) {
+      updateResult = await db.from("products").update(productUpdate).eq("id", id);
+      if (weeklyPlanEligible) weeklyPlanWarning = WEEKLY_PLAN_MIGRATION_WARNING;
+    }
+    const { error } = updateResult;
     if (error) return failure(describeError(new Error(error.message), "No fue posible actualizar el producto."));
 
     // Per-variant commercial data (price / cost / minimum) is editable here;
@@ -387,7 +419,7 @@ export async function updateProductAction(_state: ActionState, formData: FormDat
     });
     revalidateCatalog();
     revalidatePath(`/admin/productos/${id}`);
-    return ok(`Producto actualizado.${imageWarning}`);
+    return ok(`Producto actualizado.${imageWarning}${weeklyPlanWarning}`);
   } catch (error) {
     return failure(describeError(error, "No fue posible actualizar el producto."));
   }
