@@ -128,6 +128,7 @@ Código completo, **probado con una corrida real en modo simulado (dry-run) cont
 | En cola de revisión (coincidencia dudosa) | 186 | 5 |
 | Errores | 0 | 0 |
 
+- **Limpieza puntual de datos (ya aplicada, no requiere acción)**: 1,687 filas (`products.name`/`description`/`relevant_information`, `product_variants.name`, `brands.name`) tenían entidades HTML sin decodificar (`&amp;`, `&#8211;`, etc.) — venían de una carga de catálogo anterior a este pipeline de sync, que ya decodifica entidades correctamente (`lib/sync/normalize.ts` → `decodeEntities`/`cleanProductName`/`stripHtml`). Se corrigieron directamente en Supabase con un script puntual (no versionado, ya no existe) que solo decodificó texto — ninguna otra columna se tocó. No hace falta volver a correrlo.
 - Ninguna tienda necesitó Playwright: Oskin (WooCommerce) expone su Store API pública (`/wp-json/wc/store/v1/products`); Maw Maw (Tiendanube) imprime las variantes completas en el HTML del listado.
 - `fetch` nativo de Node no puede hablar con `oskinmx.com` (rechaza la renegociación TLS) — `lib/sync/http.ts` usa `node:https` como respaldo automático.
 - Regla de precio verificada en ambas direcciones con ejemplos reales: sube cuando una fuente tiene precio mayor, **nunca baja** aunque el competidor/aliado baje el suyo. Precio máximo aplicado **por variante**, no por producto genérico.
