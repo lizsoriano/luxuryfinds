@@ -90,8 +90,11 @@ Construido y probado (`typecheck`/`lint`/`build` limpios):
 - **Vender** (`/admin/vender`, `SellTerminal.tsx`) — punto de venta completo: buscador, código de barras/SKU, carrito con cantidades, "Nueva venta libre", "Nuevo gasto", **apertura/cierre de caja real** (no placeholder), descuenta stock vía `inventory_movements` con rollback si algo falla.
 - **Balance** (`/admin/balance`) — KPIs (Balance/Ventas/Gastos), transacciones, cierres de caja, filtros por fecha.
 
+**Fase 2 — en progreso:**
+- **Pedidos** (`/admin/pedidos`) — ya no es un placeholder. Lista los pedidos reales creados desde el carrito público (tabla `orders`/`order_items`, que ya existe en `database/schema.sql` base, sin depender de las migraciones 002/003). Cada pedido se puede **confirmar** (genera un `ticket` FULL por artículo, valida existencia vía `variant_stock` y descuenta inventario con `inventory_movements`) o **cancelar** (si ya tenía tickets, los marca `CANCELLED_INCIDENT` y libera el inventario reservado). No incluye: registrar pedidos manuales desde el panel, ni planes de pago semanales/apartado (el checkout público solo genera pagos de contado, así que no hay UI todavía para elegir esas modalidades).
+
 **Placeholders honestos** ("Próximamente", no botones muertos) para fases futuras:
-- Fase 2: Pedidos, Por ordenar, En camino, Agenda, Cobranza, Devoluciones, Cotizaciones, Empleados.
+- Fase 2: Por ordenar, En camino, Agenda, Cobranza, Devoluciones, Cotizaciones, Empleados.
 - Fase 3: Estadísticas, Reportes.
 - Fase 4: Facturación, Facturación global, Reportería (facturación electrónica — fuera de alcance deliberadamente).
 - Multi-negocio: la base de datos ya guarda `business_id` en todo, pero "Agregar otro negocio" abre un diálogo honesto; falta la pantalla real de crear/cambiar de negocio.

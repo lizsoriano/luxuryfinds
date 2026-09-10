@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useCart } from "../../lib/cart/CartContext";
 
 const links = [
@@ -11,7 +11,13 @@ const links = [
 export function PublicHeader() {
   const [open, setOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const { count } = useCart();
+
+  useEffect(() => {
+    if (searchOpen) searchInputRef.current?.focus();
+  }, [searchOpen]);
+
   return <header className={`public-nav ${open ? "menu-open" : ""}`}>
     <Link className="wordmark" href="/" aria-label="Luxury Finds, inicio"><img src="/images/logo.webp" alt="Luxury Finds" className="wordmark-logo" /></Link>
     <nav className="desktop-nav" aria-label="Navegación principal">{links.map(([label, href]) => <Link key={href} href={href}>{label}</Link>)}</nav>
@@ -29,7 +35,7 @@ export function PublicHeader() {
       <button className="menu-button" type="button" aria-label={open ? "Cerrar menú" : "Abrir menú"} aria-expanded={open} onClick={() => setOpen((v) => !v)}><span /><span /></button>
     </div>
     {searchOpen && <form className="nav-search shell" action="/catalogo" method="get">
-      <input type="search" name="q" placeholder="Busca marcas, productos..." autoFocus aria-label="Buscar productos" />
+      <input ref={searchInputRef} type="search" name="q" placeholder="Busca marcas, productos..." aria-label="Buscar productos" />
       <button type="submit" aria-label="Buscar">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" strokeLinecap="round" /></svg>
       </button>
