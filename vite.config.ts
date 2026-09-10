@@ -4,4 +4,7 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [vinext(), nitro()],
+  optimizeDeps: {
+    exclude: ["vinext/dist/shims/internal/app-prefetch-fetch-queue.js"],
+  },
 });

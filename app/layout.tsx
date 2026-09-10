@@ -1,7 +1,8 @@
-import type { Metadata } from "next";
+  import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
+import { CartProvider } from "../lib/cart/CartContext";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -17,7 +18,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: { default: "Luxury Finds", template: "%s | Luxury Finds" },
     description: "Moda, belleza y productos especiales en La Paz.",
-    icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
+    icons: { icon: "/favicon.png", shortcut: "/favicon.png", apple: "/favicon.png" },
     openGraph: { title: "Luxury Finds", description: "Encuentra algo que te encante.", images: [`${origin}/og.png`] },
     twitter: { card: "summary_large_image", title: "Luxury Finds", description: "Encuentra algo que te encante.", images: [`${origin}/og.png`] },
   };
@@ -31,7 +32,7 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className={`${inter.className} ${inter.variable} antialiased`}>
-        {children}
+        <CartProvider>{children}</CartProvider>
       </body>
     </html>
   );
