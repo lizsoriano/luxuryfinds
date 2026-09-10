@@ -5,10 +5,5 @@
       "path": "/api/sync/run?type=INCREMENTAL&source=all",
       "schedule": "0 9 * * *"
     }
-  ],
-  "functions": {
-    "app/api/sync/run/route.ts": {
-      "maxDuration": 60
-    }
-  }
+  ]
 }
