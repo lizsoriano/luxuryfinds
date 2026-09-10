@@ -14,6 +14,7 @@ export function ConfirmAction({
   action,
   fields,
   triggerLabel,
+  triggerIcon,
   title,
   description,
   confirmLabel = "Confirmar",
@@ -22,6 +23,8 @@ export function ConfirmAction({
   action: (state: ActionState, formData: FormData) => Promise<ActionState>;
   fields: Record<string, string>;
   triggerLabel: string;
+  /** When set, the trigger renders as an icon-only button (triggerLabel becomes its aria-label/title). */
+  triggerIcon?: React.ReactNode;
   title: string;
   description: string;
   confirmLabel?: string;
@@ -41,9 +44,21 @@ export function ConfirmAction({
 
   return (
     <>
-      <Button type="button" variant={variant} size="small" onClick={() => setOpen(true)}>
-        {triggerLabel}
-      </Button>
+      {triggerIcon ? (
+        <button
+          type="button"
+          className="admin-icon-btn"
+          aria-label={triggerLabel}
+          title={triggerLabel}
+          onClick={() => setOpen(true)}
+        >
+          {triggerIcon}
+        </button>
+      ) : (
+        <Button type="button" variant={variant} size="small" onClick={() => setOpen(true)}>
+          {triggerLabel}
+        </Button>
+      )}
       <Dialog open={open} title={title} onClose={() => setOpen(false)}>
         <form action={formAction} className="dialog-form">
           {Object.entries(fields).map(([name, value]) => (

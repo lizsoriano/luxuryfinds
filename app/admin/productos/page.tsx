@@ -1,22 +1,35 @@
-import { ConfirmAction } from "../../../components/admin/ConfirmAction";
 import { FilterForm } from "../../../components/admin/FilterForm";
 import { Pagination } from "../../../components/admin/Pagination";
-import { Badge } from "../../../components/ui/Badge";
 import { Button } from "../../../components/ui/Button";
 import { Card } from "../../../components/ui/Card";
 import { EmptyState } from "../../../components/ui/EmptyState";
-import { formatMoney, formatQuantity } from "../../../lib/format";
-import { listActiveCategories, listProducts } from "../../../lib/supabase/admin-catalog";
+import { listActiveCategories, listProducts, type ProductSort } from "../../../lib/supabase/admin-catalog";
 import { PageHeader } from "../../../components/ui/PageHeader";
-import { setProductActiveAction } from "./actions";
+import { ProductsTable } from "./ProductsTable";
 
 export const dynamic = "force-dynamic";
 
-type SearchParams = { q?: string; categoria?: string; archivados?: string; page?: string };
+type SearchParams = {
+  q?: string;
+  categoria?: string;
+  archivados?: string;
+  page?: string;
+  orden?: string;
+};
+
+const SORT_OPTIONS: Array<{ value: ProductSort; label: string }> = [
+  { value: "recent", label: "Más nuevo" },
+  { value: "oldest", label: "Más antiguo" },
+  { value: "name_asc", label: "Nombre A-Z" },
+  { value: "name_desc", label: "Nombre Z-A" },
+];
 
 export default async function ProductsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const sp = await searchParams;
   const includeArchived = sp.archivados === "1";
+  const sort: ProductSort = SORT_OPTIONS.some((option) => option.value === sp.orden)
+    ? (sp.orden as ProductSort)
+    : "recent";
 
   let result;
   let categories: Array<{ id: string; name: string }> = [];
@@ -27,6 +40,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
         categoryId: sp.categoria || undefined,
         includeArchived,
         page: Number(sp.page) || 1,
+        sort,
       }),
       listActiveCategories(),
     ]);
@@ -50,12 +64,28 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
         title="Productos"
         description="Todo lo que vendes: catálogo por pedido, entrega inmediata y venta directa comparten este mismo listado."
         action={
-          <span style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <Button href="/admin/categorias" variant="secondary" size="small">
               Categorías
             </Button>
+            <a
+              href={`/admin/productos/export?${new URLSearchParams({
+                ...(sp.q ? { q: sp.q } : {}),
+                ...(sp.categoria ? { categoria: sp.categoria } : {}),
+                ...(includeArchived ? { archivados: "1" } : {}),
+              }).toString()}`}
+              className="button button-secondary button-small"
+            >
+              Exportar
+            </a>
+            <span className="admin-soon-chip" title="Importar productos desde Excel — próximamente">
+              Importar
+            </span>
+            <span className="admin-soon-chip" title="Generar productos con IA — próximamente">
+              ✨ Agregar con IA
+            </span>
             <Button href="/admin/productos/nuevo" size="small">
-              Crear producto <span aria-hidden>＋</span>
+              Agregar producto <span aria-hidden>＋</span>
             </Button>
           </span>
         }
@@ -70,7 +100,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
             type="search"
             name="q"
             defaultValue={sp.q ?? ""}
-            placeholder="Nombre o código interno…"
+            placeholder="Nombre, SKU o código interno…"
           />
         </label>
         <label className="field" htmlFor="products-category">
@@ -80,6 +110,16 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
             {categories.map((category) => (
               <option value={category.id} key={category.id}>
                 {category.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field" htmlFor="products-sort">
+          <span>Ordenar</span>
+          <select id="products-sort" className="input select" name="orden" defaultValue={sort}>
+            {SORT_OPTIONS.map((option) => (
+              <option value={option.value} key={option.value}>
+                {option.label}
               </option>
             ))}
           </select>
@@ -101,88 +141,13 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
         </div>
       </FilterForm>
 
+      <p className="admin-result-count">
+        {result.total} producto{result.total === 1 ? "" : "s"}
+      </p>
+
       <Card className="admin-panel">
         {result.products.length ? (
-          <div className="admin-table-scroll">
-            <table className="admin-data-table">
-              <thead>
-                <tr>
-                  <th>Producto</th>
-                  <th>Categoría</th>
-                  <th>Tipo</th>
-                  <th className="numeric">Stock</th>
-                  <th className="numeric">Precio</th>
-                  <th>Catálogo</th>
-                  <th aria-label="Acciones" />
-                </tr>
-              </thead>
-              <tbody>
-                {result.products.map((product) => (
-                  <tr key={product.id}>
-                    <td>
-                      <div className="admin-cell-main">
-                        {product.imageUrl ? (
-                          <img className="admin-thumb" src={product.imageUrl} alt="" />
-                        ) : (
-                          <span className="admin-thumb admin-thumb-fallback" aria-hidden>
-                            LF
-                          </span>
-                        )}
-                        <span>
-                          <strong>{product.name}</strong>
-                          <span className="admin-cell-sub">
-                            {product.internal_code ?? product.variants[0]?.sku ?? "Sin código"} ·{" "}
-                            {product.variants.length} variante(s)
-                          </span>
-                        </span>
-                      </div>
-                    </td>
-                    <td style={{ color: "var(--admin-muted)" }}>{product.categoryName ?? "—"}</td>
-                    <td>
-                      <Badge tone="neutral">
-                        {product.product_kind === "VARIANTS"
-                          ? "Variantes"
-                          : product.product_kind === "MEASURED"
-                            ? "Medidas"
-                            : "Básico"}
-                      </Badge>
-                    </td>
-                    <td className="numeric">{formatQuantity(product.stock, product.variants[0]?.unit_label)}</td>
-                    <td className="numeric">{formatMoney(product.priceCents)}</td>
-                    <td>
-                      {!product.is_active ? (
-                        <Badge tone="neutral">Archivado</Badge>
-                      ) : product.is_public ? (
-                        <Badge tone="success">Visible</Badge>
-                      ) : (
-                        <Badge tone="warning">Oculto</Badge>
-                      )}
-                    </td>
-                    <td>
-                      <div className="admin-row-actions">
-                        <Button href={`/admin/productos/${product.id}`} variant="secondary" size="small">
-                          Editar
-                        </Button>
-                        <ConfirmAction
-                          action={setProductActiveAction}
-                          fields={{ id: product.id, active: product.is_active ? "false" : "true" }}
-                          triggerLabel={product.is_active ? "Archivar" : "Restaurar"}
-                          title={product.is_active ? "Archivar producto" : "Restaurar producto"}
-                          description={
-                            product.is_active
-                              ? `"${product.name}" saldrá del catálogo público y del punto de venta. Su historial de inventario y las ventas ya registradas se conservan.`
-                              : `"${product.name}" volverá al inventario. Tendrás que marcarlo de nuevo como visible si quieres publicarlo.`
-                          }
-                          confirmLabel={product.is_active ? "Archivar" : "Restaurar"}
-                          variant={product.is_active ? "danger" : "primary"}
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ProductsTable products={result.products} />
         ) : (
           <EmptyState
             title={sp.q ? "Sin resultados" : "Aún no tienes productos"}
@@ -197,7 +162,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
         )}
         <Pagination
           basePath="/admin/productos"
-          params={{ q: sp.q, categoria: sp.categoria, archivados: sp.archivados }}
+          params={{ q: sp.q, categoria: sp.categoria, archivados: sp.archivados, orden: sp.orden }}
           page={result.page}
           pageSize={result.pageSize}
           total={result.total}
