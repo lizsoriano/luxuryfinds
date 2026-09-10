@@ -7,49 +7,60 @@ Este documento resume lo que ya está construido y, sobre todo, **lo que falta p
 
 ---
 
-## 🔴 ACCIÓN INMEDIATA — nada de esto sirve sin esto
+## ✅ Ya resuelto (verificado contra Supabase real)
 
-### 1. Correr 3 migraciones SQL pendientes (en este orden, en el SQL editor de Supabase)
+- Las 4 migraciones corrieron y se confirmaron una por una contra la base real: `000_fix_clients_service_role_grant.sql`, `001_telegram_linking.sql`, `002_business_management.sql`, `003_product_sources_sync.sql`, `004_weekly_plan_checkout.sql`. `businesses`, `suppliers`, `cash_sessions`, `sales`, `sale_items`, `expenses`, `variant_stock`, `product_sources`, `sync_runs`, `price_change_log`, `product_match_reviews`, `products.weekly_plan_eligible`, `orders.requested_payment_mode`, `product_variants.barcode`, `clients.telegram_chat_id` — las 14 tablas/columnas nuevas responden correctamente.
+  - *(Nota: `002` tuvo que corregirse una vez — tenía un `ALTER COLUMN` antes del `DROP VIEW` que lo necesitaba, orden inválido en Postgres. Ya está arreglado en el archivo; si vuelves a correrlo desde cero no debería fallar.)*
+- `REFUND_ENCRYPTION_KEY` ya está generada y en `.env` local (64 caracteres hex). Devoluciones ya puede cifrar/descifrar CLABEs.
 
-Ya corriste `000_fix_clients_service_role_grant.sql` y `001_telegram_linking.sql`. **Faltan:**
+## 🔴 ACCIÓN INMEDIATA — lo único que falta para producción
 
-```
-database/migrations/002_business_management.sql
-database/migrations/003_product_sources_sync.sql
-database/migrations/004_weekly_plan_checkout.sql
-```
+### 1. Copiar las variables de entorno a Vercel
 
-Sin `002`: **Vender, Balance, Proveedores e Inventario fallan** (crea `businesses`, `suppliers`, `cash_sessions`, `sales`, `sale_items`, `expenses`, la vista `variant_stock`, columnas nuevas en `products`/`product_variants`: `product_kind`, `internal_code`, `tax_rate_percent`, `cost_cents`, `min_quantity`, `barcode`, `unit_label`; `sale_id` en `inventory_movements`; RLS y bucket de comprobantes).
-
-Sin `003`: **la sincronización de catálogo (Maw Maw/Oskin) no escribe nada** — corre en modo simulado y avisa qué migración falta en vez de fallar (crea `product_sources`, `sync_runs`, `price_change_log`, `product_match_reviews`).
-
-Sin `004`: **nadie puede pedir plan semanal** — el checkbox "Admite plan de pago semanal" en Productos y el selector de modalidad en el checkout público existen en el código pero se degradan a comportamiento normal (pago de contado) sin fallar, porque las columnas nuevas (`products.weekly_plan_eligible`, `orders.requested_payment_mode`, `orders.requested_number_of_weeks`) no existen todavía. En cuanto corras la migración, ambas cosas funcionan solas, sin volver a tocar código.
-
-Ninguna de las tres toca `database/schema.sql` original ni borra nada existente.
-
-### 2. Variables de entorno — ya están en `.env`, verifica que se repliquen en producción (Vercel)
+Todas estas ya tienen valor real en tu `.env` local — **Vercel no las lee de ahí, hay que copiarlas a mano** (o por CLI) en el proyecto de Vercel:
 
 ```
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
-SUPABASE_SECRET_KEY=
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_BOT_USERNAME=
-TELEGRAM_WEBHOOK_SECRET=
-SYNC_CRON_SECRET=
+NEXT_PUBLIC_SUPABASE_URL
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+SUPABASE_SECRET_KEY
+TELEGRAM_BOT_TOKEN
+TELEGRAM_BOT_USERNAME
+TELEGRAM_WEBHOOK_SECRET
+SYNC_CRON_SECRET
+REFUND_ENCRYPTION_KEY
 ```
 
-Todas tienen valor real en `.env` local. **Al desplegar a Vercel, cópialas en Project Settings → Environment Variables** — si no, el bot de Telegram y el cron de sincronización no van a funcionar en producción aunque el código esté listo.
+**Cuáles marcar como "Sensitive" (el checkbox de Vercel, no existe un tipo "secret" separado):**
 
-**Nueva variable que falta generar: `REFUND_ENCRYPTION_KEY`.** Sin ella, Devoluciones (`/admin/devoluciones`) no puede cifrar ni descifrar la CLABE que la clienta captura al pedir un reembolso (`lib/crypto.ts`). Genera un valor y agrégalo a `.env` y a Vercel:
+| Variable | ¿Sensitive? | Por qué |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | No | `NEXT_PUBLIC_*` se inyecta en el JS del navegador al compilar — ya es pública por diseño, marcarla Sensitive no la oculta. |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | No | Mismo caso — es la llave anon de Supabase, protegida por RLS en la base, no por estar oculta. |
+| `TELEGRAM_BOT_USERNAME` | No | Es público — es el `@LuxuryFindsMx_bot` que cualquiera busca en Telegram. |
+| `SUPABASE_SECRET_KEY` | **Sí** | Salta RLS por completo, acceso total a la base. |
+| `TELEGRAM_BOT_TOKEN` | **Sí** | Controla el bot por completo. |
+| `TELEGRAM_WEBHOOK_SECRET` | **Sí** | Verifica que los mensajes al webhook vengan de Telegram. |
+| `SYNC_CRON_SECRET` | **Sí** | Protege el endpoint de sincronización. |
+| `REFUND_ENCRYPTION_KEY` | **Sí** | Descifra CLABEs bancarias reales de clientas — la más delicada. |
 
+Marcarla Sensitive solo oculta el valor en el dashboard después de guardarlo (ya no se puede volver a ver, solo sobrescribir); el código del servidor la sigue leyendo igual vía `process.env`.
+
+**Cómo agregarlas (dashboard, la forma más simple):**
+1. Entra a [vercel.com](https://vercel.com) → tu proyecto (Luxury Finds / appluxury2).
+2. **Settings → Environment Variables**.
+3. Por cada variable de la lista: pega el **Name** (ej. `TELEGRAM_BOT_TOKEN`) y el **Value** (cópialo tal cual de tu `.env` local, sin comillas), marca los 3 entornos (**Production**, **Preview**, **Development**) salvo que quieras separarlos, y dale **Save**.
+4. Repite para las 8. Puedes pegar varias a la vez si usas el botón "Import .env" / "Paste .env" que Vercel ofrece en esa misma pantalla — subes tu archivo `.env` completo y las crea todas de un jalón (revisa que no se cuele nada que no deba ir ahí).
+5. Cuando termines, hace falta un **nuevo deploy** (push a la rama, o "Redeploy" desde el dashboard) para que la app tome las variables — cambiarlas no reinicia un deploy ya corriendo.
+
+**Alternativa por terminal (Vercel CLI), si ya tienes el proyecto vinculado:**
 ```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+vercel env add TELEGRAM_BOT_TOKEN production
 ```
+Te pide el valor por prompt; repite por cada variable y por cada entorno donde la necesites (`production`, `preview`, `development`).
 
-Debe ser una cadena hexadecimal de 64 caracteres. **Nunca reutilices `SUPABASE_SECRET_KEY` ni ningún otro secreto para esto** — es la única llave que puede descifrar cuentas bancarias reales de clientas, trátala igual de en serio.
+⚠️ Sin este paso, el bot de Telegram, la sincronización de catálogo y Devoluciones van a fallar en producción aunque en tu máquina funcionen — el código lee `process.env`, y en Vercel ese `process.env` es el que configures en el dashboard, no tu archivo local.
 
-### 3. Registrar el webhook de Telegram (solo funciona con el sitio ya desplegado, no en localhost)
+### 2. Registrar el webhook de Telegram (solo funciona con el sitio ya desplegado, no en localhost)
 
 ```bash
 curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<tu-dominio>/api/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>"
@@ -57,7 +68,7 @@ curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<t
 
 El bot ya existe: `@LuxuryFindsMx_bot`. Hasta que no se registre el webhook, los clientes pueden vincular su Telegram (`/start <id>`) pero el bot no recibirá esos mensajes.
 
-### 4. Cron de sincronización cada 15 min — límite de plan de Vercel
+### 3. Cron de sincronización cada 15 min — límite de plan de Vercel
 
 `vercel.json` ya declara:
 ```json
@@ -178,11 +189,11 @@ Código completo, **probado con una corrida real en modo simulado (dry-run) cont
 
 ## Orden sugerido para la próxima sesión
 
-1. Correr `002_business_management.sql`, `003_product_sources_sync.sql` y `004_weekly_plan_checkout.sql` en Supabase, y generar/agregar `REFUND_ENCRYPTION_KEY` (ver arriba) a `.env` y Vercel.
+1. ~~Correr las 4 migraciones y generar `REFUND_ENCRYPTION_KEY`~~ — ya hecho y verificado contra la base real.
 2. Loguearte como admin y probar el flujo completo: crear categoría → crear producto (prueba también marcar "Admite plan de pago semanal") → verlo en inventario/vender → abrir caja → hacer una venta → ver que baja el stock y sube en Balance → cerrar caja → probar "Cancelar" esa venta y ver que el stock regrese.
 3. Probar Pedidos + Cobranza de punta a punta: agregar al carrito un producto con plan semanal activado → checkout con "Plan semanal" → confirmar el pedido en `/admin/pedidos` (o crear uno manual en `/admin/pedidos/nuevo`) → verificar que se generen los tickets, el `payment_plan` y sus cuotas → subir un comprobante desde `/cuenta` con esa clienta → aprobarlo en `/admin/cobranza` → confirmar que la cuota quede pagada y el ticket avance.
 4. Probar la logística: mover un ticket por `/admin/por-ordenar` → `/admin/en-camino` → márcalo `READY_FOR_DELIVERY` → publicar una disponibilidad en `/admin/agenda` → reservarlo → completarlo, y ver que llegue el aviso de Telegram en cada paso.
 5. Probar Devoluciones con una CLABE de prueba (no una real todavía) para validar que el cifrado/descifrado funcione antes de confiarle datos bancarios reales — ver la nota de deuda conocida.
 6. Ir a `/admin/inventario/sincronizacion` y correr "Sincronizar ahora" — ya no debería estar en modo simulado.
-7. Desplegar a Vercel con las variables de entorno de `.env` copiadas, registrar el webhook de Telegram, y decidir cómo resolver el cron de 15 min (Pro de Vercel vs. programador externo).
+7. Desplegar a Vercel: copiar las 8 variables de entorno (dashboard → Settings → Environment Variables, o "Import .env"), redeploy, registrar el webhook de Telegram, y decidir cómo resolver el cron de 15 min (Pro de Vercel vs. programador externo).
 8. Seguir con lo que falta de Fase 2 (Cotizaciones, Empleados) y luego Fase 3 (Estadísticas, Reportes) cuando quieras continuar el sistema administrativo. Facturación sigue fuera de alcance hasta que contrates un PAC certificado por el SAT.
