@@ -52,7 +52,12 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
       <PageHeader
         eyebrow="VENDER"
         title="Pedidos"
-        description="Los pedidos que entran desde el sitio web. Confírmalos para generar sus tickets y descontar inventario, o cancélalos si no van a proceder."
+        description="Los pedidos que entran desde el sitio web o que registras tú misma. Confírmalos para generar sus tickets y descontar inventario, o cancélalos si no van a proceder."
+        action={
+          <Button href="/admin/pedidos/nuevo" size="small">
+            Nuevo pedido <span aria-hidden>＋</span>
+          </Button>
+        }
       />
 
       <FilterForm action="/admin/pedidos">

@@ -41,6 +41,14 @@ SYNC_CRON_SECRET=
 
 Todas tienen valor real en `.env` local. **Al desplegar a Vercel, cópialas en Project Settings → Environment Variables** — si no, el bot de Telegram y el cron de sincronización no van a funcionar en producción aunque el código esté listo.
 
+**Nueva variable que falta generar: `REFUND_ENCRYPTION_KEY`.** Sin ella, Devoluciones (`/admin/devoluciones`) no puede cifrar ni descifrar la CLABE que la clienta captura al pedir un reembolso (`lib/crypto.ts`). Genera un valor y agrégalo a `.env` y a Vercel:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Debe ser una cadena hexadecimal de 64 caracteres. **Nunca reutilices `SUPABASE_SECRET_KEY` ni ningún otro secreto para esto** — es la única llave que puede descifrar cuentas bancarias reales de clientas, trátala igual de en serio.
+
 ### 3. Registrar el webhook de Telegram (solo funciona con el sitio ya desplegado, no en localhost)
 
 ```bash
@@ -91,15 +99,19 @@ Construido y probado (`typecheck`/`lint`/`build` limpios):
 - **Inventario** (`/admin/inventario`) — KPIs, buscador, filtros, paginación real, acciones con confirmación.
 - **Clientes** (`/admin/clientes`) — reutiliza `clients` existente (no duplica), historial de compras derivado.
 - **Proveedores** (`/admin/proveedores`) — tabla nueva `suppliers`, CRUD.
-- **Vender** (`/admin/vender`, `SellTerminal.tsx`) — punto de venta completo: buscador, código de barras/SKU, carrito con cantidades, "Nueva venta libre", "Nuevo gasto", **apertura/cierre de caja real** (no placeholder), descuenta stock vía `inventory_movements` con rollback si algo falla.
-- **Balance** (`/admin/balance`) — KPIs (Balance/Ventas/Gastos), transacciones, cierres de caja, filtros por fecha.
+- **Vender** (`/admin/vender`, `SellTerminal.tsx`) — punto de venta completo: buscador, código de barras/SKU, carrito con cantidades, "Nueva venta libre", "Nuevo gasto", **apertura/cierre de caja real** (no placeholder), descuenta stock vía `inventory_movements` con rollback si algo falla. **Cancelar venta**: desde `/admin/balance`, un botón "Cancelar" por cada venta libera el inventario que había descontado (`sales.status`/`cancelled_at` existían en el schema sin usarse).
 
-**Fase 2 — en progreso:**
-- **Pedidos** (`/admin/pedidos`) — ya no es un placeholder. Lista los pedidos reales creados desde el carrito público (tabla `orders`/`order_items`, que ya existe en `database/schema.sql` base, sin depender de las migraciones 002/003). Cada pedido se puede **confirmar** (genera un `ticket` por artículo — `FULL` o `WEEKLY_PLAN`, según lo que haya pedido la clienta — valida existencia vía `variant_stock` y descuenta inventario con `inventory_movements`) o **cancelar** (si ya tenía tickets, los marca `CANCELLED_INCIDENT`, libera el inventario reservado y cancela su `payment_plan` si tenía uno). No incluye: registrar pedidos manuales desde el panel, ni apartado (`LAYAWAY` — el checkout público solo ofrece pago completo o plan semanal).
-  - **Plan semanal** (requiere migración `004`): si la clienta pidió plan semanal, confirmar el pedido también genera el `payment_plan` (4-16 semanas, empieza el día que se confirma) y sus `installments` (cuotas repartidas en partes iguales, el resto de centavos va a la última). El detalle del pedido (`/admin/pedidos/[id]`) muestra cuántas cuotas van pagadas y cuál es la próxima. **Lo que falta**: nada registra pagos de cuotas todavía — eso es Cobranza (placeholder de Fase 2), así que hoy las cuotas se quedan en `PENDING` para siempre a menos que alguien las actualice a mano en Supabase.
+**Fase 2 — construida en esta ronda (además de lo de la ronda anterior):**
+- **Pedidos** (`/admin/pedidos`) — lista los pedidos reales creados desde el carrito público o desde el panel. Cada pedido se puede **confirmar** (genera un `ticket` por artículo — `FULL` o `WEEKLY_PLAN` — valida existencia vía `variant_stock` y descuenta inventario) o **cancelar** (libera inventario y cancela su `payment_plan` si tenía uno).
+  - **`/admin/pedidos/nuevo`**: crear un pedido manual (WhatsApp/teléfono/en persona) eligiendo clienta, productos y modalidad de pago — el equivalente del checkout público pero desde el panel (`origin = ADMIN_MANUAL`).
+  - **Plan semanal** (requiere migración `004`): confirmar un pedido con plan semanal genera el `payment_plan` (4-16 semanas) y sus `installments`.
+- **Cobranza** (`/admin/cobranza`) — ya no es un placeholder. Las clientas ya podían subir comprobantes de pago desde `/cuenta` (`app/cuenta/payment-proof-actions.ts`, construido en una sesión anterior a esta) pero nada del lado admin revisaba esos comprobantes hasta ahora. Aquí se **aprueban o rechazan**: aprobar registra un `payment`, reparte el monto entre las cuotas más antiguas del `payment_plan` (o marca pagado directo si el ticket es `FULL`), y si sobra dinero después de pagar todas las cuotas, el excedente se guarda como saldo a favor en `clients.credit_balance_cents`. Ambas acciones avisan a la clienta por Telegram y en su campanita de notificaciones (`notifications`, ya usada por `/cuenta`).
+- **Por ordenar** (`/admin/por-ordenar`) y **En camino** (`/admin/en-camino`) — bandejas de tickets por `logistics_status` (`WAITING_TO_ORDER`/`READY_TO_ORDER` y `ORDERED`/`IN_TRANSIT`/`RECEIVED_LA_PAZ`). Un botón "Actualizar estado" avanza el ticket y notifica a la clienta; puedes anotar tienda/folio de compra (se guarda en `order_items.notes`, que no tenía otro uso).
+- **Agenda de entregas** (`/admin/agenda`) — publica una disponibilidad por ubicación y fecha/hora, y **genera automáticamente los horarios de 10 minutos** que exige el schema (`delivery_slots`). Puedes reservar un ticket `READY_FOR_DELIVERY` en un horario, marcar la entrega completada (el ticket pasa a `DELIVERED`) o cancelarla (el ticket vuelve a `READY_FOR_DELIVERY` para reagendar). Las clientas todavía no tienen una pantalla propia para autoagendar — hoy todo lo agenda la admin a mano, igual que un pedido manual.
+- **Devoluciones** (`/admin/devoluciones`) — las clientas piden un reembolso desde `/cuenta` (nuevo formulario: banco, titular, CLABE, motivo — la CLABE se cifra antes de guardarse, ver `REFUND_ENCRYPTION_KEY` arriba). Desde el panel se marca "en proceso", se **completa** (registra el `refund` con monto/método/referencia una vez que ya hiciste la transferencia real desde tu banco, y marca el ticket `REFUNDED`) o se **rechaza**. ⚠️ **Esta pieza específica no se probó contra una base de datos real** (no tengo credenciales de admin ni acceso a Supabase) — el formato `bytea`/hex que usa Postgres para `clabe_encrypted` está implementado según la documentación de PostgREST, pero antes de confiarle CLABEs reales de clientas, haz una prueba de extremo a extremo: pide un reembolso de prueba, ve a `/admin/devoluciones` y confirma que la CLABE se vea correcta y completa.
 
-**Placeholders honestos** ("Próximamente", no botones muertos) para fases futuras:
-- Fase 2: Por ordenar, En camino, Agenda, Cobranza, Devoluciones, Cotizaciones, Empleados.
+**Placeholders honestos** ("Próximamente", no botones muertos) que siguen pendientes — no se tocaron en esta ronda a propósito (Facturación sigue fuera de alcance porque necesita un PAC certificado por el SAT; los demás no se priorizaron esta vez):
+- Fase 2: Cotizaciones, Empleados.
 - Fase 3: Estadísticas, Reportes.
 - Fase 4: Facturación, Facturación global, Reportería (facturación electrónica — fuera de alcance deliberadamente).
 - Multi-negocio: la base de datos ya guarda `business_id` en todo, pero "Agregar otro negocio" abre un diálogo honesto; falta la pantalla real de crear/cambiar de negocio.
@@ -126,30 +138,38 @@ Código completo, **probado con una corrida real en modo simulado (dry-run) cont
 
 ## ⚠️ Cosas a tener en cuenta / deuda conocida
 
-1. **Nadie ha probado los flujos reales con sesión de administradora real** (crear venta, cerrar caja, sincronizar catálogo, confirmar/cancelar un pedido, plan semanal de punta a punta) — todo se verificó con `build`/`typecheck`/`lint` y, cuando fue posible, navegación sin sesión (redirects correctos a `/login`). Hace falta un pase manual tuyo logueada como admin.
+1. **Nadie ha probado los flujos reales con sesión de administradora real** (crear venta, cerrar caja, sincronizar catálogo, confirmar/cancelar un pedido, plan semanal de punta a punta, aprobar un comprobante en Cobranza, agendar una entrega, procesar una devolución) — todo se verificó con `build`/`typecheck`/`lint` y, cuando fue posible, navegación sin sesión (redirects correctos a `/login`). Hace falta un pase manual tuyo logueada como admin — es la deuda más grande del proyecto en este momento, cubre literalmente todo lo construido en las últimas dos rondas.
 2. **Error de dev-server intermitente y preexistente** (no relacionado con este trabajo): a veces aparece un overlay rojo `"Cannot read properties of undefined (reading 'import')"` desde `@vitejs/plugin-rsc` al correr `npm run dev`. Es un bug conocido del stack `vinext`/`vite-rsc` en beta; normalmente se resuelve recargando la página y no aparece en `npm run build` de producción. En esta sesión llegó a quedarse pegado incluso recargando — si te pasa, cierra el proceso de `npm run dev` (o la terminal donde corre) y vuelve a arrancarlo.
 3. **Imágenes copiadas de Maw Maw/Oskin**: aunque ambas tiendas son tuyas/aliadas, revisa que tengas derecho a usar esas imágenes en Luxury Finds antes de publicarlas masivamente (mismo criterio que ya aplicó el pipeline previo de Oskin en `C:\Users\rutil\Desktop\oskin_luxury_finds_pipeline\`).
-4. **Empleados** hoy no tiene perfiles propios ni permisos — cada venta/gasto se registra a nombre del usuario de `admin_users` que la captura. Está listado como Fase 2.
-5. ~~4 errores de lint preexistentes~~ — corregidos en esta sesión (`no-html-link-for-pages` en catálogo, `no-autofocus` en `PublicHeader`). `npm run lint` queda en 0 errores (solo 12 warnings de `<img>` sin optimizar, fuera de alcance).
-6. Recurso de referencia si necesitas re-scrapear Oskin manualmente: `C:\Users\rutil\Desktop\oskin_luxury_finds_pipeline\` (pipeline Playwright independiente, con su propio `README.md`).
+4. **Empleados** hoy no tiene perfiles propios ni permisos — cada venta/gasto se registra a nombre del usuario de `admin_users` que la captura. Sigue en Fase 2, no se construyó esta ronda (decidiste priorizar Cobranza/Agenda/Devoluciones). Cuando lo retomes: la idea acordada es que un empleado normal solo pueda usar Vender y ver Inventario, sin acceso a Balance ni Configuración — habría que agregar un rol/permiso a `admin_users` (hoy todos los admins tienen el mismo acceso completo).
+5. **Devoluciones no probada contra Supabase real** — ver el punto en la sección de arriba sobre `REFUND_ENCRYPTION_KEY`. El cifrado en sí (`lib/crypto.ts`, AES-256-GCM con Node `crypto`) es estándar y confiable; lo que no pude verificar es el formato exacto en que PostgREST espera/devuelve una columna `bytea` en JSON. Prueba de punta a punta antes de usarla con datos bancarios reales.
+6. **Agenda no tiene autoagendado para clientas** — hoy toda cita se crea desde el panel (`/admin/agenda`), a mano. Las tablas (`delivery_locations`, `delivery_slots`, RLS de solo lectura para clientes autenticados) ya están listas para que en el futuro una clienta reserve su propio horario desde `/cuenta`, pero esa pantalla no existe todavía.
+7. ~~4 errores de lint preexistentes~~ — corregidos en una sesión anterior (`no-html-link-for-pages` en catálogo, `no-autofocus` en `PublicHeader`). `npm run lint` sigue en 0 errores (solo 12 warnings de `<img>` sin optimizar, fuera de alcance).
+8. Recurso de referencia si necesitas re-scrapear Oskin manualmente: `C:\Users\rutil\Desktop\oskin_luxury_finds_pipeline\` (pipeline Playwright independiente, con su propio `README.md`).
 
 ---
 
 ## Resumen de rutas nuevas en `/admin`
 
 ```
-/admin/vender                      ← Punto de venta (completo)
-/admin/balance                     ← Balance, transacciones, cierres de caja (completo)
-/admin/inventario                  ← Listado + KPIs (completo)
+/admin/vender                      ← Punto de venta (completo) + cancelar venta desde Balance
+/admin/balance                     ← Balance, transacciones (con "Cancelar" por venta), cierres de caja (completo)
+/admin/inventario                  ← Listado + KPIs + "Ajustar stock" (entradas/ajustes manuales) (completo)
 /admin/inventario/sincronizacion   ← Sincronización Maw Maw/Oskin (completo, dry-run hasta migrar)
-/admin/productos                   ← CRUD productos (completo)
+/admin/productos                   ← CRUD productos + switch de plan semanal (completo)
 /admin/categorias                  ← CRUD categorías (completo)
 /admin/clientes                    ← CRUD clientes (completo)
 /admin/proveedores                 ← CRUD proveedores (completo)
-/admin/configuracion                ← (completo)
+/admin/pedidos                     ← Lista, confirma, cancela (completo)
+/admin/pedidos/nuevo               ← Pedido manual desde el panel (completo)
+/admin/cobranza                    ← Aprobar/rechazar comprobantes de pago (completo)
+/admin/por-ordenar                 ← Tickets WAITING_TO_ORDER/READY_TO_ORDER (completo)
+/admin/en-camino                   ← Tickets ORDERED/IN_TRANSIT/RECEIVED_LA_PAZ (completo)
+/admin/agenda                      ← Disponibilidad, horarios de 10 min, reservar/completar/cancelar entregas (completo)
+/admin/devoluciones                ← Revisar y procesar solicitudes de reembolso (completo, sin probar en vivo — ver deuda conocida)
+/admin/configuracion                ← (completo, solo lectura por diseño)
 /admin/ayuda                        ← (completo)
-/admin/{pedidos,por-ordenar,en-camino,agenda,cobranza,devoluciones,
-        cotizaciones,empleados,estadisticas,reportes,facturacion,
+/admin/{cotizaciones,empleados,estadisticas,reportes,facturacion,
         facturacion/global,facturacion/reporteria,sitio-web}  ← Placeholders "Próximamente"
 ```
 
@@ -157,9 +177,11 @@ Código completo, **probado con una corrida real en modo simulado (dry-run) cont
 
 ## Orden sugerido para la próxima sesión
 
-1. Correr `002_business_management.sql`, `003_product_sources_sync.sql` y `004_weekly_plan_checkout.sql` en Supabase.
-2. Loguearte como admin y probar el flujo completo: crear categoría → crear producto (prueba también marcar "Admite plan de pago semanal") → verlo en inventario/vender → abrir caja → hacer una venta → ver que baja el stock y sube en Balance → cerrar caja.
-3. Probar Pedidos de punta a punta: agregar al carrito un producto con plan semanal activado → checkout con "Plan semanal" → confirmar el pedido en `/admin/pedidos` → verificar que se generen los tickets, el `payment_plan` y sus cuotas → probar cancelar un pedido confirmado y ver que el inventario se libere.
-4. Ir a `/admin/inventario/sincronizacion` y correr "Sincronizar ahora" — ya no debería estar en modo simulado.
-5. Desplegar a Vercel con las variables de entorno de `.env` copiadas, registrar el webhook de Telegram, y decidir cómo resolver el cron de 15 min (Pro de Vercel vs. programador externo).
-6. Seguir con Fase 2 (Cobranza es el siguiente paso natural: hoy nada registra el pago de una cuota del plan semanal; después Cotizaciones/Empleados/Agenda) cuando quieras continuar el sistema administrativo.
+1. Correr `002_business_management.sql`, `003_product_sources_sync.sql` y `004_weekly_plan_checkout.sql` en Supabase, y generar/agregar `REFUND_ENCRYPTION_KEY` (ver arriba) a `.env` y Vercel.
+2. Loguearte como admin y probar el flujo completo: crear categoría → crear producto (prueba también marcar "Admite plan de pago semanal") → verlo en inventario/vender → abrir caja → hacer una venta → ver que baja el stock y sube en Balance → cerrar caja → probar "Cancelar" esa venta y ver que el stock regrese.
+3. Probar Pedidos + Cobranza de punta a punta: agregar al carrito un producto con plan semanal activado → checkout con "Plan semanal" → confirmar el pedido en `/admin/pedidos` (o crear uno manual en `/admin/pedidos/nuevo`) → verificar que se generen los tickets, el `payment_plan` y sus cuotas → subir un comprobante desde `/cuenta` con esa clienta → aprobarlo en `/admin/cobranza` → confirmar que la cuota quede pagada y el ticket avance.
+4. Probar la logística: mover un ticket por `/admin/por-ordenar` → `/admin/en-camino` → márcalo `READY_FOR_DELIVERY` → publicar una disponibilidad en `/admin/agenda` → reservarlo → completarlo, y ver que llegue el aviso de Telegram en cada paso.
+5. Probar Devoluciones con una CLABE de prueba (no una real todavía) para validar que el cifrado/descifrado funcione antes de confiarle datos bancarios reales — ver la nota de deuda conocida.
+6. Ir a `/admin/inventario/sincronizacion` y correr "Sincronizar ahora" — ya no debería estar en modo simulado.
+7. Desplegar a Vercel con las variables de entorno de `.env` copiadas, registrar el webhook de Telegram, y decidir cómo resolver el cron de 15 min (Pro de Vercel vs. programador externo).
+8. Seguir con lo que falta de Fase 2 (Cotizaciones, Empleados) y luego Fase 3 (Estadísticas, Reportes) cuando quieras continuar el sistema administrativo. Facturación sigue fuera de alcance hasta que contrates un PAC certificado por el SAT.

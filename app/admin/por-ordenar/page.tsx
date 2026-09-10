@@ -1,23 +1,37 @@
-import { ComingSoon } from "../../../components/admin/ComingSoon";
+import { Card } from "../../../components/ui/Card";
+import { PageHeader } from "../../../components/ui/PageHeader";
+import { listTicketsByLogistics } from "../../../lib/supabase/admin-orders";
+import { LogisticsTicketTable } from "../pedidos/LogisticsTicketTable";
 
 export const dynamic = "force-dynamic";
 
-export default function Page() {
+export default async function PorOrdenarPage() {
+  let tickets;
+  try {
+    tickets = await listTicketsByLogistics(["WAITING_TO_ORDER", "READY_TO_ORDER"]);
+  } catch (error) {
+    return (
+      <main className="admin-content">
+        <PageHeader eyebrow="VENDER" title="Por ordenar" />
+        <Card className="admin-panel" style={{ marginTop: 24 }}>
+          <p className="form-message form-error" role="alert">
+            No pudimos cargar los tickets: {error instanceof Error ? error.message : "error desconocido"}
+          </p>
+        </Card>
+      </main>
+    );
+  }
+
   return (
-    <ComingSoon
-      eyebrow="VENDER"
-      title="Por ordenar"
-      phase="Fase 2"
-      summary="La bandeja de tickets listos para comprarle al proveedor todavía no está construida."
-      bullets={[
-        "Tickets en estado READY_TO_ORDER agrupados por tienda.",
-        "Marcar como ordenado y registrar el número de compra.",
-        "Avisar a la clienta cuando su producto se ordena.",
-      ]}
-      availableNow={[
-          { label: "Vender", href: "/admin/vender", description: "Registra una venta de mostrador y descuenta inventario." },
-          { label: "Inventario", href: "/admin/inventario", description: "Existencias, costos y alertas de stock bajo." },
-      ]}
-    />
+    <main className="admin-content">
+      <PageHeader
+        eyebrow="VENDER"
+        title="Por ordenar"
+        description="Tickets de artículos por pedido que todavía no se compran al proveedor. Actualiza el estado a 'Ordenado' cuando lo hagas."
+      />
+      <Card className="admin-panel">
+        <LogisticsTicketTable tickets={tickets} emptyDescription="No hay tickets esperando ordenarse al proveedor." />
+      </Card>
+    </main>
   );
 }

@@ -2,16 +2,107 @@
 
 import { revalidatePath } from "next/cache";
 import { describeError, failure, ok, type ActionState } from "../../../lib/actions";
-import { businessToday } from "../../../lib/format";
-import { getStockFor } from "../../../lib/supabase/admin-catalog";
+import { businessToday, LOGISTICS_STATUS_LABELS } from "../../../lib/format";
+import { getStockFor, getWeeklyPlanEligibility } from "../../../lib/supabase/admin-catalog";
 import { getRequestedPaymentPlan } from "../../../lib/supabase/admin-orders";
 import { adminDb, logActivity, requireAdminActor } from "../../../lib/supabase/business";
+import { sendTelegramMessage } from "../../../lib/telegram/send";
 
 function revalidate(orderId?: string) {
   revalidatePath("/admin/pedidos");
   if (orderId) revalidatePath(`/admin/pedidos/${orderId}`);
   revalidatePath("/admin/inventario");
   revalidatePath("/admin/clientes");
+  revalidatePath("/admin/por-ordenar");
+  revalidatePath("/admin/en-camino");
+  revalidatePath("/admin/agenda");
+}
+
+/** notification_type only has entries for some logistics_status values; GENERAL covers the rest. */
+const LOGISTICS_NOTIFICATION_TYPE: Record<string, string> = {
+  READY_TO_ORDER: "READY_TO_ORDER",
+  ORDERED: "ORDERED",
+  IN_TRANSIT: "IN_TRANSIT",
+  RECEIVED_LA_PAZ: "RECEIVED_LA_PAZ",
+  READY_FOR_DELIVERY: "READY_FOR_DELIVERY",
+};
+
+const TERMINAL_LOGISTICS_STATUSES = new Set(["DELIVERED", "CANCELLED_INCIDENT"]);
+
+/**
+ * Shared by Por ordenar and En camino (both just show tickets filtered to a
+ * different slice of this same status list). Optionally records where the
+ * item is being ordered from / a purchase reference in order_items.notes —
+ * there is no dedicated column for that, and notes is otherwise unused here.
+ */
+export async function advanceLogisticsStatusAction(_state: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const actor = await requireAdminActor();
+    const ticketId = String(formData.get("ticketId") ?? "");
+    const newStatus = String(formData.get("status") ?? "");
+    if (!ticketId) return failure("Ticket no encontrado.");
+    if (!(newStatus in LOGISTICS_STATUS_LABELS)) return failure("Estado logístico no válido.");
+
+    const db = adminDb();
+    const { data: ticket, error: ticketError } = await db
+      .from("tickets")
+      .select("id, order_item_id, client_id, ticket_number, product_name_snapshot, logistics_status")
+      .eq("id", ticketId)
+      .maybeSingle();
+    if (ticketError) return failure(describeError(new Error(ticketError.message), "No fue posible leer el ticket."));
+    if (!ticket) return failure("Ticket no encontrado.");
+    if (TERMINAL_LOGISTICS_STATUSES.has(ticket.logistics_status)) {
+      return failure("Este ticket ya está en un estado final y no se puede mover.");
+    }
+
+    const { error: updateError } = await db
+      .from("tickets")
+      .update({ logistics_status: newStatus, updated_at: new Date().toISOString() })
+      .eq("id", ticketId);
+    if (updateError) return failure(describeError(new Error(updateError.message), "No fue posible actualizar el ticket."));
+
+    const note = String(formData.get("note") ?? "").trim();
+    if (note) {
+      await db.from("order_items").update({ notes: note }).eq("id", ticket.order_item_id);
+    }
+
+    const statusLabel = LOGISTICS_STATUS_LABELS[newStatus] ?? newStatus;
+    try {
+      await db.from("notifications").insert({
+        client_id: ticket.client_id,
+        ticket_id: ticket.id,
+        type: LOGISTICS_NOTIFICATION_TYPE[newStatus] ?? "GENERAL",
+        title: statusLabel,
+        body: `Tu pedido "${ticket.product_name_snapshot}" (ticket ${ticket.ticket_number}) ahora está: ${statusLabel}.`,
+      });
+    } catch {
+      // Best-effort, matches every other in-app notification write in this app.
+    }
+    try {
+      const { data: client } = await db.from("clients").select("telegram_chat_id").eq("id", ticket.client_id).maybeSingle();
+      if (client?.telegram_chat_id) {
+        await sendTelegramMessage(
+          client.telegram_chat_id,
+          `📦 <b>${statusLabel}</b>\nTicket: ${ticket.ticket_number}\n${ticket.product_name_snapshot}${note ? `\n${note}` : ""}`,
+        );
+      }
+    } catch {
+      // Best-effort.
+    }
+
+    await logActivity({
+      adminUserId: actor.id,
+      action: "TICKET_LOGISTICS_UPDATED",
+      entityType: "tickets",
+      entityId: ticketId,
+      previousData: { logistics_status: ticket.logistics_status },
+      newData: { logistics_status: newStatus, note: note || null },
+    });
+    revalidate();
+    return ok(`Ticket ${ticket.ticket_number} actualizado a "${statusLabel}".`);
+  } catch (error) {
+    return failure(describeError(error, "No fue posible actualizar el ticket."));
+  }
 }
 
 function relation<T>(value: T | T[] | null | undefined): T | null {
@@ -390,5 +481,121 @@ export async function cancelOrderAction(_state: ActionState, formData: FormData)
     return ok("Pedido cancelado.");
   } catch (error) {
     return failure(describeError(error, "No fue posible cancelar el pedido."));
+  }
+}
+
+export type CreateManualOrderResult = { success: true; orderId: string } | { success: false; error: string };
+
+type ManualCartLine = { variantId: string; quantity: number };
+
+/**
+ * The panel's counterpart to app/(public)/checkout/actions.ts. A pedido made
+ * over WhatsApp/phone lands here instead of the customer's own cart, with
+ * origin ADMIN_MANUAL instead of WEBSITE — everything downstream (confirming,
+ * ticket/payment_plan generation, cancelling) is identical either way.
+ */
+export async function createManualOrderAction(
+  clientId: string,
+  cart: ManualCartLine[],
+  paymentMode: "FULL" | "WEEKLY_PLAN",
+  numberOfWeeks?: number,
+): Promise<CreateManualOrderResult> {
+  try {
+    const actor = await requireAdminActor();
+    if (!clientId) return { success: false, error: "Elige una clienta." };
+    if (!cart.length) return { success: false, error: "Agrega al menos un artículo." };
+    for (const line of cart) {
+      if (!line.variantId || !Number.isInteger(line.quantity) || line.quantity <= 0) {
+        return { success: false, error: "Un artículo del pedido no es válido." };
+      }
+    }
+
+    const db = adminDb();
+
+    const { data: client, error: clientError } = await db.from("clients").select("id, status").eq("id", clientId).maybeSingle();
+    if (clientError) return { success: false, error: describeError(new Error(clientError.message), "No fue posible leer la clienta.") };
+    if (!client) return { success: false, error: "Clienta no encontrada." };
+    if (client.status !== "ACTIVE") return { success: false, error: "Esta clienta no está activa." };
+
+    const variantIds = cart.map((line) => line.variantId);
+    const { data: variants, error: variantsError } = await db
+      .from("product_variants")
+      .select("id, price_cents, is_active, product_id, products(is_active)")
+      .in("id", variantIds);
+    if (variantsError) return { success: false, error: describeError(new Error(variantsError.message), "No fue posible leer los productos.") };
+    if (!variants || variants.length !== new Set(variantIds).size) return { success: false, error: "Algún artículo ya no existe." };
+
+    type VariantRow = { id: string; price_cents: number; is_active: boolean; product_id: string; products: { is_active: boolean } | { is_active: boolean }[] | null };
+    const rows = variants as unknown as VariantRow[];
+    for (const row of rows) {
+      const product = relation(row.products);
+      if (!row.is_active || !product?.is_active) return { success: false, error: "Uno de los artículos ya no está activo." };
+    }
+
+    let requestedPaymentMode: "FULL" | "WEEKLY_PLAN" = "FULL";
+    let requestedNumberOfWeeks: number | null = null;
+    if (paymentMode === "WEEKLY_PLAN") {
+      if (!Number.isInteger(numberOfWeeks) || (numberOfWeeks as number) < 4 || (numberOfWeeks as number) > 16) {
+        return { success: false, error: "Elige un número de semanas válido (4 a 16)." };
+      }
+      const productIds = [...new Set(rows.map((row) => row.product_id))];
+      const eligibility = await getWeeklyPlanEligibility(productIds);
+      if (productIds.some((id) => !eligibility.get(id))) {
+        return { success: false, error: "Uno o más productos no admiten plan semanal." };
+      }
+      requestedPaymentMode = "WEEKLY_PLAN";
+      requestedNumberOfWeeks = numberOfWeeks as number;
+    }
+
+    const byId = new Map(rows.map((row) => [row.id, row]));
+
+    // requested_payment_mode/requested_number_of_weeks only exist once migration
+    // 004 has run; only referencing them for an actual WEEKLY_PLAN request keeps
+    // a plain FULL pedido working either way (see app/(public)/checkout/actions.ts
+    // for the identical reasoning).
+    const orderInsert: Record<string, unknown> = {
+      client_id: clientId,
+      origin: "ADMIN_MANUAL",
+      status: "DRAFT",
+      created_by_admin_id: actor.id,
+    };
+    if (requestedPaymentMode === "WEEKLY_PLAN") {
+      orderInsert.requested_payment_mode = requestedPaymentMode;
+      orderInsert.requested_number_of_weeks = requestedNumberOfWeeks;
+    }
+
+    const { data: order, error: orderError } = await db.from("orders").insert(orderInsert).select("id").single();
+    if (orderError || !order) {
+      return { success: false, error: describeError(new Error(orderError?.message ?? "error desconocido"), "No fue posible crear el pedido.") };
+    }
+
+    const { error: itemsError } = await db.from("order_items").insert(
+      cart.map((line) => {
+        const variant = byId.get(line.variantId)!;
+        return {
+          order_id: order.id,
+          product_id: variant.product_id,
+          variant_id: line.variantId,
+          quantity: line.quantity,
+          unit_price_cents: variant.price_cents,
+        };
+      }),
+    );
+    if (itemsError) {
+      await db.from("orders").delete().eq("id", order.id);
+      return { success: false, error: describeError(new Error(itemsError.message), "No fue posible registrar los artículos del pedido.") };
+    }
+
+    await logActivity({
+      adminUserId: actor.id,
+      action: "ORDER_CREATED_MANUAL",
+      entityType: "orders",
+      entityId: order.id as string,
+      newData: { clientId, items: cart.length, paymentMode: requestedPaymentMode },
+    });
+    revalidate(order.id as string);
+    return { success: true, orderId: order.id as string };
+  } catch (error) {
+    return { success: false, error: describeError(error, "No fue posible crear el pedido.") };
   }
 }

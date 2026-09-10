@@ -96,3 +96,15 @@ export const PAYMENT_METHOD_LABELS: Record<string, string> = {
 };
 
 export const PAYMENT_METHODS = ["CASH", "TRANSFER", "PAYMENT_LINK"] as const;
+
+export const LOGISTICS_STATUS_LABELS: Record<string, string> = {
+  WAITING_TO_ORDER: "Esperando pedido",
+  READY_TO_ORDER: "Listo para ordenar",
+  ORDERED: "Ordenado",
+  IN_TRANSIT: "En camino",
+  RECEIVED_LA_PAZ: "Recibido en La Paz",
+  READY_FOR_DELIVERY: "Listo para entrega",
+  DELIVERY_SCHEDULED: "Entrega programada",
+  DELIVERED: "Entregado",
+  CANCELLED_INCIDENT: "Cancelado",
+};
