@@ -453,6 +453,127 @@ export async function setProductActiveAction(_state: ActionState, formData: Form
   }
 }
 
+export async function bulkArchiveProductsAction(_state: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const actor = await requireAdminActor();
+    const ids = formData.getAll("id").map((value) => String(value)).filter(Boolean);
+    if (!ids.length) return failure("Selecciona al menos un producto.");
+
+    const db = adminDb();
+    const { error } = await db
+      .from("products")
+      .update({ is_active: false, is_public: false, updated_at: new Date().toISOString() })
+      .in("id", ids);
+    if (error) return failure(describeError(new Error(error.message), "No fue posible archivar los productos."));
+
+    await logActivity({
+      adminUserId: actor.id,
+      action: "PRODUCT_BULK_ARCHIVED",
+      entityType: "products",
+      entityId: ids.join(","),
+      newData: { count: ids.length },
+    });
+    revalidateCatalog();
+    return ok(`${ids.length} producto(s) archivado(s).`);
+  } catch (error) {
+    return failure(describeError(error, "No fue posible archivar los productos."));
+  }
+}
+
+/**
+ * Images are not copied: product_images.storage_key is UNIQUE, so duplicating
+ * them would mean copying the actual file in Storage. Simpler and honest to
+ * leave the copy without photos — the admin re-adds them if needed — than to
+ * silently do extra storage work or reuse the same image across two products.
+ * Stock also starts at zero; a duplicate is a new product, not new inventory.
+ */
+export async function duplicateProductAction(_state: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const actor = await requireAdminActor();
+    const id = String(formData.get("id") ?? "");
+    if (!id) return failure("Producto no encontrado.");
+
+    const db = adminDb();
+    const { data: source, error: sourceError } = await db
+      .from("products")
+      .select(
+        `name, description, category_id, catalog_type, product_kind, tax_rate_percent,
+         product_variants(name, sku, barcode, unit_label, price_cents, cost_cents, min_quantity, attributes, is_active)`,
+      )
+      .eq("id", id)
+      .maybeSingle();
+    if (sourceError) return failure(describeError(new Error(sourceError.message), "No fue posible leer el producto."));
+    if (!source) return failure("El producto ya no existe.");
+
+    const newName = `${source.name} (copia)`;
+    const slug = await ensureUniqueSlug("products", slugify(newName));
+    const { data: created, error: createError } = await db
+      .from("products")
+      .insert({
+        name: newName,
+        slug,
+        description: source.description,
+        category_id: source.category_id,
+        catalog_type: source.catalog_type,
+        product_kind: source.product_kind,
+        tax_rate_percent: source.tax_rate_percent,
+        is_public: false,
+        is_active: true,
+        created_by_admin_id: actor.id,
+      })
+      .select("id")
+      .single();
+    if (createError) return failure(describeError(new Error(createError.message), "No fue posible duplicar el producto."));
+
+    const variants = (source.product_variants as VariantSourceRow[] | null ?? []).filter((v) => v.is_active);
+    if (variants.length) {
+      const { error: variantError } = await db.from("product_variants").insert(
+        variants.map((variant) => ({
+          product_id: created.id,
+          name: variant.name,
+          sku: null,
+          barcode: null,
+          unit_label: variant.unit_label,
+          price_cents: variant.price_cents,
+          cost_cents: variant.cost_cents,
+          min_quantity: variant.min_quantity,
+          attributes: variant.attributes,
+          is_active: true,
+        })),
+      );
+      if (variantError) {
+        await db.from("products").delete().eq("id", created.id);
+        return failure(describeError(new Error(variantError.message), "No fue posible duplicar las variantes."));
+      }
+    }
+
+    await logActivity({
+      adminUserId: actor.id,
+      action: "PRODUCT_DUPLICATED",
+      entityType: "products",
+      entityId: created.id as string,
+      previousData: { sourceId: id },
+      newData: { name: newName },
+    });
+    revalidateCatalog();
+    return ok(`"${newName}" se creó como borrador oculto, sin fotos ni existencias — agrégalas y márcalo visible cuando esté listo.`);
+  } catch (error) {
+    return failure(describeError(error, "No fue posible duplicar el producto."));
+  }
+}
+
+type VariantSourceRow = {
+  name: string;
+  sku: string | null;
+  barcode: string | null;
+  unit_label: string | null;
+  price_cents: number;
+  cost_cents: number;
+  min_quantity: number;
+  attributes: Record<string, unknown>;
+  is_active: boolean;
+};
+
 export async function deleteProductImageAction(_state: ActionState, formData: FormData): Promise<ActionState> {
   try {
     const actor = await requireAdminActor();

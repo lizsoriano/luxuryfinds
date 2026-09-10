@@ -125,6 +125,8 @@ export type ProductListRow = {
 
 const PAGE_SIZE = 20;
 
+export type ProductSort = "recent" | "oldest" | "name_asc" | "name_desc";
+
 export type ProductQuery = {
   search?: string;
   categoryId?: string;
@@ -132,6 +134,7 @@ export type ProductQuery = {
   includeArchived?: boolean;
   page?: number;
   pageSize?: number;
+  sort?: ProductSort;
 };
 
 function relationName(value: unknown): string | null {
@@ -141,7 +144,7 @@ function relationName(value: unknown): string | null {
 }
 
 export async function listProducts(query: ProductQuery = {}) {
-  const { search, categoryId, stockFilter = "all", includeArchived = false } = query;
+  const { search, categoryId, stockFilter = "all", includeArchived = false, sort = "recent" } = query;
   const pageSize = query.pageSize ?? PAGE_SIZE;
   const page = Math.max(1, query.page ?? 1);
   const db = adminDb();
@@ -161,9 +164,15 @@ export async function listProducts(query: ProductQuery = {}) {
   if (search) builder = builder.or(`name.ilike.%${search}%,internal_code.ilike.%${search}%`);
 
   const from = (page - 1) * pageSize;
-  const { data, error, count } = await builder
-    .order("created_at", { ascending: false })
-    .range(from, from + pageSize - 1);
+  builder =
+    sort === "oldest"
+      ? builder.order("created_at", { ascending: true })
+      : sort === "name_asc"
+        ? builder.order("name", { ascending: true })
+        : sort === "name_desc"
+          ? builder.order("name", { ascending: false })
+          : builder.order("created_at", { ascending: false });
+  const { data, error, count } = await builder.range(from, from + pageSize - 1);
   if (error) throw new Error(error.message);
 
   const rows = (data ?? []) as unknown as Array<{
@@ -223,6 +232,75 @@ export async function listProducts(query: ProductQuery = {}) {
     hasNextPage: (count ?? 0) > from + pageSize,
     filtered: stockFilter !== "all",
   };
+}
+
+const EXPORT_CAP = 5000;
+
+/** Same filters as listProducts but unpaginated (capped), for the CSV export button. */
+export async function listProductsForExport(query: Omit<ProductQuery, "page" | "pageSize"> = {}) {
+  const { search, categoryId, includeArchived = false } = query;
+  const db = adminDb();
+  let builder = db
+    .from("products")
+    .select(
+      `id, name, internal_code, is_public, is_active, product_kind, catalog_type,
+       categories(name),
+       product_variants(id, name, sku, barcode, price_cents, cost_cents, min_quantity, is_active)`,
+    );
+  if (!includeArchived) builder = builder.eq("is_active", true);
+  if (categoryId) builder = builder.eq("category_id", categoryId);
+  if (search) builder = builder.or(`name.ilike.%${search}%,internal_code.ilike.%${search}%`);
+
+  const { data, error } = await builder.order("name").limit(EXPORT_CAP);
+  if (error) throw new Error(error.message);
+
+  const rows = (data ?? []) as unknown as Array<{
+    id: string;
+    name: string;
+    internal_code: string | null;
+    is_public: boolean;
+    is_active: boolean;
+    product_kind: ProductListRow["product_kind"];
+    catalog_type: ProductListRow["catalog_type"];
+    categories: unknown;
+    product_variants: VariantRow[];
+  }>;
+
+  const variantIds = rows.flatMap((row) => (row.product_variants ?? []).map((v) => v.id));
+  const stock = await getStockFor(variantIds);
+
+  return rows.flatMap((row) => {
+    const variants = (row.product_variants ?? []).filter((v) => v.is_active);
+    const categoryName = relationName(row.categories);
+    if (!variants.length) {
+      return [
+        {
+          producto: row.name,
+          codigo: row.internal_code ?? "",
+          categoria: categoryName ?? "",
+          tipo: row.product_kind,
+          variante: "",
+          sku: "",
+          stock: 0,
+          precio: 0,
+          costo: 0,
+          estado: !row.is_active ? "Archivado" : row.is_public ? "Visible" : "Oculto",
+        },
+      ];
+    }
+    return variants.map((variant) => ({
+      producto: row.name,
+      codigo: row.internal_code ?? variant.sku ?? "",
+      categoria: categoryName ?? "",
+      tipo: row.product_kind,
+      variante: variant.name,
+      sku: variant.sku ?? "",
+      stock: stock.get(variant.id) ?? 0,
+      precio: (variant.price_cents ?? 0) / 100,
+      costo: (variant.cost_cents ?? 0) / 100,
+      estado: !row.is_active ? "Archivado" : row.is_public ? "Visible" : "Oculto",
+    }));
+  });
 }
 
 /**
