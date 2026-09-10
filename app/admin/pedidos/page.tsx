@@ -105,6 +105,9 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
                     <td style={{ color: "var(--admin-muted)" }}>{ORIGIN_LABELS[order.origin] ?? order.origin}</td>
                     <td>
                       <Badge tone={STATUS_TONES[order.status]}>{STATUS_LABELS[order.status]}</Badge>
+                      {order.requestedPaymentPlan.mode === "WEEKLY_PLAN" && (
+                        <span className="admin-cell-sub">Plan semanal · {order.requestedPaymentPlan.numberOfWeeks} sem.</span>
+                      )}
                     </td>
                     <td style={{ color: "var(--admin-muted)" }}>{formatDateTime(order.created_at)}</td>
                     <td>

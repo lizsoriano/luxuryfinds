@@ -2,7 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { describeError, failure, ok, type ActionState } from "../../../lib/actions";
+import { businessToday } from "../../../lib/format";
 import { getStockFor } from "../../../lib/supabase/admin-catalog";
+import { getRequestedPaymentPlan } from "../../../lib/supabase/admin-orders";
 import { adminDb, logActivity, requireAdminActor } from "../../../lib/supabase/business";
 
 function revalidate(orderId?: string) {
@@ -15,6 +17,46 @@ function revalidate(orderId?: string) {
 function relation<T>(value: T | T[] | null | undefined): T | null {
   if (!value) return null;
   return Array.isArray(value) ? (value[0] ?? null) : value;
+}
+
+/** Adds `days` to a "YYYY-MM-DD" calendar date, in UTC to avoid DST drift. */
+function addDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+/** End of business day (America/Mazatlan, fixed UTC-7 since Mexico dropped DST). */
+function businessEndOfDay(dateStr: string): string {
+  return `${dateStr}T23:59:59-07:00`;
+}
+
+/** Splits a total into `count` whole-cent installments that sum back exactly. */
+function splitEvenly(totalCents: number, count: number): number[] {
+  const base = Math.floor(totalCents / count);
+  const remainder = totalCents - base * count;
+  const amounts = new Array(count).fill(base);
+  amounts[count - 1] += remainder;
+  return amounts;
+}
+
+/**
+ * Best-effort cleanup after a partial failure while generating tickets for a
+ * pedido. Deletes child rows before parents to respect the ON DELETE RESTRICT
+ * foreign keys in schema.sql (installments -> payment_plans -> tickets, and
+ * inventory_movements -> tickets).
+ */
+async function rollbackTickets(db: ReturnType<typeof adminDb>, ticketIds: string[]) {
+  if (!ticketIds.length) return;
+  const { data: plans } = await db.from("payment_plans").select("id").in("ticket_id", ticketIds);
+  const planIds = (plans ?? []).map((plan) => plan.id as string);
+  if (planIds.length) {
+    await db.from("installments").delete().in("payment_plan_id", planIds);
+    await db.from("payment_plans").delete().in("id", planIds);
+  }
+  await db.from("inventory_movements").delete().in("ticket_id", ticketIds);
+  await db.from("tickets").delete().in("id", ticketIds);
 }
 
 type ConfirmItemRow = {
@@ -34,10 +76,13 @@ type ConfirmItemRow = {
 };
 
 /**
- * A pedido from the public site (app/(public)/checkout/actions.ts) only ever
- * carries a single upfront price per line, so confirming it always generates
- * FULL-mode tickets. Weekly plans / layaway have no admin entry point yet
- * (there is nowhere to choose them), so this deliberately never produces them.
+ * A pedido from the public site (app/(public)/checkout/actions.ts) carries a
+ * single requested payment mode for the whole order (see orders.requested_payment_mode,
+ * database/migrations/004_weekly_plan_checkout.sql). Confirming it generates a
+ * ticket per artículo in that same mode: FULL (the default, and the only mode
+ * possible before that migration runs) or WEEKLY_PLAN, which also generates a
+ * payment_plan + its weekly installments per ticket. LAYAWAY has no checkout
+ * UI and is never produced here.
  */
 export async function confirmOrderAction(_state: ActionState, formData: FormData): Promise<ActionState> {
   try {
@@ -54,6 +99,8 @@ export async function confirmOrderAction(_state: ActionState, formData: FormData
     if (orderError) return failure(describeError(new Error(orderError.message), "No fue posible leer el pedido."));
     if (!order) return failure("Pedido no encontrado.");
     if (order.status !== "DRAFT") return failure("Solo se pueden confirmar pedidos en borrador.");
+
+    const requestedPlan = await getRequestedPaymentPlan(orderId);
 
     const { data: items, error: itemsError } = await db
       .from("order_items")
@@ -95,6 +142,31 @@ export async function confirmOrderAction(_state: ActionState, formData: FormData
     }
 
     const productIds = [...new Set(rows.map((row) => row.product_id as string))];
+
+    if (requestedPlan.mode === "WEEKLY_PLAN") {
+      // requestedPlan.mode can only be WEEKLY_PLAN once migration 004 has run
+      // (getRequestedPaymentPlan degrades to FULL otherwise), so
+      // products.weekly_plan_eligible is guaranteed to exist here.
+      const { data: eligibility, error: eligibilityError } = await db
+        .from("products")
+        .select("id, weekly_plan_eligible")
+        .in("id", productIds);
+      if (eligibilityError) {
+        return failure(describeError(new Error(eligibilityError.message), "No fue posible validar el plan semanal del pedido."));
+      }
+      const eligibleIds = new Set((eligibility ?? []).filter((row) => row.weekly_plan_eligible).map((row) => row.id as string));
+      const ineligible = rows.find((row) => !eligibleIds.has(row.product_id as string));
+      if (ineligible) {
+        const product = relation(ineligible.products);
+        return failure(
+          `"${product?.name ?? "Un producto"}" ya no admite plan semanal. Contacta a la clienta o cancela el pedido.`,
+        );
+      }
+      if (!requestedPlan.numberOfWeeks || requestedPlan.numberOfWeeks < 4 || requestedPlan.numberOfWeeks > 16) {
+        return failure("El pedido no tiene un número de semanas válido para el plan.");
+      }
+    }
+
     const { data: images } = await db
       .from("product_images")
       .select("product_id, storage_key, sort_order")
@@ -107,7 +179,9 @@ export async function confirmOrderAction(_state: ActionState, formData: FormData
       }
     }
 
+    const ticketMode = requestedPlan.mode === "WEEKLY_PLAN" ? ("WEEKLY_PLAN" as const) : ("FULL" as const);
     const createdTicketIds: string[] = [];
+    const ticketResults: Array<{ ticketId: string; agreedTotalCents: number }> = [];
     const movementRows: Array<{ variant_id: string; movement_type: "ALLOCATION"; quantity_delta: number; ticket_id: string; reason: string; created_by_admin_id: string }> = [];
 
     for (const row of rows) {
@@ -115,6 +189,7 @@ export async function confirmOrderAction(_state: ActionState, formData: FormData
       const variant = relation(row.product_variants)!;
       const brand = relation(product.brands);
       const category = relation(product.categories);
+      const agreedTotalCents = row.unit_price_cents * row.quantity;
 
       const { data: ticket, error: ticketError } = await db
         .from("tickets")
@@ -131,9 +206,9 @@ export async function confirmOrderAction(_state: ActionState, formData: FormData
           image_storage_key_snapshot: imageByProduct.get(row.product_id as string) ?? null,
           quantity: row.quantity,
           cash_unit_price_cents: row.unit_price_cents,
-          agreed_total_cents: row.unit_price_cents * row.quantity,
+          agreed_total_cents: agreedTotalCents,
           discount_cents: 0,
-          payment_mode: "FULL",
+          payment_mode: ticketMode,
           catalog_type_snapshot: product.catalog_type,
           logistics_status: product.catalog_type === "IMMEDIATE" ? "READY_FOR_DELIVERY" : "WAITING_TO_ORDER",
         })
@@ -141,11 +216,12 @@ export async function confirmOrderAction(_state: ActionState, formData: FormData
         .single();
 
       if (ticketError || !ticket) {
-        if (createdTicketIds.length) await db.from("tickets").delete().in("id", createdTicketIds);
+        await rollbackTickets(db, createdTicketIds);
         return failure(describeError(new Error(ticketError?.message ?? "error desconocido"), "No fue posible generar los tickets del pedido."));
       }
 
       createdTicketIds.push(ticket.id as string);
+      ticketResults.push({ ticketId: ticket.id as string, agreedTotalCents });
       movementRows.push({
         variant_id: row.variant_id as string,
         movement_type: "ALLOCATION",
@@ -158,8 +234,52 @@ export async function confirmOrderAction(_state: ActionState, formData: FormData
 
     const { error: movementError } = await db.from("inventory_movements").insert(movementRows);
     if (movementError) {
-      await db.from("tickets").delete().in("id", createdTicketIds);
+      await rollbackTickets(db, createdTicketIds);
       return failure(describeError(new Error(movementError.message), "No fue posible descontar el inventario del pedido."));
+    }
+
+    if (ticketMode === "WEEKLY_PLAN") {
+      const weeks = requestedPlan.numberOfWeeks as number;
+      const startDate = businessToday();
+      const paymentWeekday = new Date(`${startDate}T12:00:00`).getDay();
+
+      const { data: plans, error: planError } = await db
+        .from("payment_plans")
+        .insert(
+          ticketResults.map((t) => ({
+            ticket_id: t.ticketId,
+            mode: "WEEKLY_PLAN" as const,
+            status: "ACTIVE" as const,
+            agreed_total_cents: t.agreedTotalCents,
+            initial_payment_cents: 0,
+            number_of_weeks: weeks,
+            start_date: startDate,
+            payment_weekday: paymentWeekday,
+            order_trigger_installment: weeks - 1,
+            created_by_admin_id: actor.id,
+          })),
+        )
+        .select("id, ticket_id, agreed_total_cents");
+      if (planError || !plans) {
+        await rollbackTickets(db, createdTicketIds);
+        return failure(describeError(new Error(planError?.message ?? "error desconocido"), "No fue posible generar el plan de pagos del pedido."));
+      }
+
+      const installmentRows = plans.flatMap((plan) =>
+        splitEvenly(Number(plan.agreed_total_cents), weeks).map((amountCents, index) => ({
+          payment_plan_id: plan.id,
+          installment_number: index + 1,
+          due_at: businessEndOfDay(addDays(startDate, 7 * (index + 1))),
+          amount_cents: amountCents,
+          status: "PENDING" as const,
+        })),
+      );
+
+      const { error: installmentError } = await db.from("installments").insert(installmentRows);
+      if (installmentError) {
+        await rollbackTickets(db, createdTicketIds);
+        return failure(describeError(new Error(installmentError.message), "No fue posible generar las cuotas del plan de pagos."));
+      }
     }
 
     const { error: confirmError } = await db
@@ -177,10 +297,14 @@ export async function confirmOrderAction(_state: ActionState, formData: FormData
       action: "ORDER_CONFIRMED",
       entityType: "orders",
       entityId: orderId,
-      newData: { ticketsCreated: createdTicketIds.length },
+      newData: { ticketsCreated: createdTicketIds.length, paymentMode: ticketMode },
     });
     revalidate(orderId);
-    return ok(`Pedido confirmado. Se generaron ${createdTicketIds.length} ticket(s).`);
+    return ok(
+      ticketMode === "WEEKLY_PLAN"
+        ? `Pedido confirmado. Se generaron ${createdTicketIds.length} ticket(s) en plan semanal a ${requestedPlan.numberOfWeeks} semanas.`
+        : `Pedido confirmado. Se generaron ${createdTicketIds.length} ticket(s).`,
+    );
   } catch (error) {
     return failure(describeError(error, "No fue posible confirmar el pedido."));
   }
@@ -239,6 +363,18 @@ export async function cancelOrderAction(_state: ActionState, formData: FormData)
               activeTickets.map((ticket) => ticket.id as string),
             );
           if (ticketUpdateError) return failure(describeError(new Error(ticketUpdateError.message), "No fue posible actualizar los tickets del pedido."));
+
+          // Only WEEKLY_PLAN tickets have a payment_plan row; this matches zero
+          // rows (and is a harmless no-op) for FULL-mode tickets.
+          const { error: planCancelError } = await db
+            .from("payment_plans")
+            .update({ status: "CANCELLED", updated_at: new Date().toISOString() })
+            .in(
+              "ticket_id",
+              activeTickets.map((ticket) => ticket.id as string),
+            )
+            .eq("status", "ACTIVE");
+          if (planCancelError) return failure(describeError(new Error(planCancelError.message), "No fue posible cancelar el plan de pagos del pedido."));
         }
       }
     }

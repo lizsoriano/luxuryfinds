@@ -90,3 +90,30 @@ export async function resolveOrderItems(items: CartItem[]): Promise<ResolveOrder
 
   return { resolved, skipped };
 }
+
+/**
+ * Whole-cart check: WEEKLY_PLAN is only offered at checkout when EVERY line is
+ * a product an admin has explicitly flagged (products.weekly_plan_eligible,
+ * added in database/migrations/004_weekly_plan_checkout.sql). Mixing an
+ * eligible and a non-eligible product in one cart falls back to a single FULL
+ * payment for the whole order rather than splitting the order in two.
+ */
+export async function checkWeeklyPlanEligibility(items: CartItem[]): Promise<boolean> {
+  if (!items.length) return false;
+
+  const admin = createAdminSupabaseClient();
+  const slugs = [...new Set(items.map((item) => item.slug))];
+
+  const { data, error } = await admin
+    .schema("luxury_finds")
+    .from("products")
+    .select("slug, is_public, is_active, weekly_plan_eligible")
+    .in("slug", slugs);
+  if (error) return false;
+
+  const bySlug = new Map((data ?? []).map((row) => [row.slug as string, row]));
+  return items.every((item) => {
+    const product = bySlug.get(item.slug);
+    return Boolean(product?.is_public && product?.is_active && product?.weekly_plan_eligible);
+  });
+}

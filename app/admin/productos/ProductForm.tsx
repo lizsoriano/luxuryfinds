@@ -34,6 +34,7 @@ export type EditableProduct = {
   product_kind: "SIMPLE" | "VARIANTS" | "MEASURED";
   tax_rate_percent: number;
   is_public: boolean;
+  weekly_plan_eligible: boolean;
   variants: ExistingVariant[];
 };
 
@@ -376,6 +377,22 @@ export function ProductForm({
               <small>
                 Al activarlo el producto aparece en el sitio público (/catalogo). Al desactivarlo solo existe
                 para el inventario y el punto de venta.
+              </small>
+            </span>
+          </label>
+
+          <label className="admin-switch field-wide" htmlFor="product-weekly-plan">
+            <input
+              id="product-weekly-plan"
+              type="checkbox"
+              name="weeklyPlanEligible"
+              defaultChecked={product?.weekly_plan_eligible ?? false}
+            />
+            <span>
+              Admite plan de pago semanal
+              <small>
+                Al activarlo, cualquier clienta puede elegir pagarlo en semanas (4 a 16) desde el checkout, en
+                vez de pago completo. Requiere database/migrations/004_weekly_plan_checkout.sql aplicada en Supabase.
               </small>
             </span>
           </label>

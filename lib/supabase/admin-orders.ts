@@ -21,6 +21,7 @@ export type OrderListRow = {
   client: { first_name: string; last_name: string; phone: string } | null;
   itemCount: number;
   totalCents: number;
+  requestedPaymentPlan: RequestedPaymentPlan;
 };
 
 export type OrderItemRow = {
@@ -48,10 +49,56 @@ export type OrderTicketRow = {
   financial_status: string;
   logistics_status: string;
   created_at: string;
+  paymentPlan: TicketPaymentPlan | null;
+};
+
+export type RequestedPaymentPlan = { mode: "FULL" | "WEEKLY_PLAN"; numberOfWeeks: number | null };
+
+export type TicketPaymentPlan = {
+  id: string;
+  mode: string;
+  status: string;
+  number_of_weeks: number | null;
+  installments: Array<{
+    installment_number: number;
+    due_at: string;
+    amount_cents: number;
+    paid_cents: number;
+    status: string;
+  }>;
 };
 
 const ORDER_PAGE_SIZE = 20;
 const ORDER_STATUSES: OrderStatus[] = ["DRAFT", "CONFIRMED", "CANCELLED", "COMPLETED"];
+
+/**
+ * orders.requested_payment_mode/requested_number_of_weeks only exist once
+ * database/migrations/004_weekly_plan_checkout.sql has been applied. This is
+ * fetched in its own query, never mixed into the main orders select used by
+ * listOrders/getOrderDetail, so those keep working before that migration runs
+ * — a pedido simply reads as a FULL request until then.
+ */
+export async function getRequestedPaymentPlans(orderIds: string[]): Promise<Map<string, RequestedPaymentPlan>> {
+  const map = new Map<string, RequestedPaymentPlan>();
+  if (!orderIds.length) return map;
+  const { data, error } = await adminDb()
+    .from("orders")
+    .select("id, requested_payment_mode, requested_number_of_weeks")
+    .in("id", orderIds);
+  if (error) return map;
+  for (const row of data ?? []) {
+    map.set(row.id as string, {
+      mode: (row.requested_payment_mode as "FULL" | "WEEKLY_PLAN" | null) ?? "FULL",
+      numberOfWeeks: (row.requested_number_of_weeks as number | null) ?? null,
+    });
+  }
+  return map;
+}
+
+export async function getRequestedPaymentPlan(orderId: string): Promise<RequestedPaymentPlan> {
+  const plans = await getRequestedPaymentPlans([orderId]);
+  return plans.get(orderId) ?? { mode: "FULL", numberOfWeeks: null };
+}
 
 function relation<T>(value: T | T[] | null | undefined): T | null {
   if (!value) return null;
@@ -94,7 +141,10 @@ export async function listOrders(query: { search?: string; status?: string; page
     .range(from, from + ORDER_PAGE_SIZE - 1);
   if (error) throw new Error(error.message);
 
-  const orders: OrderListRow[] = (data ?? []).map((row) => {
+  const rows = data ?? [];
+  const requestedPlans = await getRequestedPaymentPlans(rows.map((row) => row.id as string));
+
+  const orders: OrderListRow[] = rows.map((row) => {
     const items = (row.order_items ?? []) as Array<{ quantity: number; unit_price_cents: number }>;
     return {
       id: row.id as string,
@@ -106,6 +156,7 @@ export async function listOrders(query: { search?: string; status?: string; page
       client: relation(row.clients as unknown as { first_name: string; last_name: string; phone: string }[]),
       itemCount: items.reduce((sum, item) => sum + Number(item.quantity), 0),
       totalCents: items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unit_price_cents), 0),
+      requestedPaymentPlan: requestedPlans.get(row.id as string) ?? { mode: "FULL", numberOfWeeks: null },
     };
   });
 
@@ -116,6 +167,51 @@ export async function listOrders(query: { search?: string; status?: string; page
     total: count ?? orders.length,
     hasNextPage: (count ?? 0) > from + ORDER_PAGE_SIZE,
   };
+}
+
+/** payment_plans/installments only exist for WEEKLY_PLAN tickets (schema.sql base, not migration-gated). */
+export async function getTicketPaymentPlans(ticketIds: string[]): Promise<Map<string, TicketPaymentPlan>> {
+  const result = new Map<string, TicketPaymentPlan>();
+  if (!ticketIds.length) return result;
+  const db = adminDb();
+
+  const { data: plans, error: plansError } = await db
+    .from("payment_plans")
+    .select("id, ticket_id, mode, status, number_of_weeks")
+    .in("ticket_id", ticketIds);
+  if (plansError || !plans?.length) return result;
+
+  const planIds = plans.map((plan) => plan.id as string);
+  const { data: installments } = await db
+    .from("installments")
+    .select("payment_plan_id, installment_number, due_at, amount_cents, paid_cents, status")
+    .in("payment_plan_id", planIds)
+    .order("installment_number", { ascending: true });
+
+  const installmentsByPlan = new Map<string, TicketPaymentPlan["installments"]>();
+  for (const row of installments ?? []) {
+    const key = row.payment_plan_id as string;
+    const list = installmentsByPlan.get(key) ?? [];
+    list.push({
+      installment_number: Number(row.installment_number),
+      due_at: row.due_at as string,
+      amount_cents: Number(row.amount_cents),
+      paid_cents: Number(row.paid_cents),
+      status: row.status as string,
+    });
+    installmentsByPlan.set(key, list);
+  }
+
+  for (const plan of plans) {
+    result.set(plan.ticket_id as string, {
+      id: plan.id as string,
+      mode: plan.mode as string,
+      status: plan.status as string,
+      number_of_weeks: (plan.number_of_weeks as number | null) ?? null,
+      installments: installmentsByPlan.get(plan.id as string) ?? [],
+    });
+  }
+  return result;
 }
 
 export async function getOrderDetail(id: string) {
@@ -167,14 +263,18 @@ export async function getOrderDetail(id: string) {
       .in("order_item_id", orderItemIds)
       .order("created_at", { ascending: true });
     if (ticketsError) throw new Error(ticketsError.message);
-    tickets = (ticketRows ?? []) as OrderTicketRow[];
+    const plans = await getTicketPaymentPlans((ticketRows ?? []).map((row) => row.id as string));
+    tickets = (ticketRows ?? []).map((row) => ({ ...row, paymentPlan: plans.get(row.id as string) ?? null })) as OrderTicketRow[];
   }
+
+  const requestedPaymentPlan = await getRequestedPaymentPlan(id);
 
   return {
     order: {
       id: order.id as string,
       origin: order.origin as string,
       status: order.status as OrderStatus,
+      requestedPaymentPlan,
       client_notes: order.client_notes as string | null,
       internal_notes: order.internal_notes as string | null,
       created_at: order.created_at as string,

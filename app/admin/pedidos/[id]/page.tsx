@@ -48,6 +48,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const { order, client, items, tickets } = detail;
   const totalCents = items.reduce((sum, item) => sum + item.unit_price_cents * item.quantity, 0);
   const clientName = client ? `${client.first_name} ${client.last_name}`.trim() : "Clienta eliminada";
+  const isWeeklyPlanRequest = order.requestedPaymentPlan.mode === "WEEKLY_PLAN";
 
   return (
     <main className="admin-content">
@@ -66,7 +67,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                 fields={{ id: order.id }}
                 triggerLabel="Confirmar pedido"
                 title="Confirmar pedido"
-                description={`Se generará un ticket por cada artículo (${items.length}) y se descontará el inventario correspondiente. Esta acción no se puede deshacer.`}
+                description={
+                  isWeeklyPlanRequest
+                    ? `Se generará un ticket por cada artículo (${items.length}) en plan semanal a ${order.requestedPaymentPlan.numberOfWeeks} semanas, con su tabla de cuotas, y se descontará el inventario correspondiente. Esta acción no se puede deshacer.`
+                    : `Se generará un ticket por cada artículo (${items.length}) y se descontará el inventario correspondiente. Esta acción no se puede deshacer.`
+                }
                 confirmLabel="Confirmar y generar tickets"
                 variant="primary"
               />
@@ -132,6 +137,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             </tfoot>
           </table>
         </div>
+        {isWeeklyPlanRequest && (
+          <p className="admin-hint" style={{ marginTop: 12 }}>
+            Modalidad solicitada: <strong>plan semanal a {order.requestedPaymentPlan.numberOfWeeks} semanas</strong>.
+          </p>
+        )}
         {order.client_notes && (
           <p className="admin-hint" style={{ marginTop: 12 }}>
             Nota de la clienta: {order.client_notes}
@@ -157,24 +167,44 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                   <th className="numeric">Total</th>
                   <th>Estado financiero</th>
                   <th>Logística</th>
+                  <th>Plan de pagos</th>
                 </tr>
               </thead>
               <tbody>
-                {tickets.map((ticket) => (
-                  <tr key={ticket.id}>
-                    <td>
-                      <strong>{ticket.ticket_number}</strong>
-                    </td>
-                    <td>
-                      {ticket.product_name_snapshot}
-                      {ticket.variant_name_snapshot ? <span className="admin-cell-sub">{ticket.variant_name_snapshot}</span> : null}
-                    </td>
-                    <td className="numeric">{ticket.quantity}</td>
-                    <td className="numeric">{formatMoney(ticket.agreed_total_cents)}</td>
-                    <td style={{ color: "var(--admin-muted)" }}>{ticket.financial_status}</td>
-                    <td style={{ color: "var(--admin-muted)" }}>{ticket.logistics_status}</td>
-                  </tr>
-                ))}
+                {tickets.map((ticket) => {
+                  const plan = ticket.paymentPlan;
+                  const paidCount = plan?.installments.filter((installment) => installment.status === "PAID").length ?? 0;
+                  const nextDue = plan?.installments.find((installment) => installment.status !== "PAID");
+                  return (
+                    <tr key={ticket.id}>
+                      <td>
+                        <strong>{ticket.ticket_number}</strong>
+                      </td>
+                      <td>
+                        {ticket.product_name_snapshot}
+                        {ticket.variant_name_snapshot ? <span className="admin-cell-sub">{ticket.variant_name_snapshot}</span> : null}
+                      </td>
+                      <td className="numeric">{ticket.quantity}</td>
+                      <td className="numeric">{formatMoney(ticket.agreed_total_cents)}</td>
+                      <td style={{ color: "var(--admin-muted)" }}>{ticket.financial_status}</td>
+                      <td style={{ color: "var(--admin-muted)" }}>{ticket.logistics_status}</td>
+                      <td style={{ color: "var(--admin-muted)" }}>
+                        {plan ? (
+                          <>
+                            {paidCount} de {plan.installments.length} cuotas pagadas
+                            {nextDue ? (
+                              <span className="admin-cell-sub">
+                                Próxima: {formatMoney(nextDue.amount_cents)} · {formatDateTime(nextDue.due_at)}
+                              </span>
+                            ) : null}
+                          </>
+                        ) : (
+                          "Pago completo"
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

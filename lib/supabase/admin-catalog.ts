@@ -10,6 +10,23 @@ export type CategoryRow = {
   productCount: number;
 };
 
+/**
+ * `products.weekly_plan_eligible` only exists once
+ * database/migrations/004_weekly_plan_checkout.sql has been applied. It is
+ * deliberately fetched in its own query rather than embedded in the main
+ * products select used by listProducts/getProductDetail, so those (already
+ * working) reads never break just because this migration hasn't run yet —
+ * they simply treat every product as not-yet-eligible until it has.
+ */
+export async function getWeeklyPlanEligibility(productIds: string[]): Promise<Map<string, boolean>> {
+  const map = new Map<string, boolean>();
+  if (!productIds.length) return map;
+  const { data, error } = await adminDb().from("products").select("id, weekly_plan_eligible").in("id", productIds);
+  if (error) return map;
+  for (const row of data ?? []) map.set(row.id as string, Boolean(row.weekly_plan_eligible));
+  return map;
+}
+
 export async function listCategoriesWithCounts(): Promise<CategoryRow[]> {
   const db = adminDb();
   const [categories, products] = await Promise.all([
@@ -340,6 +357,7 @@ export type ProductDetail = {
   catalog_type: ProductListRow["catalog_type"];
   category_id: string | null;
   tax_rate_percent: number;
+  weekly_plan_eligible: boolean;
   variants: Array<VariantRow & { stock: number }>;
   images: Array<{ id: string; storage_key: string; url: string | null; sort_order: number }>;
 };
@@ -357,14 +375,18 @@ export async function getProductDetail(id: string): Promise<ProductDetail | null
   if (error) throw new Error(error.message);
   if (!data) return null;
 
-  const row = data as unknown as Omit<ProductDetail, "variants" | "images"> & {
+  const row = data as unknown as Omit<ProductDetail, "variants" | "images" | "weekly_plan_eligible"> & {
     product_variants: VariantRow[];
     product_images: Array<{ id: string; storage_key: string; sort_order: number }>;
   };
-  const stock = await getStockFor((row.product_variants ?? []).map((variant) => variant.id));
+  const [stock, weeklyPlan] = await Promise.all([
+    getStockFor((row.product_variants ?? []).map((variant) => variant.id)),
+    getWeeklyPlanEligibility([id]),
+  ]);
 
   return {
     ...row,
+    weekly_plan_eligible: weeklyPlan.get(id) ?? false,
     tax_rate_percent: Number(row.tax_rate_percent ?? 0),
     variants: (row.product_variants ?? []).map((variant) => ({
       ...variant,
