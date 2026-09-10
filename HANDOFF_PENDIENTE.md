@@ -7,17 +7,20 @@ Este documento resume lo que ya está construido y, sobre todo, **lo que falta p
 
 ---
 
-## ✅ Ya resuelto (verificado contra Supabase real)
+## ✅ Ya resuelto (verificado contra Supabase real y en producción)
 
 - Las 4 migraciones corrieron y se confirmaron una por una contra la base real: `000_fix_clients_service_role_grant.sql`, `001_telegram_linking.sql`, `002_business_management.sql`, `003_product_sources_sync.sql`, `004_weekly_plan_checkout.sql`. `businesses`, `suppliers`, `cash_sessions`, `sales`, `sale_items`, `expenses`, `variant_stock`, `product_sources`, `sync_runs`, `price_change_log`, `product_match_reviews`, `products.weekly_plan_eligible`, `orders.requested_payment_mode`, `product_variants.barcode`, `clients.telegram_chat_id` — las 14 tablas/columnas nuevas responden correctamente.
   - *(Nota: `002` tuvo que corregirse una vez — tenía un `ALTER COLUMN` antes del `DROP VIEW` que lo necesitaba, orden inválido en Postgres. Ya está arreglado en el archivo; si vuelves a correrlo desde cero no debería fallar.)*
 - `REFUND_ENCRYPTION_KEY` ya está generada y en `.env` local (64 caracteres hex). Devoluciones ya puede cifrar/descifrar CLABEs.
+- **`main` está al día y desplegado en producción.** El trabajo vivía en la rama `feature/appluxury2` (PR #3, "Pedidos, plan semanal, Cobranza/Agenda/Devoluciones y limpieza de admin") y `main` se había quedado 5 commits atrás — por eso `https://luxuryfinds.vercel.app` mostraba una versión vieja. Se corrigieron dos bugs de deploy que tumbaban el build en Vercel (`vercel.json`: el cron cada 15 min no es válido en plan Hobby, y el bloque `functions` con un patrón que Vercel no reconocía porque el proyecto usa `nitro`/`vinext`, no el adaptador nativo de Next.js) y se fusionó el PR. El sitio en `https://luxuryfinds.vercel.app` ya sirve la versión actual.
+- **Ya existe una cuenta de administradora real y se probó en producción de punta a punta**: login → `/admin` → dashboard con datos reales, sidebar con las secciones nuevas, todo cargando bien. Correo: `rutilia2511@gmail.com` (la contraseña no se guardó en ningún archivo del proyecto — la tienes tú). Si necesitas otra cuenta de admin, es: crear el usuario en Supabase Auth (dashboard → Authentication, o `/crear-cuenta` en el sitio) y luego insertar una fila en `luxury_finds.admin_users` con ese mismo `id`, un `username` único y `status = 'ACTIVE'`.
+- Como consecuencia de lo anterior: **las variables de Supabase (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`) ya están confirmadas funcionando en Vercel** — si no lo estuvieran, el login y el dashboard del admin no habrían cargado datos reales. Lo que **sigue sin confirmarse en Vercel** son las otras 5: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET`, `SYNC_CRON_SECRET`, `REFUND_ENCRYPTION_KEY` — revísalas en Settings → Environment Variables antes de dar por hecho que Telegram/sincronización/devoluciones funcionan en producción.
 
 ## 🔴 ACCIÓN INMEDIATA — lo único que falta para producción
 
-### 1. Copiar las variables de entorno a Vercel
+### 1. Copiar las variables de entorno a Vercel (3 de 8 ya confirmadas)
 
-Todas estas ya tienen valor real en tu `.env` local — **Vercel no las lee de ahí, hay que copiarlas a mano** (o por CLI) en el proyecto de Vercel:
+Las 3 de Supabase ya están funcionando en producción — se comprobó al loguearse en `/admin` y ver datos reales. **Faltan confirmar las otras 5** (Telegram, sync, cifrado de devoluciones). Todas ya tienen valor real en tu `.env` local — **Vercel no las lee de ahí, hay que copiarlas a mano** (o por CLI) en el proyecto de Vercel:
 
 ```
 NEXT_PUBLIC_SUPABASE_URL
@@ -68,21 +71,20 @@ curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<t
 
 El bot ya existe: `@LuxuryFindsMx_bot`. Hasta que no se registre el webhook, los clientes pueden vincular su Telegram (`/start <id>`) pero el bot no recibirá esos mensajes.
 
-### 3. Cron de sincronización cada 15 min — límite de plan de Vercel
+### 3. Cron de sincronización — hoy corre 1 vez al día, no cada 15 min
 
-`vercel.json` ya declara:
+`vercel.json` quedó así (el `functions` y el `*/15 * * * *` originales tumbaban el deploy, ver arriba):
 ```json
 {
-  "crons": [{ "path": "/api/sync/run?type=INCREMENTAL&source=all", "schedule": "*/15 * * * *" }],
-  "functions": { "app/api/sync/run/route.ts": { "maxDuration": 60 } }
+  "crons": [{ "path": "/api/sync/run?type=INCREMENTAL&source=all", "schedule": "0 9 * * *" }]
 }
 ```
 
-**El plan gratuito (Hobby) de Vercel solo ejecuta cron jobs una vez al día**, sin importar el schedule declarado. Para los 15 minutos reales necesitas:
+**El plan gratuito (Hobby) de Vercel solo ejecuta cron jobs una vez al día** — Vercel directamente rechaza el deploy si declaras algo más frecuente, no lo ignora en silencio. Para los 15 minutos reales que pedía el diseño original necesitas:
 - Plan **Pro** de Vercel, o
 - Un programador externo (cron-job.org, GitHub Actions con `schedule`, Supabase `pg_cron` con `net.http_post`, etc.) golpeando `POST /api/sync/run?type=INCREMENTAL&source=all` con el header `x-sync-secret: <SYNC_CRON_SECRET>` cada 15 min.
 
-El endpoint ya está protegido y probado (401 si falta/está mal el secreto, con GET y POST).
+El endpoint ya está protegido y probado (401 si falta/está mal el secreto, con GET y POST). Nota aparte: como se quitó el bloque `functions`, la duración máxima de esa función usa el default de Vercel en vez de los 60s que se habían pedido — si una corrida completa de sincronización tarda más que eso y se corta, hay que resolverlo por el lado de la configuración de `nitro` (su propio preset de Vercel), no repitiendo el bloque `functions` en `vercel.json`.
 
 ---
 
@@ -150,7 +152,7 @@ Código completo, **probado con una corrida real en modo simulado (dry-run) cont
 
 ## ⚠️ Cosas a tener en cuenta / deuda conocida
 
-1. **Nadie ha probado los flujos reales con sesión de administradora real** (crear venta, cerrar caja, sincronizar catálogo, confirmar/cancelar un pedido, plan semanal de punta a punta, aprobar un comprobante en Cobranza, agendar una entrega, procesar una devolución) — todo se verificó con `build`/`typecheck`/`lint` y, cuando fue posible, navegación sin sesión (redirects correctos a `/login`). Hace falta un pase manual tuyo logueada como admin — es la deuda más grande del proyecto en este momento, cubre literalmente todo lo construido en las últimas dos rondas.
+1. **Login y dashboard del admin ya se probaron con sesión real en producción** (ver arriba), pero eso solo confirma que el panel carga — **los flujos operativos de verdad siguen sin probarse**: crear venta, cerrar caja, sincronizar catálogo, confirmar/cancelar un pedido, plan semanal de punta a punta, aprobar un comprobante en Cobranza, agendar una entrega, procesar una devolución. Sigue siendo la deuda más grande — ahora que ya puedes entrar a `/admin`, es el siguiente paso lógico (ver "Orden sugerido" abajo).
 2. **Error de dev-server intermitente y preexistente** (no relacionado con este trabajo): a veces aparece un overlay rojo `"Cannot read properties of undefined (reading 'import')"` desde `@vitejs/plugin-rsc` al correr `npm run dev`. Es un bug conocido del stack `vinext`/`vite-rsc` en beta; normalmente se resuelve recargando la página y no aparece en `npm run build` de producción. En esta sesión llegó a quedarse pegado incluso recargando — si te pasa, cierra el proceso de `npm run dev` (o la terminal donde corre) y vuelve a arrancarlo.
 3. **Imágenes copiadas de Maw Maw/Oskin**: aunque ambas tiendas son tuyas/aliadas, revisa que tengas derecho a usar esas imágenes en Luxury Finds antes de publicarlas masivamente (mismo criterio que ya aplicó el pipeline previo de Oskin en `C:\Users\rutil\Desktop\oskin_luxury_finds_pipeline\`).
 4. **Empleados** hoy no tiene perfiles propios ni permisos — cada venta/gasto se registra a nombre del usuario de `admin_users` que la captura. Sigue en Fase 2, no se construyó esta ronda (decidiste priorizar Cobranza/Agenda/Devoluciones). Cuando lo retomes: la idea acordada es que un empleado normal solo pueda usar Vender y ver Inventario, sin acceso a Balance ni Configuración — habría que agregar un rol/permiso a `admin_users` (hoy todos los admins tienen el mismo acceso completo).
@@ -190,7 +192,9 @@ Código completo, **probado con una corrida real en modo simulado (dry-run) cont
 ## Orden sugerido para la próxima sesión
 
 1. ~~Correr las 4 migraciones y generar `REFUND_ENCRYPTION_KEY`~~ — ya hecho y verificado contra la base real.
-2. Loguearte como admin y probar el flujo completo: crear categoría → crear producto (prueba también marcar "Admite plan de pago semanal") → verlo en inventario/vender → abrir caja → hacer una venta → ver que baja el stock y sube en Balance → cerrar caja → probar "Cancelar" esa venta y ver que el stock regrese.
+1b. ~~Arreglar que `main` estuviera desactualizado y que el deploy de Vercel fallara~~ — ya hecho, PR #3 fusionado, producción al día en `https://luxuryfinds.vercel.app`.
+1c. ~~Crear una cuenta de administradora y confirmar que el login + `/admin` funcionan en producción~~ — ya hecho, ver credenciales arriba.
+2. Con esa misma cuenta, probar el flujo operativo completo: crear categoría → crear producto (prueba también marcar "Admite plan de pago semanal") → verlo en inventario/vender → abrir caja → hacer una venta → ver que baja el stock y sube en Balance → cerrar caja → probar "Cancelar" esa venta y ver que el stock regrese.
 3. Probar Pedidos + Cobranza de punta a punta: agregar al carrito un producto con plan semanal activado → checkout con "Plan semanal" → confirmar el pedido en `/admin/pedidos` (o crear uno manual en `/admin/pedidos/nuevo`) → verificar que se generen los tickets, el `payment_plan` y sus cuotas → subir un comprobante desde `/cuenta` con esa clienta → aprobarlo en `/admin/cobranza` → confirmar que la cuota quede pagada y el ticket avance.
 4. Probar la logística: mover un ticket por `/admin/por-ordenar` → `/admin/en-camino` → márcalo `READY_FOR_DELIVERY` → publicar una disponibilidad en `/admin/agenda` → reservarlo → completarlo, y ver que llegue el aviso de Telegram en cada paso.
 5. Probar Devoluciones con una CLABE de prueba (no una real todavía) para validar que el cifrado/descifrado funcione antes de confiarle datos bancarios reales — ver la nota de deuda conocida.
