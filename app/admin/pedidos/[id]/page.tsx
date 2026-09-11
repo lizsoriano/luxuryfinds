@@ -5,7 +5,7 @@ import { Button } from "../../../../components/ui/Button";
 import { Card } from "../../../../components/ui/Card";
 import { EmptyState } from "../../../../components/ui/EmptyState";
 import { PageHeader } from "../../../../components/ui/PageHeader";
-import { formatDateTime, formatMoney } from "../../../../lib/format";
+import { FINANCIAL_STATUS_LABELS, formatDateTime, formatMoney, LOGISTICS_STATUS_LABELS } from "../../../../lib/format";
 import { getOrderDetail, type OrderStatus } from "../../../../lib/supabase/admin-orders";
 import { cancelOrderAction, confirmOrderAction } from "../actions";
 
@@ -18,11 +18,26 @@ const STATUS_LABELS: Record<OrderStatus, string> = {
   COMPLETED: "Completado",
 };
 
-const STATUS_TONES: Record<OrderStatus, "neutral" | "rose" | "success" | "warning" | "danger"> = {
+type Tone = "neutral" | "rose" | "success" | "warning" | "danger";
+
+const STATUS_TONES: Record<OrderStatus, Tone> = {
   DRAFT: "warning",
   CONFIRMED: "success",
   CANCELLED: "danger",
   COMPLETED: "neutral",
+};
+
+const FINANCIAL_STATUS_TONES: Record<string, Tone> = {
+  AWAITING_FIRST_PAYMENT: "warning",
+  PROOF_PENDING: "warning",
+  PARTIALLY_PAID: "warning",
+  CURRENT: "success",
+  OVERDUE: "danger",
+  PAID: "success",
+  DEFAULTED: "danger",
+  CANCELLED_INCIDENT: "danger",
+  REFUND_PENDING: "warning",
+  REFUNDED: "neutral",
 };
 
 export default async function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -117,8 +132,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             <tbody>
               {items.map((item) => (
                 <tr key={item.id}>
-                  <td>{item.productName ?? "Producto eliminado"}</td>
-                  <td style={{ color: "var(--admin-muted)" }}>{item.variantName ?? "—"}</td>
+                  <td className="admin-cell-product">{item.productName ?? "Producto eliminado"}</td>
+                  <td className="admin-cell-muted">{item.variantName ?? "—"}</td>
                   <td className="numeric">{item.quantity}</td>
                   <td className="numeric">{formatMoney(item.unit_price_cents)}</td>
                   <td className="numeric">{formatMoney(item.unit_price_cents * item.quantity)}</td>
@@ -180,15 +195,21 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                       <td>
                         <strong>{ticket.ticket_number}</strong>
                       </td>
-                      <td>
+                      <td className="admin-cell-product">
                         {ticket.product_name_snapshot}
                         {ticket.variant_name_snapshot ? <span className="admin-cell-sub">{ticket.variant_name_snapshot}</span> : null}
                       </td>
                       <td className="numeric">{ticket.quantity}</td>
                       <td className="numeric">{formatMoney(ticket.agreed_total_cents)}</td>
-                      <td style={{ color: "var(--admin-muted)" }}>{ticket.financial_status}</td>
-                      <td style={{ color: "var(--admin-muted)" }}>{ticket.logistics_status}</td>
-                      <td style={{ color: "var(--admin-muted)" }}>
+                      <td>
+                        <Badge tone={FINANCIAL_STATUS_TONES[ticket.financial_status] ?? "neutral"}>
+                          {FINANCIAL_STATUS_LABELS[ticket.financial_status] ?? ticket.financial_status}
+                        </Badge>
+                      </td>
+                      <td>
+                        <Badge tone="neutral">{LOGISTICS_STATUS_LABELS[ticket.logistics_status] ?? ticket.logistics_status}</Badge>
+                      </td>
+                      <td className="admin-cell-muted">
                         {plan ? (
                           <>
                             {paidCount} de {plan.installments.length} cuotas pagadas

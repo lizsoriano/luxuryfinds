@@ -29,7 +29,7 @@ export function PublishAvailabilityDialog({ locationId, date }: { locationId: st
         <form action={action} className="dialog-form">
           <input type="hidden" name="locationId" value={locationId} />
           <Input id="availability-date" name="date" label="Fecha *" type="date" defaultValue={date} required />
-          <div className="admin-form-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          <div className="admin-form-grid">
             <Input id="availability-start" name="startTime" label="Desde *" type="time" required />
             <Input id="availability-end" name="endTime" label="Hasta *" type="time" required />
           </div>

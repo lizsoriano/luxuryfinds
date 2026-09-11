@@ -60,24 +60,24 @@ export default async function DevolucionesPage() {
               <tbody>
                 {requests.map((request) => (
                   <tr key={request.id}>
-                    <td style={{ color: "var(--admin-muted)" }}>{formatDate(request.requested_at)}</td>
+                    <td className="admin-cell-muted admin-cell-nowrap">{formatDate(request.requested_at)}</td>
                     <td>
                       <strong>{request.ticketNumber}</strong>
                       <span className="admin-cell-sub">
                         {request.productName} · {formatMoney(request.agreedTotalCents)}
                       </span>
                     </td>
-                    <td>
+                    <td className="admin-cell-name">
                       {request.clientName}
                       <span className="admin-cell-sub">{request.clientPhone}</span>
                     </td>
-                    <td>
+                    <td className="admin-cell-name">
                       {request.accountHolderName}
                       <span className="admin-cell-sub">
                         {request.bankName} · {request.clabe ?? "No se pudo descifrar"}
                       </span>
                     </td>
-                    <td style={{ color: "var(--admin-muted)" }}>{request.reason}</td>
+                    <td className="admin-cell-muted admin-cell-note">{request.reason}</td>
                     <td>
                       <Badge tone={request.status === "REQUESTED" ? "warning" : "neutral"}>{STATUS_LABELS[request.status] ?? request.status}</Badge>
                     </td>

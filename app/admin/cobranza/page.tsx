@@ -64,18 +64,18 @@ export default async function CobranzaPage() {
               <tbody>
                 {withUrls.map((proof) => (
                   <tr key={proof.id}>
-                    <td style={{ color: "var(--admin-muted)" }}>{formatDateTime(proof.uploaded_at)}</td>
+                    <td className="admin-cell-muted admin-cell-nowrap">{formatDateTime(proof.uploaded_at)}</td>
                     <td>
                       <strong>{proof.ticketNumber}</strong>
                       <span className="admin-cell-sub">{proof.productName}</span>
                     </td>
-                    <td>
+                    <td className="admin-cell-name">
                       {proof.clientName}
                       <span className="admin-cell-sub">{proof.clientPhone}</span>
                     </td>
                     <td className="numeric">{formatMoney(proof.reported_amount_cents)}</td>
-                    <td style={{ color: "var(--admin-muted)" }}>{PAYMENT_METHOD_LABELS[proof.payment_method] ?? proof.payment_method}</td>
-                    <td>
+                    <td className="admin-cell-muted admin-cell-nowrap">{PAYMENT_METHOD_LABELS[proof.payment_method] ?? proof.payment_method}</td>
+                    <td className="admin-cell-nowrap">
                       {proof.signedUrl ? (
                         <a href={proof.signedUrl} target="_blank" rel="noreferrer" style={{ color: "var(--terracotta)", fontWeight: 700 }}>
                           Ver archivo
@@ -130,7 +130,7 @@ export default async function CobranzaPage() {
               <tbody>
                 {recent.map((decision) => (
                   <tr key={decision.id}>
-                    <td style={{ color: "var(--admin-muted)" }}>{formatDateTime(decision.validated_at)}</td>
+                    <td className="admin-cell-muted admin-cell-nowrap">{formatDateTime(decision.validated_at)}</td>
                     <td>
                       <strong>{decision.ticketNumber}</strong>
                       <span className="admin-cell-sub">{decision.productName}</span>
@@ -141,7 +141,7 @@ export default async function CobranzaPage() {
                         {decision.status === "APPROVED" ? "Aprobado" : "Rechazado"}
                       </Badge>
                     </td>
-                    <td style={{ color: "var(--admin-muted)" }}>{decision.rejection_reason ?? "—"}</td>
+                    <td className="admin-cell-muted">{decision.rejection_reason ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>

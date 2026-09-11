@@ -4,7 +4,7 @@ import { Button } from "../../../components/ui/Button";
 import { Card } from "../../../components/ui/Card";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { PageHeader } from "../../../components/ui/PageHeader";
-import { businessToday, formatDateTime } from "../../../lib/format";
+import { businessToday, formatTime } from "../../../lib/format";
 import { listSlotsForDay, listLocations } from "../../../lib/supabase/admin-agenda";
 import { listTicketsByLogistics } from "../../../lib/supabase/admin-orders";
 import { completeBookingAction } from "./actions";
@@ -136,7 +136,7 @@ async function AgendaBody({
               <tbody>
                 {slots.map((slot) => (
                   <tr key={slot.id}>
-                    <td>{formatDateTime(slot.starts_at)}</td>
+                    <td className="admin-cell-time">{formatTime(slot.starts_at)}</td>
                     <td>
                       {!slot.booking ? (
                         <Badge tone="success">Disponible</Badge>
@@ -146,9 +146,9 @@ async function AgendaBody({
                         <Badge tone="warning">Reservada</Badge>
                       )}
                     </td>
-                    <td>{slot.booking?.ticketNumber ?? "—"}</td>
-                    <td style={{ color: "var(--admin-muted)" }}>{slot.booking?.clientName ?? "—"}</td>
-                    <td style={{ color: "var(--admin-muted)" }}>{slot.booking ? (slot.booking.deliveryType === "PICKUP" ? "Recoger" : "DiDi") : "—"}</td>
+                    <td className="admin-cell-nowrap">{slot.booking?.ticketNumber ?? "—"}</td>
+                    <td className="admin-cell-muted admin-cell-name">{slot.booking?.clientName ?? "—"}</td>
+                    <td className="admin-cell-muted admin-cell-nowrap">{slot.booking ? (slot.booking.deliveryType === "PICKUP" ? "Recoger" : "DiDi") : "—"}</td>
                     <td>
                       <div className="admin-row-actions">
                         {!slot.booking ? (
