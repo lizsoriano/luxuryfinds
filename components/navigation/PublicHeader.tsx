@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useCart } from "../../lib/cart/CartContext";
 
 const links = [
-  ["Catálogo", "/catalogo"], ["Nuevo", "/catalogo?orden=recent"], ["Más vendidos", "/catalogo?orden=bestsellers"],
+  ["Catálogo", "/catalogo"], ["New In", "/catalogo?orden=recent"], ["Entrega inmediata", "/entrega-inmediata"],
 ];
 const accountLinks = [
   ["Mi cuenta", "/login"], ["Favoritos", "/favoritos"], ["Dudas", "/como-comprar"],
