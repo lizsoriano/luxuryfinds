@@ -30,7 +30,7 @@
 
 import { adminDb, DEFAULT_BUSINESS_ID, MAX_PRODUCT_IMAGES } from "../supabase/business";
 import { CatalogIndex, type MatchMethod } from "./catalog-index";
-import { FIRST_PAGE, readStartPage, resetSyncCursor, writeSyncCursor } from "./cursor";
+import { FIRST_PAGE, readCursorPosition, resetSyncCursor, writeSyncCursor } from "./cursor";
 import { copyProductImages } from "./images";
 import { slugify } from "./normalize";
 import { iterateMawMawProducts } from "./sources/mawmaw";
@@ -80,7 +80,10 @@ export type RunOptions = {
 /** Where the crawl started and where it left off, for the caller to report. */
 export type CursorReport = {
   startedAtPage: number;
+  startedAtOffset: number;
   nextPage: number;
+  /** Products of `nextPage` already done, when a page was left half-finished. */
+  nextOffset: number;
   /** True when the run reached the end of the catalogue and rewound to page 1. */
   wrapped: boolean;
   saved: boolean;
@@ -265,7 +268,11 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
   if (options.resetCursor) await resetSyncCursor(options.source);
   // A dry run must not consume the real checkpoint's position either: it reads
   // where the next real run would start, and never writes it back.
-  const startPage = options.resetCursor ? FIRST_PAGE : await readStartPage(options.source);
+  const start = options.resetCursor
+    ? { page: FIRST_PAGE, offset: 0 }
+    : await readCursorPosition(options.source);
+  const startPage = start.page;
+  const startOffset = start.offset;
 
   const index = await CatalogIndex.load();
   if (!index.productSourcesTableExists) {
@@ -325,9 +332,13 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
     options.onProgress?.(counters);
   };
 
-  // The last page that was read AND written in full. Only this advances the
-  // checkpoint: a page abandoned half-way must be replayed, not skipped.
+  // The last page that was read AND written in full.
   let lastCompletedPage = 0;
+  // How far into a page that could NOT be finished we got, so the next run
+  // resumes inside it instead of replaying it (or, for a page bigger than one
+  // invocation's budget, instead of never getting past it at all).
+  let pendingPage = 0;
+  let pendingOffset = 0;
 
   try {
     const pages = iterateSource(
@@ -340,9 +351,16 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
     );
 
     for await (const page of pages) {
-      for (const product of page.products) {
+      // Resuming inside a page: the products already dealt with by the previous
+      // invocation are dropped before any work is done on them.
+      const skip = page.page === startPage && !page.retry ? startOffset : 0;
+      const products = skip > 0 ? page.products.slice(skip) : page.products;
+      let doneInPage = 0;
+
+      for (const product of products) {
         counters.products_scanned += 1;
         batch.push(product);
+        doneInPage += 1;
         if (batch.length >= BATCH_SIZE) await flush();
         // Checked inside the page too: an Oskin page is 100 products and copying
         // their photos can outlast the budget on its own.
@@ -352,10 +370,23 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
         }
       }
       await flush();
+
+      if (truncated) {
+        // Stopped part-way. Remember exactly how far in, so the next invocation
+        // continues rather than redoing - or worse, never finishing - this page.
+        if (!page.retry && doneInPage < products.length) {
+          pendingPage = page.page;
+          pendingOffset = skip + doneInPage;
+        } else if (!page.retry) {
+          lastCompletedPage = Math.max(lastCompletedPage, page.page);
+        }
+        break;
+      }
+
       // A retry-pass page arrives out of order, so it proves nothing about how
       // far the forward crawl got and must not move the checkpoint.
-      if (!truncated && !page.retry) lastCompletedPage = Math.max(lastCompletedPage, page.page);
-      if (truncated || Date.now() > deadline) {
+      if (!page.retry) lastCompletedPage = Math.max(lastCompletedPage, page.page);
+      if (Date.now() > deadline) {
         truncated = true;
         break;
       }
@@ -376,7 +407,11 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
   //                 next run detects changes instead of crawling past the end.
   //   neither    -> stopped at the caller's maxPages: advance, nothing is done.
   const wrapped = !truncated && exhausted;
-  const nextPage = wrapped ? FIRST_PAGE : Math.max(startPage, lastCompletedPage + 1);
+  // A page left half-done wins over "the page after the last complete one":
+  // it is the earlier position, and it is where the unprocessed products are.
+  const resumeInsidePage = truncated && pendingPage > 0;
+  const nextPage = wrapped ? FIRST_PAGE : resumeInsidePage ? pendingPage : Math.max(startPage, lastCompletedPage + 1);
+  const nextOffset = wrapped ? 0 : resumeInsidePage ? pendingOffset : 0;
   let cursorSaved = false;
 
   // The notes appended below are the run's own narration, not faults, so the
@@ -387,6 +422,7 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
   if (canWrite) {
     cursorSaved = await writeSyncCursor(options.source, {
       page: nextPage,
+      offset: nextOffset,
       updatedAt: nowIso(),
       highWaterPage: wrapped ? 0 : Math.max(lastCompletedPage, startPage - 1),
       lastOutcome: truncated ? "truncated" : "completed",
@@ -402,9 +438,9 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
   if (truncated) {
     errors.add(
       `${options.source}:presupuesto`,
-      `Se alcanzó el límite de tiempo de la corrida (${Math.round((options.budgetMs ?? DEFAULT_BUDGET_MS) / 1000)}s) en la página ${lastCompletedPage || startPage} del catálogo. ` +
+      `Se alcanzó el límite de tiempo de la corrida (${Math.round((options.budgetMs ?? DEFAULT_BUDGET_MS) / 1000)}s) en la página ${pendingPage || lastCompletedPage || startPage} del catálogo. ` +
         (cursorSaved
-          ? `La siguiente corrida continúa desde la página ${nextPage}.`
+          ? `La siguiente corrida continúa desde la página ${nextPage}${nextOffset ? ` (producto ${nextOffset + 1} en adelante)` : ""}.`
           : "La siguiente corrida volverá a empezar desde la misma página."),
     );
   } else if (wrapped) {
@@ -444,7 +480,14 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
     createdSamples,
     matchedByMethod,
     dryRun: !canWrite,
-    cursor: { startedAtPage: startPage, nextPage, wrapped, saved: cursorSaved },
+    cursor: {
+      startedAtPage: startPage,
+      startedAtOffset: startOffset,
+      nextPage,
+      nextOffset,
+      wrapped,
+      saved: cursorSaved,
+    },
     imagesStored: imageBudget.stored,
   };
 }

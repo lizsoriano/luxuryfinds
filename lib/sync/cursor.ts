@@ -42,12 +42,28 @@ export const FIRST_PAGE = 1;
 export type SourceCursor = {
   /** Listing page the NEXT run should start at. FIRST_PAGE means "from the top". */
   page: number;
+  /**
+   * Products of that page already dealt with, so a page too big to finish in one
+   * invocation is resumed part-way instead of restarted.
+   *
+   * THIS IS NOT A REFINEMENT, IT IS LOAD-BEARING. Oskin's Store API returns 100
+   * products per page and a 52s budget only gets through ~50 of them. With a
+   * page-granular cursor that page could never be completed, so the checkpoint
+   * could never advance and Oskin would re-read page 1 forever - the very bug
+   * this file exists to fix, reintroduced one level down. Measured against the
+   * live store before this field existed: two consecutive production runs both
+   * reported startedAtPage 1 -> nextPage 1.
+   */
+  offset: number;
   updatedAt: string;
   /** Highest page this source has ever reached, so the panel can show progress. */
   highWaterPage?: number;
   /** How the previous run ended, in one word, for the admin panel. */
   lastOutcome?: "truncated" | "completed";
 };
+
+/** Where a run should pick the crawl up. */
+export type CursorPosition = { page: number; offset: number };
 
 export type SyncCursors = Partial<Record<SyncSource, SourceCursor>>;
 
@@ -63,8 +79,10 @@ function coerce(value: unknown): SyncCursors {
     const entry = raw as Record<string, unknown>;
     const page = Number(entry.page);
     if (!Number.isFinite(page) || page < FIRST_PAGE) continue;
+    const offset = Number(entry.offset);
     out[key] = {
       page: Math.floor(page),
+      offset: Number.isFinite(offset) && offset > 0 ? Math.floor(offset) : 0,
       updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt : "",
       highWaterPage: Number.isFinite(Number(entry.highWaterPage)) ? Number(entry.highWaterPage) : undefined,
       lastOutcome: entry.lastOutcome === "truncated" || entry.lastOutcome === "completed" ? entry.lastOutcome : undefined,
@@ -91,10 +109,11 @@ export async function readSyncCursors(): Promise<SyncCursors> {
   }
 }
 
-/** The page a run of `source` should begin at. */
-export async function readStartPage(source: SyncSource): Promise<number> {
+/** Where a run of `source` should begin. */
+export async function readCursorPosition(source: SyncSource): Promise<CursorPosition> {
   const cursors = await readSyncCursors();
-  return cursors[source]?.page ?? FIRST_PAGE;
+  const cursor = cursors[source];
+  return { page: cursor?.page ?? FIRST_PAGE, offset: cursor?.offset ?? 0 };
 }
 
 /**

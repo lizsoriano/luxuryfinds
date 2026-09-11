@@ -61,7 +61,9 @@ function CatalogProgress({ card }: { card: SourceCard }) {
         <span className="admin-hint">
           {finished
             ? "catálogo recorrido completo · vuelve a empezar"
-            : `página ${card.cursorPage} de ~${card.estimatedPages}`}
+            : `página ${card.cursorPage} de ~${card.estimatedPages}${
+                card.cursorOffset ? ` · producto ${card.cursorOffset + 1} en adelante` : ""
+              }`}
         </span>
       </div>
       <div

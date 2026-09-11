@@ -62,9 +62,17 @@ export async function runSyncNowAction(_state: ActionState, formData: FormData):
     // The single most useful thing to tell her: the run only covers a slice of
     // the catalogue, and the NEXT one continues rather than starting over.
     const cursor = result.cursor;
-    const progress = cursor.wrapped
-      ? " Se recorrió el catálogo completo; la próxima corrida vuelve a empezar desde el principio para detectar cambios."
-      : ` Se recorrieron las páginas ${cursor.startedAtPage}–${Math.max(cursor.startedAtPage, cursor.nextPage - 1)} de ~${ESTIMATED_PAGES[source]}; la próxima corrida continúa desde la ${cursor.nextPage}.`;
+    const total = ESTIMATED_PAGES[source];
+    let progress: string;
+    if (cursor.wrapped) {
+      progress = " Se recorrió el catálogo completo; la próxima corrida vuelve a empezar desde el principio para detectar cambios.";
+    } else if (cursor.nextPage === cursor.startedAtPage) {
+      // Stopped inside a single page - normal for Oskin, whose pages hold 100
+      // products. Saying "páginas 4–3" would be nonsense; say where it stopped.
+      progress = ` Se avanzó dentro de la página ${cursor.startedAtPage} de ~${total}; la próxima corrida continúa ahí mismo, desde el producto ${cursor.nextOffset + 1}.`;
+    } else {
+      progress = ` Se recorrieron las páginas ${cursor.startedAtPage}–${cursor.nextPage - (cursor.nextOffset ? 0 : 1)} de ~${total}; la próxima corrida continúa desde la ${cursor.nextPage}.`;
+    }
 
     revalidate();
 
