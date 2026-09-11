@@ -6,6 +6,7 @@
 // instead of throwing a 500 at whoever opens it first.
 
 import { adminDb, DEFAULT_BUSINESS_ID } from "../supabase/business";
+import { ESTIMATED_PAGES, FIRST_PAGE, readSyncCursors } from "./cursor";
 import { SOURCE_LABELS, SYNC_SOURCES, type SyncSource } from "./types";
 
 export type SyncRunRow = {
@@ -35,6 +36,16 @@ export type SourceCard = {
   lastRun: SyncRunRow | null;
   lastSeenAt: string | null;
   nextRunAt: string | null;
+  /**
+   * Where the crawl of this store stands. One invocation only covers a slice of
+   * the catalogue, so "última sincronización" on its own tells the admin nothing
+   * about whether the sync is making progress - this is what does.
+   */
+  cursorPage: number;
+  estimatedPages: number;
+  cursorUpdatedAt: string | null;
+  /** True when the last run finished the catalogue and rewound to page 1. */
+  cursorWrapped: boolean;
 };
 
 export type PriceComparisonRow = {
@@ -102,6 +113,7 @@ function missingTable(error: { message?: string } | null | undefined): boolean {
 export async function loadSyncDashboard(): Promise<SyncDashboard> {
   const db = adminDb();
   const intervalMinutes = await readIntervalMinutes();
+  const cursors = await readSyncCursors();
 
   const probe = await db.from("product_sources").select("id").limit(1);
   if (probe.error && missingTable(probe.error)) {
@@ -117,6 +129,10 @@ export async function loadSyncDashboard(): Promise<SyncDashboard> {
         lastRun: null,
         lastSeenAt: null,
         nextRunAt: null,
+        cursorPage: FIRST_PAGE,
+        estimatedPages: ESTIMATED_PAGES[source],
+        cursorUpdatedAt: null,
+        cursorWrapped: false,
       })),
       lastRuns: [],
       comparisons: [],
@@ -160,6 +176,7 @@ export async function loadSyncDashboard(): Promise<SyncDashboard> {
       (latest, link) => (!latest || (link.last_seen_at && link.last_seen_at > latest) ? link.last_seen_at : latest),
       null,
     );
+    const cursor = cursors[source];
     return {
       source,
       label: SOURCE_LABELS[source],
@@ -171,6 +188,10 @@ export async function loadSyncDashboard(): Promise<SyncDashboard> {
       nextRunAt: lastRun?.finished_at
         ? new Date(new Date(lastRun.finished_at).getTime() + intervalMinutes * 60_000).toISOString()
         : null,
+      cursorPage: cursor?.page ?? FIRST_PAGE,
+      estimatedPages: ESTIMATED_PAGES[source],
+      cursorUpdatedAt: cursor?.updatedAt || null,
+      cursorWrapped: Boolean(cursor) && cursor?.page === FIRST_PAGE && cursor?.lastOutcome === "completed",
     };
   });
 

@@ -48,7 +48,7 @@ function isTlsTeardown(error: unknown): boolean {
   return code === "ECONNRESET" || code === "EPIPE" || code === "EPROTO" || code === "UND_ERR_SOCKET";
 }
 
-type RawResponse = { status: number; body: string };
+type RawResponse = { status: number; body: Buffer; contentType: string };
 
 /**
  * GET through node:https, following redirects manually (max 5). Used only as
@@ -86,7 +86,13 @@ function nodeHttpsGet(url: string, accept: string, timeoutMs: number, depth = 0)
         }
         const chunks: Buffer[] = [];
         response.on("data", (chunk: Buffer) => chunks.push(chunk));
-        response.on("end", () => resolve({ status, body: Buffer.concat(chunks).toString("utf8") }));
+        response.on("end", () =>
+          resolve({
+            status,
+            body: Buffer.concat(chunks),
+            contentType: String(response.headers["content-type"] ?? ""),
+          }),
+        );
         response.on("error", reject);
       },
     );
@@ -122,22 +128,26 @@ function sleep(ms: number) {
 /**
  * GET with a timeout, bounded retries and exponential backoff. 4xx (except 429)
  * fails immediately - retrying a 404 only wastes the run's time budget.
+ *
+ * The body is kept as a Buffer all the way through so the very same retry and
+ * TLS-fallback logic serves both the HTML/JSON readers and the image downloader;
+ * fetchText() is just this with a utf8 decode on the end.
  */
-export async function fetchText(url: string, options: FetchOptions = {}): Promise<string> {
+async function fetchRaw(url: string, options: FetchOptions = {}): Promise<RawResponse> {
   const { timeoutMs = DEFAULT_TIMEOUT_MS, retries = 2, accept = "text/html,application/json" } = options;
   const host = safeHost(url);
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
-      const { status, body } = forceNodeHttps.has(host)
+      const response = forceNodeHttps.has(host)
         ? await nodeHttpsGet(url, accept, timeoutMs)
         : await fetchOnce(url, accept, timeoutMs, options.signal);
 
-      if (status >= 200 && status < 300) return body;
+      if (response.status >= 200 && response.status < 300) return response;
 
-      const error = new HttpError(`HTTP ${status} en ${url}`, status, url);
-      const retriable = status === 429 || status >= 500;
+      const error = new HttpError(`HTTP ${response.status} en ${url}`, response.status, url);
+      const retriable = response.status === 429 || response.status >= 500;
       if (!retriable || attempt === retries) throw error;
       lastError = error;
     } catch (error) {
@@ -147,9 +157,9 @@ export async function fetchText(url: string, options: FetchOptions = {}): Promis
       if (isTlsTeardown(error) && !forceNodeHttps.has(host)) {
         forceNodeHttps.add(host);
         try {
-          const { status, body } = await nodeHttpsGet(url, accept, timeoutMs);
-          if (status >= 200 && status < 300) return body;
-          throw new HttpError(`HTTP ${status} en ${url}`, status, url);
+          const response = await nodeHttpsGet(url, accept, timeoutMs);
+          if (response.status >= 200 && response.status < 300) return response;
+          throw new HttpError(`HTTP ${response.status} en ${url}`, response.status, url);
         } catch (fallbackError) {
           lastError = fallbackError;
           if (fallbackError instanceof HttpError && fallbackError.status < 500 && fallbackError.status !== 429) {
@@ -166,6 +176,42 @@ export async function fetchText(url: string, options: FetchOptions = {}): Promis
   }
 
   throw lastError instanceof Error ? lastError : new Error(`No fue posible descargar ${url}`);
+}
+
+export async function fetchText(url: string, options: FetchOptions = {}): Promise<string> {
+  return (await fetchRaw(url, options)).body.toString("utf8");
+}
+
+export type BinaryResponse = { bytes: Buffer; contentType: string };
+
+/**
+ * Downloads a binary asset (a product photo) through the same retry and
+ * TLS-fallback path as the catalogue readers. That fallback is not optional
+ * here: Oskin serves its images from oskinmx.com itself, the very host whose
+ * TLS renegotiation Node's global fetch refuses.
+ *
+ * `maxBytes` is enforced after the download rather than by streaming, which is
+ * deliberate: storefront images are tens of kilobytes and the cap exists to stop
+ * something pathological reaching the bucket, not to save bandwidth.
+ */
+export async function fetchBinary(
+  url: string,
+  options: FetchOptions & { maxBytes?: number } = {},
+): Promise<BinaryResponse> {
+  const { bytes, contentType } = await fetchRaw(url, {
+    ...options,
+    accept: options.accept ?? "image/*",
+  }).then((response) => ({
+    bytes: response.body,
+    contentType: response.contentType.split(";")[0].trim().toLowerCase(),
+  }));
+
+  if (!bytes.length) throw new Error(`Respuesta vacía en ${url}`);
+  const maxBytes = options.maxBytes;
+  if (maxBytes && bytes.length > maxBytes) {
+    throw new Error(`El archivo pesa ${Math.round(bytes.length / 1024)} KB y el máximo es ${Math.round(maxBytes / 1024)} KB`);
+  }
+  return { bytes, contentType };
 }
 
 function safeHost(url: string): string {
@@ -196,7 +242,11 @@ async function fetchOnce(
         "Accept-Language": "es-MX,es;q=0.9,en;q=0.8",
       },
     });
-    return { status: response.status, body: await response.text() };
+    return {
+      status: response.status,
+      body: Buffer.from(await response.arrayBuffer()),
+      contentType: response.headers.get("content-type") ?? "",
+    };
   } finally {
     clearTimeout(timer);
     outerSignal?.removeEventListener("abort", onOuterAbort);

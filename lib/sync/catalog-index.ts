@@ -113,26 +113,31 @@ async function loadVariants(): Promise<{ variants: CatalogVariant[]; hasBarcodeC
  * and no Oskin id points at two products - so this is used as a high-confidence
  * tier, just below an explicit product_sources link.
  */
-async function loadLegacyOskinIds(): Promise<Map<string, string>> {
+async function loadLegacyOskinIds(): Promise<{ legacyOskinIds: Map<string, string>; withImages: Set<string> }> {
   const rows = await selectAll<{ product_id: string; storage_key: string | null }>(
     "product_images",
     "product_id, storage_key",
   );
   const candidates = new Map<string, Set<string>>();
+  // The same scan answers a second question the engine needs: which products
+  // already have a photo, so the image backfill can skip them. It is free here -
+  // these rows are being read anyway - and saves a per-product query.
+  const withImages = new Set<string>();
   for (const row of rows) {
+    withImages.add(row.product_id);
     const match = /^products\/(\d+)\//.exec(row.storage_key ?? "");
     if (!match) continue;
     const set = candidates.get(match[1]) ?? new Set<string>();
     set.add(row.product_id);
     candidates.set(match[1], set);
   }
-  const index = new Map<string, string>();
+  const legacyOskinIds = new Map<string, string>();
   for (const [oskinId, productIds] of candidates) {
     // An Oskin id that somehow points at two products is not an identity any
     // more; drop it and let the lower tiers decide.
-    if (productIds.size === 1) index.set(oskinId, [...productIds][0]);
+    if (productIds.size === 1) legacyOskinIds.set(oskinId, [...productIds][0]);
   }
-  return index;
+  return { legacyOskinIds, withImages };
 }
 
 async function loadExistingLinks(): Promise<{ links: ExistingSourceLink[]; tableExists: boolean }> {
@@ -203,6 +208,8 @@ export class CatalogIndex {
   /** normalised name -> product ids. A key shared by two products is ambiguous. */
   private readonly byName = new Map<string, Set<string>>();
   private readonly legacyOskinIds: Map<string, string>;
+  /** Product ids that already have at least one product_images row. */
+  private readonly withImages: Set<string>;
   /** `${source}:${externalProductId}` -> product id */
   private readonly bySourceProduct = new Map<string, string>();
   /** `${source}:${externalProductId}:${externalVariantId}` -> link */
@@ -215,6 +222,7 @@ export class CatalogIndex {
     products: CatalogProduct[];
     variants: CatalogVariant[];
     legacyOskinIds: Map<string, string>;
+    withImages: Set<string>;
     links: ExistingSourceLink[];
     reviewDecisions: Map<string, ReviewState>;
     hasBarcodeColumn: boolean;
@@ -223,6 +231,7 @@ export class CatalogIndex {
     this.hasBarcodeColumn = input.hasBarcodeColumn;
     this.productSourcesTableExists = input.productSourcesTableExists;
     this.legacyOskinIds = input.legacyOskinIds;
+    this.withImages = input.withImages;
     this.reviewDecisions = input.reviewDecisions;
 
     for (const product of input.products) {
@@ -256,7 +265,7 @@ export class CatalogIndex {
   }
 
   static async load(): Promise<CatalogIndex> {
-    const [products, brands, variantsResult, legacyOskinIds, linksResult, reviewDecisions] = await Promise.all([
+    const [products, brands, variantsResult, imagesResult, linksResult, reviewDecisions] = await Promise.all([
       selectAll<{ id: string; name: string; slug: string | null; brand_id: string | null; is_active: boolean }>(
         "products",
         "id, name, slug, brand_id, is_active",
@@ -275,7 +284,8 @@ export class CatalogIndex {
         brandName: product.brand_id ? (brandNames.get(product.brand_id) ?? null) : null,
       })),
       variants: variantsResult.variants,
-      legacyOskinIds,
+      legacyOskinIds: imagesResult.legacyOskinIds,
+      withImages: imagesResult.withImages,
       links: linksResult.links,
       reviewDecisions,
       hasBarcodeColumn: variantsResult.hasBarcodeColumn,
@@ -289,6 +299,23 @@ export class CatalogIndex {
 
   variantsOf(productId: string): CatalogVariant[] {
     return this.variantsByProduct.get(productId) ?? [];
+  }
+
+  /** Whether the product already has a photo, so the sync leaves it alone. */
+  hasImages(productId: string): boolean {
+    return this.withImages.has(productId);
+  }
+
+  /** Keeps the answer above correct after the engine copies images in. */
+  markHasImages(productId: string) {
+    this.withImages.add(productId);
+  }
+
+  /** Products in the catalogue with no photo at all; reported by the panel. */
+  get imagelessProductCount(): number {
+    let total = 0;
+    for (const productId of this.products.keys()) if (!this.withImages.has(productId)) total += 1;
+    return total;
   }
 
   matchProduct(product: SourceProduct): ProductMatch {

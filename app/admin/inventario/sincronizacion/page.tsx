@@ -8,7 +8,7 @@ import { StatCard } from "../../../../components/ui/StatCard";
 import { formatDateTime, formatMoney } from "../../../../lib/format";
 import { loadSyncDashboard, type SourceCard, type SyncRunRow } from "../../../../lib/sync/report";
 import { SOURCE_HOMEPAGES } from "../../../../lib/sync/types";
-import { resolveMatchReviewAction, runSyncNowAction } from "./actions";
+import { resetSyncCursorAction, resolveMatchReviewAction, runSyncNowAction } from "./actions";
 import { SyncNowButton } from "./SyncNowButton";
 
 export const dynamic = "force-dynamic";
@@ -40,6 +40,58 @@ function winnerLabel(applied: number | null, mawmaw: number | null, oskin: numbe
   if (matchesMawMaw) return "Maw Maw";
   if (matchesOskin) return "Oskin";
   return "Luxury Finds";
+}
+
+/**
+ * How far through the store's catalogue the crawl has got. One invocation only
+ * ever covers a slice (the serverless time limit), so without this the panel
+ * could only say "última sincronización: hace 3 minutos" while the sync silently
+ * re-read the same first pages forever - which is exactly what it used to do.
+ */
+function CatalogProgress({ card }: { card: SourceCard }) {
+  const done = Math.max(0, card.cursorPage - 1);
+  const total = Math.max(card.estimatedPages, card.cursorPage);
+  const percent = Math.min(100, Math.round((done / total) * 100));
+  const finished = card.cursorWrapped;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+        <span className="admin-hint">Avance del catálogo</span>
+        <span className="admin-hint">
+          {finished
+            ? "catálogo recorrido completo · vuelve a empezar"
+            : `página ${card.cursorPage} de ~${card.estimatedPages}`}
+        </span>
+      </div>
+      <div
+        style={{
+          height: 6,
+          borderRadius: 999,
+          background: "var(--admin-border, #e7e2e4)",
+          overflow: "hidden",
+        }}
+        role="progressbar"
+        aria-valuenow={finished ? 100 : percent}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={`Avance del catálogo de ${card.label}`}
+      >
+        <div
+          style={{
+            width: `${finished ? 100 : Math.max(percent, done > 0 ? 3 : 0)}%`,
+            height: "100%",
+            background: "var(--admin-accent, #b3607a)",
+          }}
+        />
+      </div>
+      <p className="admin-hint" style={{ margin: "6px 0 0" }}>
+        {card.cursorUpdatedAt
+          ? `Cada corrida continúa donde quedó la anterior. Última vez que avanzó: ${formatDateTime(card.cursorUpdatedAt)}.`
+          : "Todavía no hay avance guardado: la próxima corrida empieza desde la página 1."}
+      </p>
+    </div>
+  );
 }
 
 function SourcePanel({ card }: { card: SourceCard }) {
@@ -79,6 +131,8 @@ function SourcePanel({ card }: { card: SourceCard }) {
         </div>
       </dl>
 
+      <CatalogProgress card={card} />
+
       <p className="admin-hint" style={{ margin: 0 }}>
         Última sincronización: {run ? formatDateTime(run.finished_at ?? run.started_at) : "nunca"}
         <br />
@@ -87,7 +141,18 @@ function SourcePanel({ card }: { card: SourceCard }) {
         Último contacto con la tienda: {card.lastSeenAt ? formatDateTime(card.lastSeenAt) : "—"}
       </p>
 
-      <SyncNowButton action={runSyncNowAction} source={card.source} label={card.label} />
+      <div className="admin-row-actions">
+        <SyncNowButton action={runSyncNowAction} source={card.source} label={card.label} />
+        <ConfirmAction
+          action={resetSyncCursorAction}
+          fields={{ source: card.source }}
+          triggerLabel="Reiniciar avance"
+          title={`Volver al inicio del catálogo de ${card.label}`}
+          description="La próxima sincronización empezará otra vez desde la página 1 en lugar de continuar donde quedó. No borra ni modifica ningún producto."
+          confirmLabel="Reiniciar"
+          variant="secondary"
+        />
+      </div>
     </Card>
   );
 }

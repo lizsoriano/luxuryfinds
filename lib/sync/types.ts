@@ -63,6 +63,18 @@ export type SourceProduct = {
   availability: Availability;
 };
 
+/**
+ * One listing page's worth of products, tagged with the page it came from so the
+ * engine can persist a checkpoint (see lib/sync/cursor.ts). `retry` marks the
+ * adapters' second pass over pages that failed the first time: those arrive out
+ * of order and must never be allowed to advance the cursor.
+ */
+export type SourcePage = {
+  page: number;
+  products: SourceProduct[];
+  retry: boolean;
+};
+
 export type SyncError = {
   stage: string;
   externalId?: string;

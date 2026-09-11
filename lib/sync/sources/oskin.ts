@@ -32,7 +32,7 @@
 
 import { fetchText, mapWithConcurrency } from "../http";
 import { cleanProductName, looksLikePreorder, slugify, stripHtml } from "../normalize";
-import type { Availability, SourceProduct, SourceVariant } from "../types";
+import type { Availability, SourcePage, SourceProduct, SourceVariant } from "../types";
 
 const ORIGIN = "https://oskinmx.com";
 const STORE_API = `${ORIGIN}/wp-json/wc/store/v1`;
@@ -257,7 +257,19 @@ async function toSourceProduct(
 
 export type OskinOptions = {
   maxPages?: number;
+  /**
+   * Page to resume at. One invocation cannot walk 36 pages inside a serverless
+   * time limit, so the engine checkpoints where it stopped and passes it back
+   * here next time; see lib/sync/cursor.ts.
+   */
+  startPage?: number;
   onError?: (stage: string, message: string) => void;
+  /**
+   * Called when the crawl stopped because the CATALOGUE ran out, as opposed to
+   * because `maxPages` was reached. That difference is what tells the engine to
+   * rewind its cursor to page 1 instead of advancing it.
+   */
+  onExhausted?: () => void;
 };
 
 /**
@@ -267,9 +279,13 @@ export type OskinOptions = {
  */
 export async function* iterateOskinProducts(
   options: OskinOptions = {},
-): AsyncGenerator<SourceProduct[], void, undefined> {
+): AsyncGenerator<SourcePage, void, undefined> {
   const onError = options.onError ?? (() => {});
-  const maxPages = Math.min(options.maxPages ?? MAX_PAGES, MAX_PAGES);
+  const startPage = Math.max(1, Math.floor(options.startPage ?? 1));
+  // maxPages counts pages to WALK, not the last page number, so a resumed run
+  // still gets a full slice of the catalogue rather than a slice of a slice.
+  const pageBudget = Math.min(options.maxPages ?? MAX_PAGES, MAX_PAGES);
+  const lastPage = Math.min(startPage + pageBudget - 1, MAX_PAGES);
   const seen = new Set<string>();
   const failedPages: number[] = [];
 
@@ -307,7 +323,8 @@ export async function* iterateOskinProducts(
     return batch;
   }
 
-  for (let page = 1; page <= maxPages; page += 1) {
+  let exhausted = false;
+  for (let page = startPage; page <= lastPage; page += 1) {
     const list = await loadPage(page);
     if (list === null) {
       // A page that failed is remembered, not skipped. Past the last page
@@ -321,18 +338,28 @@ export async function* iterateOskinProducts(
     // An empty page is the end of the catalogue - but only when no earlier page
     // failed, because otherwise "empty" might just be where a network outage
     // started and we would silently import half a catalogue.
-    if (!list.length) break;
+    if (!list.length) {
+      exhausted = true;
+      break;
+    }
 
     const batch = await toBatch(list);
-    if (batch.length) yield batch;
+    yield { page, products: batch, retry: false };
   }
 
   for (const page of failedPages) {
     const list = await loadPage(page);
-    if (!list?.length) continue;
+    if (!list?.length) {
+      // Failed twice AND empty: this was the end of the catalogue all along,
+      // not an outage.
+      if (page >= lastPage) exhausted = true;
+      continue;
+    }
     const batch = await toBatch(list);
-    if (batch.length) yield batch;
+    yield { page, products: batch, retry: true };
   }
+
+  if (exhausted) options.onExhausted?.();
 }
 
 /** Canonical slug for an Oskin product, used when creating a new LF product. */

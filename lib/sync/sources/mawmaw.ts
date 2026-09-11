@@ -31,7 +31,7 @@ import {
   looksLikePreorder,
   slugify,
 } from "../normalize";
-import type { Availability, SourceProduct, SourceVariant } from "../types";
+import type { Availability, SourcePage, SourceProduct, SourceVariant } from "../types";
 
 const ORIGIN = "https://mawmawbeauty.com";
 const LISTING_PATH = "/productos/";
@@ -318,7 +318,24 @@ export type MawMawOptions = {
   /** Recover brands with the extra /marcas/ pass. Full runs only. */
   withBrands?: boolean;
   maxPages?: number;
+  /**
+   * Page to resume at. ~109 listing pages do not fit in one serverless
+   * invocation, so the engine checkpoints where it stopped and passes it back
+   * here next time; see lib/sync/cursor.ts.
+   *
+   * Tiendanube re-orders the grid as the store edits it, so a resumed page is
+   * not guaranteed to hold exactly what it held last time. A product that shifts
+   * across the boundary is either seen twice (harmless - it matches on its
+   * product_sources link) or missed until the cursor wraps back to page 1.
+   */
+  startPage?: number;
   onError?: (stage: string, message: string) => void;
+  /**
+   * Called when the crawl stopped because the CATALOGUE ran out, as opposed to
+   * because `maxPages` was reached. That difference is what tells the engine to
+   * rewind its cursor to page 1 instead of advancing it.
+   */
+  onExhausted?: () => void;
 };
 
 /**
@@ -327,10 +344,14 @@ export type MawMawOptions = {
  */
 export async function* iterateMawMawProducts(
   options: MawMawOptions = {},
-): AsyncGenerator<SourceProduct[], void, undefined> {
+): AsyncGenerator<SourcePage, void, undefined> {
   const onError = options.onError ?? (() => {});
   const brandIndex = options.withBrands ? await buildBrandIndex(onError) : new Map<string, string>();
-  const maxPages = Math.min(options.maxPages ?? MAX_LISTING_PAGES, MAX_LISTING_PAGES);
+  const startPage = Math.max(1, Math.floor(options.startPage ?? 1));
+  // maxPages counts pages to WALK, not the last page number, so a resumed run
+  // still gets a full slice of the catalogue rather than a slice of a slice.
+  const pageBudget = Math.min(options.maxPages ?? MAX_LISTING_PAGES, MAX_LISTING_PAGES);
+  const lastPage = Math.min(startPage + pageBudget - 1, MAX_LISTING_PAGES);
   const seen = new Set<string>();
   const failedPages: number[] = [];
 
@@ -356,16 +377,21 @@ export async function* iterateMawMawProducts(
     return batch;
   };
 
-  for (let page = 1; page <= maxPages; page += 1) {
+  let exhausted = false;
+  for (let page = startPage; page <= lastPage; page += 1) {
     const cards = await loadCards(page);
     if (cards === null) {
       // Remembered, not skipped - see the retry pass below.
       failedPages.push(page);
       continue;
     }
-    if (!cards.length) break;
-    const batch = toBatch(cards);
-    if (batch.length) yield batch;
+    if (!cards.length) {
+      exhausted = true;
+      break;
+    }
+    // Yielded even when every card was a duplicate: the PAGE was still fully
+    // read, and that is what the engine's checkpoint counts.
+    yield { page, products: toBatch(cards), retry: false };
   }
 
   // A page that failed the first time gets one more chance before the run
@@ -375,10 +401,14 @@ export async function* iterateMawMawProducts(
   // blip is never seen.
   for (const page of failedPages) {
     const cards = await loadCards(page);
-    if (!cards?.length) continue;
-    const batch = toBatch(cards);
-    if (batch.length) yield batch;
+    if (!cards?.length) {
+      if (page >= lastPage) exhausted = true;
+      continue;
+    }
+    yield { page, products: toBatch(cards), retry: true };
   }
+
+  if (exhausted) options.onExhausted?.();
 }
 
 /** Canonical slug for a Maw Maw product, used when creating a new LF product. */
