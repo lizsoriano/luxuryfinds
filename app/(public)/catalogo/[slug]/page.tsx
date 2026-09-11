@@ -21,7 +21,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
 
   return <main className="catalog-page">
     <div className="shell">
-      <p className="catalog-breadcrumb"><Link href="/">Inicio</Link> <span aria-hidden>.</span> <Link href="/catalogo">Catálogo</Link> <span aria-hidden>.</span> {product.name}</p>
+      <p className="catalog-breadcrumb"><Link href="/">Inicio</Link> <span aria-hidden>/</span> <Link href="/catalogo">Catálogo</Link> <span aria-hidden>/</span> {product.name}</p>
 
       <div className="product-detail">
         <div className="product-detail-gallery">

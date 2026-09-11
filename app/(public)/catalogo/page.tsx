@@ -132,7 +132,7 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
   return (
     <main className="catalog-page">
       <div className="shell">
-        <p className="catalog-breadcrumb"><Link href="/">Inicio</Link> <span aria-hidden>.</span> Catálogo</p>
+        <p className="catalog-breadcrumb"><Link href="/">Inicio</Link> <span aria-hidden>/</span> Catálogo</p>
         <h1 className="catalog-title">Catálogo</h1>
 
         <form className="catalog-search" method="get" action="/catalogo">
@@ -141,7 +141,9 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
           {catalogType && <input type="hidden" name="tipo" value={catalogType} />}
           {sort !== "recommended" && <input type="hidden" name="orden" value={sort} />}
           <input type="search" name="q" defaultValue={sp.q ?? ""} placeholder="Busca marcas, productos..." aria-label="Buscar productos" />
-          <button type="submit" aria-label="Buscar">⌕</button>
+          <button type="submit" aria-label="Buscar">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" strokeLinecap="round" /></svg>
+          </button>
         </form>
 
         <div className="filter-tabs" aria-label="Filtrar por disponibilidad, marca y categoría">
