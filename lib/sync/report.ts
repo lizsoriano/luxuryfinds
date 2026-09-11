@@ -42,6 +42,8 @@ export type SourceCard = {
    * about whether the sync is making progress - this is what does.
    */
   cursorPage: number;
+  /** Products of `cursorPage` already done, when a page was left half-finished. */
+  cursorOffset: number;
   estimatedPages: number;
   cursorUpdatedAt: string | null;
   /** True when the last run finished the catalogue and rewound to page 1. */
@@ -130,6 +132,7 @@ export async function loadSyncDashboard(): Promise<SyncDashboard> {
         lastSeenAt: null,
         nextRunAt: null,
         cursorPage: FIRST_PAGE,
+        cursorOffset: 0,
         estimatedPages: ESTIMATED_PAGES[source],
         cursorUpdatedAt: null,
         cursorWrapped: false,
@@ -189,6 +192,7 @@ export async function loadSyncDashboard(): Promise<SyncDashboard> {
         ? new Date(new Date(lastRun.finished_at).getTime() + intervalMinutes * 60_000).toISOString()
         : null,
       cursorPage: cursor?.page ?? FIRST_PAGE,
+      cursorOffset: cursor?.offset ?? 0,
       estimatedPages: ESTIMATED_PAGES[source],
       cursorUpdatedAt: cursor?.updatedAt || null,
       cursorWrapped: Boolean(cursor) && cursor?.page === FIRST_PAGE && cursor?.lastOutcome === "completed",
