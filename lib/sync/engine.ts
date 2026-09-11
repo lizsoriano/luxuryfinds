@@ -364,7 +364,15 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
         if (batch.length >= BATCH_SIZE) await flush();
         // Checked inside the page too: an Oskin page is 100 products and copying
         // their photos can outlast the budget on its own.
-        if (Date.now() > deadline) {
+        //
+        // Stopping as soon as one product has had to be saved without its photo
+        // is deliberate. Carrying on would spend the remaining seconds creating
+        // more photo-less products - 41 of them in one measured production run -
+        // that nothing would revisit until the cursor wrapped the whole
+        // catalogue. Stopping instead leaves them for the next invocation, which
+        // creates them WITH their photos. Nothing is lost either way, because
+        // the checkpoint records exactly where we stopped.
+        if (Date.now() > deadline || imageBudget.skipped > 0) {
           truncated = true;
           break;
         }
@@ -453,7 +461,7 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
   if (imageBudget.skipped > 0) {
     errors.add(
       `${options.source}:imagenes`,
-      `${imageBudget.skipped} producto(s) se guardaron sin foto porque se agotó el tiempo de la corrida. La siguiente pasada por esas páginas las completa.`,
+      `Se agotó el tiempo para copiar fotos, así que ${imageBudget.skipped} producto(s) quedaron sin imagen y la corrida se detuvo ahí. La siguiente corrida retoma justo en ese punto y sí alcanza a copiarlas.`,
     );
   }
 
