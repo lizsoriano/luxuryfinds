@@ -47,64 +47,58 @@ export default function CartPage() {
           <div className="cart-grid">
             <Card>
               <div className="cart-table-wrap">
-                <table className="cart-table">
-                  <thead>
-                    <tr>
-                      <th aria-label="Quitar" />
-                      <th>Producto</th>
-                      <th className="numeric">Precio</th>
-                      <th>Cantidad</th>
-                      <th className="numeric">Subtotal</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((item) => (
-                      <tr key={`${item.productId}-${item.variantId ?? "base"}`}>
-                        <td>
-                          <button
-                            type="button"
-                            className="cart-table-remove"
-                            aria-label={`Quitar ${item.name}`}
-                            onClick={() => removeItem(item.productId, item.variantId)}
-                          >
-                            ×
-                          </button>
-                        </td>
-                        <td>
-                          <div className="cart-table-product">
-                            <span className="cart-table-thumb">
-                              {item.imageUrl ? (
-                                /* eslint-disable-next-line @next/next/no-img-element */
-                                <img src={item.imageUrl} alt={item.name} />
-                              ) : (
-                                item.brand
-                              )}
-                            </span>
-                            <span>
-                              <span className="cart-table-name">{item.name}</span>
-                              <span className="cart-table-brand">{item.brand}</span>
-                            </span>
-                          </div>
-                        </td>
-                        <td className="numeric">{money(item.priceCents)}</td>
-                        <td>
-                          <input
-                            className="cart-qty-input"
-                            type="number"
-                            min={1}
-                            value={item.quantity}
-                            aria-label={`Cantidad de ${item.name}`}
-                            onChange={(event) => {
-                              const next = Math.round(Number(event.target.value));
-                              if (Number.isFinite(next) && next > 0) updateQuantity(item.productId, item.variantId, next);
-                            }}
-                          />
-                        </td>
-                        <td className="numeric">{money(item.priceCents * item.quantity)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="cart-table" role="table" aria-label="Productos en el carrito">
+                  <div className="cart-table-row cart-table-head" role="row">
+                    <span role="columnheader" aria-hidden />
+                    <span role="columnheader">Producto</span>
+                    <span role="columnheader" className="cart-col-center cart-col-price">Precio</span>
+                    <span role="columnheader" className="cart-col-center">Cantidad</span>
+                    <span role="columnheader" className="cart-col-right">Subtotal</span>
+                  </div>
+                  {items.map((item) => (
+                    <div className="cart-table-row" role="row" key={`${item.productId}-${item.variantId ?? "base"}`}>
+                      <span role="cell" className="cart-cell-remove">
+                        <button
+                          type="button"
+                          className="cart-table-remove"
+                          aria-label={`Quitar ${item.name}`}
+                          onClick={() => removeItem(item.productId, item.variantId)}
+                        >
+                          ×
+                        </button>
+                      </span>
+                      <span role="cell" className="cart-table-product">
+                        <span className="cart-table-thumb">
+                          {item.imageUrl ? (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img src={item.imageUrl} alt={item.name} />
+                          ) : (
+                            item.brand
+                          )}
+                        </span>
+                        <span>
+                          <span className="cart-table-name">{item.name}</span>
+                          <span className="cart-table-brand">{item.brand}</span>
+                        </span>
+                      </span>
+                      <span role="cell" className="cart-col-center cart-col-price">{money(item.priceCents)}</span>
+                      <span role="cell" className="cart-col-center">
+                        <input
+                          className="cart-qty-input"
+                          type="number"
+                          min={1}
+                          value={item.quantity}
+                          aria-label={`Cantidad de ${item.name}`}
+                          onChange={(event) => {
+                            const next = Math.round(Number(event.target.value));
+                            if (Number.isFinite(next) && next > 0) updateQuantity(item.productId, item.variantId, next);
+                          }}
+                        />
+                      </span>
+                      <span role="cell" className="cart-col-right">{money(item.priceCents * item.quantity)}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             </Card>
 
