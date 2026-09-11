@@ -239,7 +239,7 @@ export async function getCatalogProducts(filters: CatalogFilters = {}) {
 
   let query = db
     .from("products")
-    .select(PRODUCT_SELECT)
+    .select(PRODUCT_SELECT, { count: "exact" })
     .eq("is_public", true)
     .eq("is_active", true)
     .eq("product_variants.is_active", true);
@@ -267,7 +267,7 @@ export async function getCatalogProducts(filters: CatalogFilters = {}) {
     query = query.range(from, from + PAGE_SIZE - 1);
   }
 
-  const { data, error } = await query;
+  const { data, error, count } = await query;
   if (error) throw new Error(`No fue posible cargar el catálogo: ${error.message}`);
 
   let products = ((data ?? []) as unknown as ProductRow[]).flatMap((row, index) => {
@@ -295,9 +295,10 @@ export async function getCatalogProducts(filters: CatalogFilters = {}) {
   if (sort === "price_asc") products = [...products].sort((a, b) => a.priceCents - b.priceCents);
   else if (sort === "price_desc") products = [...products].sort((a, b) => b.priceCents - a.priceCents);
 
-  const hasNextPage =
-    bestsellerTotal !== null ? page * PAGE_SIZE < bestsellerTotal : (data?.length ?? 0) === PAGE_SIZE;
-  return { products, page, pageSize: PAGE_SIZE, hasNextPage };
+  const total = bestsellerTotal ?? count ?? 0;
+  const hasNextPage = bestsellerTotal !== null ? page * PAGE_SIZE < bestsellerTotal : (data?.length ?? 0) === PAGE_SIZE;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  return { products, page, pageSize: PAGE_SIZE, hasNextPage, total, totalPages };
 }
 
 /** Products a client has favorited, most recently favorited first. Reuses the same public-catalog shape. */

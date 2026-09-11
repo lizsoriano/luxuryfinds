@@ -23,6 +23,23 @@ type SearchParams = {
   pagina?: string;
 };
 
+/** Windowed page numbers (current ± 3) plus first/last, with "…" for the gaps - never renders hundreds of links for a large catalog. */
+function pageNumbers(current: number, total: number): Array<number | "…"> {
+  if (total <= 1) return [1];
+  const windowStart = Math.max(1, current - 3);
+  const windowEnd = Math.min(total, current + 3);
+  const pages = new Set<number>([1, total]);
+  for (let p = windowStart; p <= windowEnd; p += 1) pages.add(p);
+
+  const sorted = [...pages].sort((a, b) => a - b);
+  const result: Array<number | "…"> = [];
+  for (let i = 0; i < sorted.length; i += 1) {
+    if (i > 0 && sorted[i] - sorted[i - 1] > 1) result.push("…");
+    result.push(sorted[i]);
+  }
+  return result;
+}
+
 function buildQuery(current: SearchParams, overrides: Partial<SearchParams>) {
   const merged = { ...current, ...overrides };
   const params = new URLSearchParams();
@@ -78,6 +95,7 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
 
   let products: CatalogProduct[] = [];
   let hasNextPage = false;
+  let totalPages = 1;
   let error = false;
   let errorMessage = "";
   let categories: { id: string; name: string; slug: string }[] = [];
@@ -100,6 +118,7 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
     ]);
     products = result.products;
     hasNextPage = result.hasNextPage;
+    totalPages = result.totalPages;
     categories = categoryList;
     brands = brandList;
   } catch (e) {
@@ -205,9 +224,34 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
               {products.map((product) => <ProductCard product={product} key={product.id} />)}
             </div>
             <nav className="catalog-pagination" aria-label="Paginación">
-              {page > 1 && <a href={buildQuery(sp, { pagina: String(page - 1) })}>← Anterior</a>}
-              <span>Página {page}</span>
-              {hasNextPage && <a href={buildQuery(sp, { pagina: String(page + 1) })}>Siguiente →</a>}
+              {page > 1 && (
+                <a href={buildQuery(sp, { pagina: String(page - 1) })} aria-label="Página anterior" className="catalog-pagination-arrow">
+                  ←
+                </a>
+              )}
+              <span className="catalog-pagination-numbers">
+                {pageNumbers(page, totalPages).map((entry, index) =>
+                  entry === "…" ? (
+                    <span key={`ellipsis-${index}`} className="catalog-pagination-ellipsis" aria-hidden>
+                      …
+                    </span>
+                  ) : (
+                    <a
+                      key={entry}
+                      href={buildQuery(sp, { pagina: entry === 1 ? undefined : String(entry) })}
+                      aria-current={entry === page ? "page" : undefined}
+                      className={entry === page ? "active" : ""}
+                    >
+                      {entry}
+                    </a>
+                  ),
+                )}
+              </span>
+              {hasNextPage && (
+                <a href={buildQuery(sp, { pagina: String(page + 1) })} aria-label="Página siguiente" className="catalog-pagination-arrow">
+                  →
+                </a>
+              )}
             </nav>
           </>
         ) : (
