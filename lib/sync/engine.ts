@@ -28,8 +28,10 @@
 // error list and the run continues. Only an error that makes the whole run
 // meaningless (catalogue unreadable, sync_runs unwritable) aborts it.
 
-import { adminDb, DEFAULT_BUSINESS_ID } from "../supabase/business";
+import { adminDb, DEFAULT_BUSINESS_ID, MAX_PRODUCT_IMAGES } from "../supabase/business";
 import { CatalogIndex, type MatchMethod } from "./catalog-index";
+import { FIRST_PAGE, readStartPage, resetSyncCursor, writeSyncCursor } from "./cursor";
+import { copyProductImages } from "./images";
 import { slugify } from "./normalize";
 import { iterateMawMawProducts } from "./sources/mawmaw";
 import { iterateOskinProducts } from "./sources/oskin";
@@ -37,6 +39,7 @@ import {
   emptyCounters,
   SOURCE_LABELS,
   type PriceMove,
+  type SourcePage,
   type SourceProduct,
   type SourceVariant,
   type SyncCounters,
@@ -50,6 +53,15 @@ const BATCH_SIZE = 50;
 /** Guard rail so a single invocation cannot run past a serverless time limit. */
 const DEFAULT_BUDGET_MS = 240_000;
 
+/**
+ * Image work stops this long before the deadline. Copying photos is the slowest
+ * thing the engine does (~130ms each at IMAGE_CONCURRENCY, against ~10ms for a
+ * row write), and it must never be the reason the function is killed before it
+ * can save its checkpoint - a lost cursor costs the whole next invocation,
+ * whereas a skipped photo is picked up on the next pass over that page.
+ */
+const IMAGE_TAIL_MS = 8_000;
+
 export type RunOptions = {
   source: SyncSource;
   syncType: SyncType;
@@ -60,7 +72,18 @@ export type RunOptions = {
   budgetMs?: number;
   /** Maw Maw only: also run the /marcas/ pass that recovers brands. */
   withBrands?: boolean;
+  /** Start from page 1 and forget the stored checkpoint. */
+  resetCursor?: boolean;
   onProgress?: (counters: SyncCounters) => void;
+};
+
+/** Where the crawl started and where it left off, for the caller to report. */
+export type CursorReport = {
+  startedAtPage: number;
+  nextPage: number;
+  /** True when the run reached the end of the catalogue and rewound to page 1. */
+  wrapped: boolean;
+  saved: boolean;
 };
 
 export type RunResult = {
@@ -76,6 +99,9 @@ export type RunResult = {
   createdSamples: Array<{ name: string; url: string; priceCents: number | null }>;
   matchedByMethod: Record<string, number>;
   dryRun: boolean;
+  cursor: CursorReport;
+  /** Photos copied from the storefront into our own bucket during this run. */
+  imagesStored: number;
 };
 
 function nowIso() {
@@ -208,11 +234,22 @@ function uniqueSlug(base: string, taken: Set<string>): string {
 // Run
 // ---------------------------------------------------------------------------
 
-function iterateSource(options: RunOptions, onError: (stage: string, message: string) => void) {
+function iterateSource(
+  options: RunOptions,
+  startPage: number,
+  onError: (stage: string, message: string) => void,
+  onExhausted: () => void,
+): AsyncGenerator<SourcePage, void, undefined> {
   if (options.source === "mawmaw") {
-    return iterateMawMawProducts({ maxPages: options.maxPages, withBrands: options.withBrands, onError });
+    return iterateMawMawProducts({
+      maxPages: options.maxPages,
+      startPage,
+      withBrands: options.withBrands,
+      onError,
+      onExhausted,
+    });
   }
-  return iterateOskinProducts({ maxPages: options.maxPages, onError });
+  return iterateOskinProducts({ maxPages: options.maxPages, startPage, onError, onExhausted });
 }
 
 export async function runSync(options: RunOptions): Promise<RunResult> {
@@ -224,6 +261,11 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
   const priceMoves: PriceMove[] = [];
   const createdSamples: RunResult["createdSamples"] = [];
   const matchedByMethod: Record<string, number> = {};
+
+  if (options.resetCursor) await resetSyncCursor(options.source);
+  // A dry run must not consume the real checkpoint's position either: it reads
+  // where the next real run would start, and never writes it back.
+  const startPage = options.resetCursor ? FIRST_PAGE : await readStartPage(options.source);
 
   const index = await CatalogIndex.load();
   if (!index.productSourcesTableExists) {
@@ -242,7 +284,15 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
   for (const product of index.products.values()) if (product.slug) takenSlugs.add(product.slug.toLowerCase());
 
   let truncated = false;
+  let exhausted = false;
   const batch: SourceProduct[] = [];
+  const imageBudget: ImageBudget = {
+    // Image work is abandoned before the run's own deadline so the checkpoint
+    // always gets written; see IMAGE_TAIL_MS.
+    deadline: deadline - IMAGE_TAIL_MS,
+    stored: 0,
+    skipped: 0,
+  };
 
   const flush = async () => {
     for (const product of batch) {
@@ -260,6 +310,7 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
           takenSlugs,
           canWrite,
           runId,
+          imageBudget,
         });
       } catch (error) {
         // One product can never end the run.
@@ -274,19 +325,38 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
     options.onProgress?.(counters);
   };
 
+  // The last page that was read AND written in full. Only this advances the
+  // checkpoint: a page abandoned half-way must be replayed, not skipped.
+  let lastCompletedPage = 0;
+
   try {
-    for await (const page of iterateSource(options, (stage, message) => errors.add(stage, message))) {
-      for (const product of page) {
+    const pages = iterateSource(
+      options,
+      startPage,
+      (stage, message) => errors.add(stage, message),
+      () => {
+        exhausted = true;
+      },
+    );
+
+    for await (const page of pages) {
+      for (const product of page.products) {
         counters.products_scanned += 1;
         batch.push(product);
         if (batch.length >= BATCH_SIZE) await flush();
+        // Checked inside the page too: an Oskin page is 100 products and copying
+        // their photos can outlast the budget on its own.
+        if (Date.now() > deadline) {
+          truncated = true;
+          break;
+        }
       }
-      if (Date.now() > deadline) {
+      await flush();
+      // A retry-pass page arrives out of order, so it proves nothing about how
+      // far the forward crawl got and must not move the checkpoint.
+      if (!truncated && !page.retry) lastCompletedPage = Math.max(lastCompletedPage, page.page);
+      if (truncated || Date.now() > deadline) {
         truncated = true;
-        errors.add(
-          `${options.source}:presupuesto`,
-          `Se alcanzó el límite de tiempo de la corrida (${Math.round((options.budgetMs ?? DEFAULT_BUDGET_MS) / 1000)}s). La siguiente corrida continúa desde el inicio del catálogo.`,
-        );
         break;
       }
     }
@@ -296,10 +366,65 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
     errors.add(`${options.source}:fatal`, error instanceof Error ? error.message : String(error));
   }
 
+  // ---------------------------------------------------------------------------
+  // Checkpoint
+  // ---------------------------------------------------------------------------
+  // Three outcomes, and they are not the same thing:
+  //   truncated  -> ran out of time: resume at the page after the last complete
+  //                 one (or replay the page that was cut in half).
+  //   exhausted  -> reached the end of the catalogue: rewind to page 1 so the
+  //                 next run detects changes instead of crawling past the end.
+  //   neither    -> stopped at the caller's maxPages: advance, nothing is done.
+  const wrapped = !truncated && exhausted;
+  const nextPage = wrapped ? FIRST_PAGE : Math.max(startPage, lastCompletedPage + 1);
+  let cursorSaved = false;
+
+  // The notes appended below are the run's own narration, not faults, so the
+  // status is decided from the errors that existed before them. Without this a
+  // perfectly clean full pass would report itself "partial" for saying so.
+  const realErrorCount = errors.total;
+
+  if (canWrite) {
+    cursorSaved = await writeSyncCursor(options.source, {
+      page: nextPage,
+      updatedAt: nowIso(),
+      highWaterPage: wrapped ? 0 : Math.max(lastCompletedPage, startPage - 1),
+      lastOutcome: truncated ? "truncated" : "completed",
+    });
+    if (!cursorSaved) {
+      errors.add(
+        `${options.source}:cursor`,
+        "No fue posible guardar el avance del catálogo en app_settings; la siguiente corrida volverá a empezar desde la misma página.",
+      );
+    }
+  }
+
+  if (truncated) {
+    errors.add(
+      `${options.source}:presupuesto`,
+      `Se alcanzó el límite de tiempo de la corrida (${Math.round((options.budgetMs ?? DEFAULT_BUDGET_MS) / 1000)}s) en la página ${lastCompletedPage || startPage} del catálogo. ` +
+        (cursorSaved
+          ? `La siguiente corrida continúa desde la página ${nextPage}.`
+          : "La siguiente corrida volverá a empezar desde la misma página."),
+    );
+  } else if (wrapped) {
+    errors.add(
+      `${options.source}:catalogo`,
+      `Se recorrió el catálogo completo hasta la página ${lastCompletedPage}. La siguiente corrida vuelve a empezar desde la página 1 para detectar cambios.`,
+    );
+  }
+
+  if (imageBudget.skipped > 0) {
+    errors.add(
+      `${options.source}:imagenes`,
+      `${imageBudget.skipped} producto(s) se guardaron sin foto porque se agotó el tiempo de la corrida. La siguiente pasada por esas páginas las completa.`,
+    );
+  }
+
   const status: SyncStatus =
-    counters.products_scanned === 0 && errors.total > 0
+    counters.products_scanned === 0 && realErrorCount > 0
       ? "failed"
-      : truncated || errors.total > 0
+      : truncated || realErrorCount > 0
         ? "partial"
         : "completed";
 
@@ -319,6 +444,8 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
     createdSamples,
     matchedByMethod,
     dryRun: !canWrite,
+    cursor: { startedAtPage: startPage, nextPage, wrapped, saved: cursorSaved },
+    imagesStored: imageBudget.stored,
   };
 }
 
@@ -359,6 +486,9 @@ async function closeRun(
     .eq("id", runId);
 }
 
+/** Shared across the whole run so photo work can be cut off as time runs out. */
+type ImageBudget = { deadline: number; stored: number; skipped: number };
+
 type IngestContext = {
   product: SourceProduct;
   index: CatalogIndex;
@@ -372,7 +502,60 @@ type IngestContext = {
   takenSlugs: Set<string>;
   canWrite: boolean;
   runId: string | null;
+  imageBudget: ImageBudget;
 };
+
+/**
+ * Copies the storefront's photos for one product into our bucket and records
+ * them in product_images.
+ *
+ * NOTHING HERE MAY THROW past this function. An image is the least important
+ * thing the sync produces: a product without a photo is still a product we sell,
+ * whereas an exception escaping here would abort the product entirely. Every
+ * failure becomes a line in the run's error log, exactly like the rest of the
+ * engine's per-product failures.
+ */
+async function storeImages(context: IngestContext, productId: string): Promise<number> {
+  const { product, canWrite, errors, imageBudget } = context;
+  // Dry run, or migration 003 missing: read the stores, write nothing.
+  if (!canWrite) return 0;
+  if (!imageCandidatesExist(product)) return 0;
+
+  if (Date.now() > imageBudget.deadline) {
+    imageBudget.skipped += 1;
+    return 0;
+  }
+
+  try {
+    const { stored, failures } = await copyProductImages(product, productId, MAX_PRODUCT_IMAGES);
+    for (const failure of failures) {
+      errors.add(`${product.source}:imagen`, failure, product.externalProductId);
+    }
+    if (!stored.length) return 0;
+
+    const { error } = await adminDb()
+      .from("product_images")
+      .insert(stored.map((image) => ({ ...image, product_id: productId })));
+    if (error) {
+      errors.add(`${product.source}:imagen:insert`, error.message, product.externalProductId);
+      return 0;
+    }
+    imageBudget.stored += stored.length;
+    context.index.markHasImages(productId);
+    return stored.length;
+  } catch (error) {
+    errors.add(
+      `${product.source}:imagen`,
+      error instanceof Error ? error.message : String(error),
+      product.externalProductId,
+    );
+    return 0;
+  }
+}
+
+function imageCandidatesExist(product: SourceProduct): boolean {
+  return product.images.length > 0 || product.variants.some((variant) => variant.imageUrl);
+}
 
 async function ingestProduct(context: IngestContext) {
   const { product, index, counters, matchedByMethod } = context;
@@ -437,6 +620,16 @@ async function reconcileProduct(context: IngestContext, productId: string, metho
     }
 
     await upsertSourceLink(context, productId, variantId, sourceVariant, method);
+  }
+
+  // BACKFILL. A product matched here may have been created by an earlier run of
+  // this very engine, back when it discarded the images it had already scraped -
+  // 85 of the catalogue's imageless products came from exactly one such run. If
+  // we still have no photo for it and the store is showing us one right now,
+  // this is the moment to take it. Products that already have a photo are left
+  // alone: the admin may have chosen it deliberately.
+  if (!index.hasImages(productId)) {
+    if ((await storeImages(context, productId)) > 0) changed = true;
   }
 
   if (changed) counters.products_updated += 1;
@@ -536,6 +729,10 @@ async function createProduct(context: IngestContext) {
     const variantId = await createVariant(context, productId, variant);
     await upsertSourceLink(context, productId, variantId, variant, "created");
   }
+
+  // Last, and deliberately so: the product and its variants are already safe in
+  // the database before the slowest, most failure-prone step begins.
+  await storeImages(context, productId);
 }
 
 async function createVariant(

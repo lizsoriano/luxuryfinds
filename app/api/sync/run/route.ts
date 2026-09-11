@@ -86,6 +86,9 @@ async function handle(request: NextRequest) {
   const syncType = parseSyncType(params.get("type"));
   const dryRun = params.get("dry") === "1";
   const maxPages = Number(params.get("maxPages")) || undefined;
+  // Escape hatch for the checkpoint described in lib/sync/cursor.ts: forces the
+  // crawl back to page 1 and forgets where the last run stopped.
+  const resetCursor = params.get("resetCursor") === "1";
   // The whole invocation shares one budget so two sources cannot together run
   // past the function's time limit.
   const budgetMs = Math.min(Number(params.get("budgetMs")) || DEFAULT_BUDGET_MS, 280_000);
@@ -100,6 +103,7 @@ async function handle(request: NextRequest) {
         dryRun,
         maxPages,
         budgetMs: perSourceBudget,
+        resetCursor,
         // Brands are only worth the extra /marcas/ pass on a full run.
         withBrands: syncType !== "INCREMENTAL",
       }),
@@ -118,6 +122,10 @@ async function handle(request: NextRequest) {
         startedAt: result.startedAt,
         finishedAt: result.finishedAt,
         counters: result.counters,
+        // Where in the catalogue this invocation worked, and where the next one
+        // picks up. This is what makes "is it actually advancing?" answerable.
+        cursor: result.cursor,
+        imagesStored: result.imagesStored,
         matchedByMethod: result.matchedByMethod,
         errorCount: result.errors.length,
         errors: result.errors.slice(0, 20),

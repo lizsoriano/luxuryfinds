@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { describeError, failure, ok, type ActionState } from "../../../../lib/actions";
 import { adminDb, DEFAULT_BUSINESS_ID, logActivity, requireAdminActor } from "../../../../lib/supabase/business";
+import { ESTIMATED_PAGES, resetSyncCursor } from "../../../../lib/sync/cursor";
 import { runSync } from "../../../../lib/sync/engine";
 import { SOURCE_LABELS, SYNC_SOURCES, type SyncSource } from "../../../../lib/sync/types";
 
@@ -55,18 +56,54 @@ export async function runSyncNowAction(_state: ActionState, formData: FormData):
     }
 
     const counters = result.counters;
-    const summary = `${SOURCE_LABELS[source]}: ${counters.products_scanned} revisados, ${counters.products_created} nuevos, ${counters.products_matched} vinculados, ${counters.prices_increased} precios subidos.`;
+    const images = result.imagesStored ? ` ${result.imagesStored} fotos copiadas.` : "";
+    const summary = `${SOURCE_LABELS[source]}: ${counters.products_scanned} revisados, ${counters.products_created} nuevos, ${counters.products_matched} vinculados, ${counters.prices_increased} precios subidos.${images}`;
+
+    // The single most useful thing to tell her: the run only covers a slice of
+    // the catalogue, and the NEXT one continues rather than starting over.
+    const cursor = result.cursor;
+    const progress = cursor.wrapped
+      ? " Se recorrió el catálogo completo; la próxima corrida vuelve a empezar desde el principio para detectar cambios."
+      : ` Se recorrieron las páginas ${cursor.startedAtPage}–${Math.max(cursor.startedAtPage, cursor.nextPage - 1)} de ~${ESTIMATED_PAGES[source]}; la próxima corrida continúa desde la ${cursor.nextPage}.`;
+
     revalidate();
 
     if (result.status === "failed") return failure(`No se pudo completar. ${summary}`);
     if (result.status === "partial") {
-      return ok(
-        `${summary} La corrida quedó parcial (límite de tiempo o errores puntuales); revisa el detalle y vuelve a ejecutarla para continuar.`,
-      );
+      return ok(`${summary}${progress} Revisa el detalle si hubo errores puntuales.`);
     }
-    return ok(summary);
+    return ok(`${summary}${progress}`);
   } catch (error) {
     return failure(describeError(error, "No fue posible ejecutar la sincronización."));
+  }
+}
+
+/**
+ * Manual escape hatch for the crawl checkpoint (lib/sync/cursor.ts). Touches no
+ * product data at all - it only forgets which page the next run should resume
+ * at, so the whole catalogue is walked again from the top.
+ */
+export async function resetSyncCursorAction(_state: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const actor = await requireAdminActor();
+    const source = parseSource(formData.get("source"));
+    if (!source) return failure("Fuente desconocida.");
+
+    const done = await resetSyncCursor(source);
+    if (!done) return failure("No fue posible reiniciar el avance del catálogo.");
+
+    await logActivity({
+      adminUserId: actor.id,
+      action: "sync.cursor.reset",
+      entityType: "sync_cursor",
+      entityId: source,
+      newData: { source },
+    });
+
+    revalidate();
+    return ok(`${SOURCE_LABELS[source]}: la próxima sincronización empezará desde la página 1 del catálogo.`);
+  } catch (error) {
+    return failure(describeError(error, "No fue posible reiniciar el avance."));
   }
 }
 
