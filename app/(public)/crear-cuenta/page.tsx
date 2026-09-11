@@ -48,7 +48,7 @@ export default async function SignupPage({
         ) : (
           <p className="form-message form-error" role="alert">La conexión segura no está configurada en este entorno.</p>
         )}
-        <p className="login-help">¿Necesitas ayuda para registrarte?<br /><Link href="/contacto">Escríbenos por WhatsApp</Link></p>
+        <p className="login-help">¿Necesitas ayuda para registrarte?<br /><Link href="/contacto">Escríbenos por Telegram</Link></p>
       </Card>
     </main>
   );
