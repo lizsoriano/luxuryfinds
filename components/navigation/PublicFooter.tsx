@@ -6,6 +6,8 @@ export function PublicFooter() {
       <p>Hallazgos especiales de moda y belleza, elegidos con intención.</p>
       <nav className="footer-nav" aria-label="Navegación de pie de página">
         <Link href="/catalogo">Catálogo</Link>
+        <Link href="/entrega-inmediata">Entrega inmediata</Link>
+        <Link href="/por-pedido">Por pedido</Link>
         <Link href="/como-comprar">Cómo comprar</Link>
         <Link href="/contacto">Contacto</Link>
         <Link href="/login">Mi cuenta</Link>

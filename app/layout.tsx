@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
 import { CartProvider } from "../lib/cart/CartContext";
+import { FavoritesProvider } from "../lib/favorites/FavoritesContext";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -32,7 +33,9 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className={`${inter.className} ${inter.variable} antialiased`}>
-        <CartProvider>{children}</CartProvider>
+        <CartProvider>
+          <FavoritesProvider>{children}</FavoritesProvider>
+        </CartProvider>
       </body>
     </html>
   );
