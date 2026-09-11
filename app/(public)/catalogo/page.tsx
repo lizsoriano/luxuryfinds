@@ -46,13 +46,26 @@ const SORT_OPTIONS: { value: CatalogSort; label: string }[] = [
   { value: "name_desc", label: "Z - A" },
 ];
 
-/** Availability tabs filter by tipo; a brand tab filters by marca instead - both live in the same strip. */
-type FilterTab = { label: string; tipo?: CatalogType; marca?: string };
+/**
+ * Availability tabs filter by tipo, a brand tab by marca, a category tab by
+ * categoria (slug) - all three live in the same strip. Each tab clears the
+ * other two params so they stay mutually exclusive.
+ *
+ * "Perfumes" maps to the "Fragrances" category (642 public products), not the
+ * separate "Perfume" category (only 11) - confirmed against real product
+ * counts rather than guessing from the name alone.
+ */
+type FilterTab = { label: string; tipo?: CatalogType; marca?: string; categoria?: string };
 const TYPE_TABS: FilterTab[] = [
   { label: "Todo" },
   { label: "Entrega inmediata", tipo: "IMMEDIATE" },
   { label: "Por pedido", tipo: "ON_DEMAND" },
   { label: "Sephora Favorites", marca: "Sephora Favorites" },
+  { label: "Perfumes", categoria: "fragrances" },
+  { label: "Blushes", categoria: "blushes" },
+  { label: "Labiales", categoria: "labios" },
+  { label: "Bases", categoria: "foundations" },
+  { label: "Correctores", categoria: "concealers" },
 ];
 
 export default async function CatalogPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -112,13 +125,17 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
           <button type="submit" aria-label="Buscar">⌕</button>
         </form>
 
-        <div className="filter-tabs" aria-label="Filtrar por disponibilidad y marca">
+        <div className="filter-tabs" aria-label="Filtrar por disponibilidad, marca y categoría">
           {TYPE_TABS.map((tab) => {
-            const active = tab.marca ? sp.marca === tab.marca : !sp.marca && catalogType === tab.tipo;
+            const active = tab.marca
+              ? sp.marca === tab.marca
+              : tab.categoria
+                ? sp.categoria === tab.categoria
+                : !sp.marca && !sp.categoria && catalogType === tab.tipo;
             return (
               <a
                 key={tab.label}
-                href={buildQuery(sp, { tipo: tab.tipo, marca: tab.marca, pagina: undefined })}
+                href={buildQuery(sp, { tipo: tab.tipo, marca: tab.marca, categoria: tab.categoria, pagina: undefined })}
                 className={active ? "active" : ""}
               >
                 {tab.label}
