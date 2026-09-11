@@ -66,14 +66,34 @@ export async function listClients(query: { search?: string; page?: number; inclu
   };
 }
 
+/** One purchase attributed to one client: a ticket or a completed direct sale. */
+export type PurchaseEvent = { clientId: string; cents: number; at: string };
+
+/**
+ * The single definition of "what this client has bought". Kept as a pure
+ * function so the client card (which queries a client's whole history) and
+ * Estadísticas (which already holds a period's rows in memory) rank clients by
+ * exactly the same rule instead of each writing its own sum.
+ */
+export function accumulatePurchases(events: PurchaseEvent[]): Map<string, ClientMetrics> {
+  const result = new Map<string, ClientMetrics>();
+  for (const event of events) {
+    const current = result.get(event.clientId) ?? { purchaseCount: 0, totalCents: 0, lastPurchaseAt: null };
+    current.purchaseCount += 1;
+    current.totalCents += event.cents;
+    if (!current.lastPurchaseAt || event.at > current.lastPurchaseAt) current.lastPurchaseAt = event.at;
+    result.set(event.clientId, current);
+  }
+  return result;
+}
+
 /**
  * Purchase totals combine BOTH revenue streams: catalogue tickets (the payment
  * plan business) and the new direct sales, so the number matches what the owner
  * would count by hand.
  */
 export async function getClientMetrics(clientIds: string[]): Promise<Map<string, ClientMetrics>> {
-  const result = new Map<string, ClientMetrics>();
-  if (!clientIds.length) return result;
+  if (!clientIds.length) return new Map<string, ClientMetrics>();
   const db = adminDb();
 
   const [tickets, sales] = await Promise.all([
@@ -82,25 +102,19 @@ export async function getClientMetrics(clientIds: string[]): Promise<Map<string,
   ]);
   if (tickets.error) throw new Error(tickets.error.message);
 
-  const push = (clientId: string, cents: number, at: string) => {
-    const current = result.get(clientId) ?? { purchaseCount: 0, totalCents: 0, lastPurchaseAt: null };
-    current.purchaseCount += 1;
-    current.totalCents += cents;
-    if (!current.lastPurchaseAt || at > current.lastPurchaseAt) current.lastPurchaseAt = at;
-    result.set(clientId, current);
-  };
-
-  for (const ticket of tickets.data ?? []) {
-    push(ticket.client_id as string, Number(ticket.agreed_total_cents ?? 0), String(ticket.created_at));
-  }
+  const events: PurchaseEvent[] = (tickets.data ?? []).map((ticket) => ({
+    clientId: ticket.client_id as string,
+    cents: Number(ticket.agreed_total_cents ?? 0),
+    at: String(ticket.created_at),
+  }));
   // sales may not exist yet if migration 002 has not been applied; that is not fatal.
   if (!sales.error) {
     for (const sale of sales.data ?? []) {
       if (!sale.client_id || sale.status !== "COMPLETED") continue;
-      push(sale.client_id as string, Number(sale.total_cents ?? 0), String(sale.sold_at));
+      events.push({ clientId: sale.client_id as string, cents: Number(sale.total_cents ?? 0), at: String(sale.sold_at) });
     }
   }
-  return result;
+  return accumulatePurchases(events);
 }
 
 export async function getClientDetail(id: string) {
