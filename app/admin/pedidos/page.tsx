@@ -104,17 +104,17 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
                     <td>
                       <strong>{order.id.slice(0, 8).toUpperCase()}</strong>
                     </td>
-                    <td>{order.client ? `${order.client.first_name} ${order.client.last_name}`.trim() : "—"}</td>
+                    <td className="admin-cell-name">{order.client ? `${order.client.first_name} ${order.client.last_name}`.trim() : "—"}</td>
                     <td className="numeric">{order.itemCount}</td>
                     <td className="numeric">{formatMoney(order.totalCents)}</td>
-                    <td style={{ color: "var(--admin-muted)" }}>{ORIGIN_LABELS[order.origin] ?? order.origin}</td>
+                    <td className="admin-cell-muted admin-cell-nowrap">{ORIGIN_LABELS[order.origin] ?? order.origin}</td>
                     <td>
                       <Badge tone={STATUS_TONES[order.status]}>{STATUS_LABELS[order.status]}</Badge>
                       {order.requestedPaymentPlan.mode === "WEEKLY_PLAN" && (
                         <span className="admin-cell-sub">Plan semanal · {order.requestedPaymentPlan.numberOfWeeks} sem.</span>
                       )}
                     </td>
-                    <td style={{ color: "var(--admin-muted)" }}>{formatDateTime(order.created_at)}</td>
+                    <td className="admin-cell-muted admin-cell-nowrap">{formatDateTime(order.created_at)}</td>
                     <td>
                       <Button href={`/admin/pedidos/${order.id}`} variant="secondary" size="small">
                         Ver

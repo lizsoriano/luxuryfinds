@@ -29,19 +29,19 @@ export function LogisticsTicketTable({ tickets, emptyDescription }: { tickets: L
               <td>
                 <strong>{ticket.ticket_number}</strong>
               </td>
-              <td>
+              <td className="admin-cell-product">
                 {ticket.product_name_snapshot}
                 {ticket.variant_name_snapshot ? <span className="admin-cell-sub">{ticket.variant_name_snapshot}</span> : null}
               </td>
-              <td>
+              <td className="admin-cell-name">
                 {ticket.clientName}
                 <span className="admin-cell-sub">{ticket.clientPhone}</span>
               </td>
               <td className="numeric">{ticket.quantity}</td>
-              <td style={{ color: "var(--admin-muted)" }}>
+              <td className="admin-cell-muted">
                 {ticket.storeName ?? ticket.notes ?? <Badge tone="neutral">Sin asignar</Badge>}
               </td>
-              <td style={{ color: "var(--admin-muted)" }}>{formatDate(ticket.created_at)}</td>
+              <td className="admin-cell-muted admin-cell-nowrap">{formatDate(ticket.created_at)}</td>
               <td>
                 <AdvanceLogisticsDialog ticketId={ticket.id} ticketNumber={ticket.ticket_number} currentStatus={ticket.logistics_status} />
               </td>
