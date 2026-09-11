@@ -5,8 +5,14 @@ import { Card } from "../../../../components/ui/Card";
 import { EmptyState } from "../../../../components/ui/EmptyState";
 import { PageHeader } from "../../../../components/ui/PageHeader";
 import { StatCard } from "../../../../components/ui/StatCard";
-import { formatDate, formatDateTime, formatMoney, PAYMENT_METHOD_LABELS } from "../../../../lib/format";
+import { businessToday, formatDate, formatDateTime, formatMoney, PAYMENT_METHOD_LABELS } from "../../../../lib/format";
 import { getClientDetail } from "../../../../lib/supabase/admin-contacts";
+import {
+  isQuoteExpired,
+  QUOTES_UNAVAILABLE_MESSAGE,
+  QUOTE_STATUS_LABELS,
+  QUOTE_STATUS_TONES,
+} from "../../../../lib/supabase/admin-quotes";
 import { ClientDialog } from "../ClientDialog";
 
 export const dynamic = "force-dynamic";
@@ -37,8 +43,9 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   }
   if (!detail) notFound();
 
-  const { client, tickets, sales, metrics, salesUnavailable } = detail;
+  const { client, tickets, sales, quotes, metrics, salesUnavailable, quotesUnavailable } = detail;
   const name = `${client.first_name} ${client.last_name}`.trim();
+  const today = businessToday();
 
   return (
     <main className="admin-content">
@@ -181,12 +188,71 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       </Card>
 
       <Card className="admin-panel" style={{ marginTop: 20 }}>
-        <p className="micro-label">COTIZACIONES</p>
-        <div className="admin-notice">
-          <strong>Próximamente · Fase 2.</strong>
-          El módulo de cotizaciones todavía no existe, así que esta clienta no puede tener cotizaciones
-          asociadas. Cuando se construya, aparecerán aquí.
+        <div className="section-heading">
+          <div>
+            <p className="micro-label">PRESUPUESTOS</p>
+            <h2>Cotizaciones</h2>
+          </div>
+          <Button href="/admin/cotizaciones/nueva" variant="secondary" size="small">
+            Nueva cotización
+          </Button>
         </div>
+        {quotesUnavailable ? (
+          <p className="form-message form-error" role="alert">
+            {QUOTES_UNAVAILABLE_MESSAGE}
+          </p>
+        ) : quotes.length ? (
+          <div className="admin-table-scroll">
+            <table className="admin-data-table">
+              <thead>
+                <tr>
+                  <th>Folio</th>
+                  <th className="numeric">Artículos</th>
+                  <th className="numeric">Total</th>
+                  <th>Vigencia</th>
+                  <th>Estado</th>
+                  <th>Creada</th>
+                  <th aria-label="Acciones" />
+                </tr>
+              </thead>
+              <tbody>
+                {quotes.map((quote) => (
+                  <tr key={quote.id}>
+                    <td>
+                      <strong>{quote.id.slice(0, 8).toUpperCase()}</strong>
+                    </td>
+                    <td className="numeric">{quote.itemCount}</td>
+                    <td className="numeric">{formatMoney(quote.totalCents)}</td>
+                    <td style={{ color: "var(--admin-muted)" }}>
+                      {formatDate(quote.valid_until)}
+                      {isQuoteExpired(quote.status, quote.valid_until, today) ? (
+                        <span className="admin-cell-sub">
+                          <Badge tone="danger">Vencida</Badge>
+                        </span>
+                      ) : null}
+                    </td>
+                    <td>
+                      <Badge tone={QUOTE_STATUS_TONES[quote.status]}>{QUOTE_STATUS_LABELS[quote.status]}</Badge>
+                    </td>
+                    <td style={{ color: "var(--admin-muted)" }}>{formatDate(quote.created_at)}</td>
+                    <td>
+                      <Button href={`/admin/cotizaciones/${quote.id}`} variant="secondary" size="small">
+                        Ver
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState
+            title="Sin cotizaciones"
+            description="Los presupuestos que le mandes a esta clienta aparecerán aquí, antes de convertirse en pedido o venta."
+            href="/admin/cotizaciones/nueva"
+            action="Nueva cotización"
+          />
+        )}
       </Card>
 
       {client.internal_notes ? (
