@@ -5,7 +5,15 @@ import { Card } from "../../../../components/ui/Card";
 import { EmptyState } from "../../../../components/ui/EmptyState";
 import { PageHeader } from "../../../../components/ui/PageHeader";
 import { StatCard } from "../../../../components/ui/StatCard";
-import { businessToday, formatDate, formatDateTime, formatMoney, PAYMENT_METHOD_LABELS } from "../../../../lib/format";
+import {
+  businessToday,
+  FINANCIAL_STATUS_LABELS,
+  formatDate,
+  formatDateTime,
+  formatMoney,
+  LOGISTICS_STATUS_LABELS,
+  PAYMENT_METHOD_LABELS,
+} from "../../../../lib/format";
 import { getClientDetail } from "../../../../lib/supabase/admin-contacts";
 import {
   isQuoteExpired,
@@ -21,6 +29,22 @@ const PAYMENT_MODE_LABELS: Record<string, string> = {
   FULL: "Pago completo",
   WEEKLY_PLAN: "Plan semanal",
   LAYAWAY: "Apartado",
+};
+
+type Tone = "neutral" | "rose" | "success" | "warning" | "danger";
+
+/** Mirrors app/admin/pedidos/[id]/page.tsx's tone map for the same enum. */
+const FINANCIAL_STATUS_TONES: Record<string, Tone> = {
+  AWAITING_FIRST_PAYMENT: "warning",
+  PROOF_PENDING: "warning",
+  PARTIALLY_PAID: "warning",
+  CURRENT: "success",
+  OVERDUE: "danger",
+  PAID: "success",
+  DEFAULTED: "danger",
+  CANCELLED_INCIDENT: "danger",
+  REFUND_PENDING: "warning",
+  REFUNDED: "neutral",
 };
 
 export default async function ClientDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -122,8 +146,16 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
                     <td>{ticket.product_name_snapshot as string}</td>
                     <td>{PAYMENT_MODE_LABELS[ticket.payment_mode as string] ?? (ticket.payment_mode as string)}</td>
                     <td className="numeric">{formatMoney(Number(ticket.agreed_total_cents ?? 0))}</td>
-                    <td style={{ color: "var(--admin-muted)" }}>{ticket.financial_status as string}</td>
-                    <td style={{ color: "var(--admin-muted)" }}>{ticket.logistics_status as string}</td>
+                    <td>
+                      <Badge tone={FINANCIAL_STATUS_TONES[ticket.financial_status as string] ?? "neutral"}>
+                        {FINANCIAL_STATUS_LABELS[ticket.financial_status as string] ?? (ticket.financial_status as string)}
+                      </Badge>
+                    </td>
+                    <td>
+                      <Badge tone="neutral">
+                        {LOGISTICS_STATUS_LABELS[ticket.logistics_status as string] ?? (ticket.logistics_status as string)}
+                      </Badge>
+                    </td>
                     <td style={{ color: "var(--admin-muted)" }}>{formatDate(ticket.created_at as string)}</td>
                   </tr>
                 ))}
