@@ -77,7 +77,7 @@ export async function createClientAction(_state: ActionState, formData: FormData
       newData: { firstName, lastName, phone },
     });
     revalidate();
-    return ok(`${firstName} ${lastName} quedó registrada. Podrá iniciar sesión cuando restablezca su contraseña.`);
+    return ok(`${firstName} ${lastName} quedó registrada. Ya puede entrar al sitio solo con su celular, sin contraseña.`);
   } catch (error) {
     return failure(describeError(error, "No fue posible registrar a la clienta."));
   }
