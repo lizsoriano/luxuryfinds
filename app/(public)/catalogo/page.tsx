@@ -46,10 +46,13 @@ const SORT_OPTIONS: { value: CatalogSort; label: string }[] = [
   { value: "name_desc", label: "Z - A" },
 ];
 
-const TYPE_TABS: { value?: CatalogType; label: string }[] = [
-  { value: undefined, label: "Todo" },
-  { value: "IMMEDIATE", label: "Entrega inmediata" },
-  { value: "ON_DEMAND", label: "Por pedido" },
+/** Availability tabs filter by tipo; a brand tab filters by marca instead - both live in the same strip. */
+type FilterTab = { label: string; tipo?: CatalogType; marca?: string };
+const TYPE_TABS: FilterTab[] = [
+  { label: "Todo" },
+  { label: "Entrega inmediata", tipo: "IMMEDIATE" },
+  { label: "Por pedido", tipo: "ON_DEMAND" },
+  { label: "Sephora Favorites", marca: "Sephora Favorites" },
 ];
 
 export default async function CatalogPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -109,12 +112,19 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
           <button type="submit" aria-label="Buscar">⌕</button>
         </form>
 
-        <div className="filter-tabs" aria-label="Filtrar por disponibilidad">
-          {TYPE_TABS.map((tab) => (
-            <a key={tab.label} href={buildQuery(sp, { tipo: tab.value, pagina: undefined })} className={catalogType === tab.value ? "active" : ""}>
-              {tab.label}
-            </a>
-          ))}
+        <div className="filter-tabs" aria-label="Filtrar por disponibilidad y marca">
+          {TYPE_TABS.map((tab) => {
+            const active = tab.marca ? sp.marca === tab.marca : !sp.marca && catalogType === tab.tipo;
+            return (
+              <a
+                key={tab.label}
+                href={buildQuery(sp, { tipo: tab.tipo, marca: tab.marca, pagina: undefined })}
+                className={active ? "active" : ""}
+              >
+                {tab.label}
+              </a>
+            );
+          })}
         </div>
 
         <details className="filter-disclosure">
