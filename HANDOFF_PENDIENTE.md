@@ -139,11 +139,13 @@ Construido y probado (`typecheck`/`lint`/`build` limpios):
 - **Agenda de entregas** (`/admin/agenda`) — publica una disponibilidad por ubicación y fecha/hora, y **genera automáticamente los horarios de 10 minutos** que exige el schema (`delivery_slots`). Puedes reservar un ticket `READY_FOR_DELIVERY` en un horario, marcar la entrega completada (el ticket pasa a `DELIVERED`) o cancelarla (el ticket vuelve a `READY_FOR_DELIVERY` para reagendar). Las clientas todavía no tienen una pantalla propia para autoagendar — hoy todo lo agenda la admin a mano, igual que un pedido manual.
 - **Devoluciones** (`/admin/devoluciones`) — las clientas piden un reembolso desde `/cuenta` (nuevo formulario: banco, titular, CLABE, motivo — la CLABE se cifra antes de guardarse, ver `REFUND_ENCRYPTION_KEY` arriba). Desde el panel se marca "en proceso", se **completa** (registra el `refund` con monto/método/referencia una vez que ya hiciste la transferencia real desde tu banco, y marca el ticket `REFUNDED`) o se **rechaza**. ⚠️ **Esta pieza específica no se probó contra una base de datos real** (no tengo credenciales de admin ni acceso a Supabase) — el formato `bytea`/hex que usa Postgres para `clabe_encrypted` está implementado según la documentación de PostgREST, pero antes de confiarle CLABEs reales de clientas, haz una prueba de extremo a extremo: pide un reembolso de prueba, ve a `/admin/devoluciones` y confirma que la CLABE se vea correcta y completa.
 
-**Placeholders honestos** ("Próximamente", no botones muertos) que siguen pendientes — no se tocaron en esta ronda a propósito (Facturación sigue fuera de alcance porque necesita un PAC certificado por el SAT; los demás no se priorizaron esta vez):
+**Placeholders honestos** ("Próximamente", no botones muertos) que siguen pendientes:
 - Fase 2: Cotizaciones, Empleados.
 - Fase 3: Estadísticas, Reportes.
-- Fase 4: Facturación, Facturación global, Reportería (facturación electrónica — fuera de alcance deliberadamente).
+- Fase 4: Facturación, Facturación global, Reportería (facturación electrónica — fuera de alcance deliberadamente, necesita un PAC certificado por el SAT).
 - Multi-negocio: la base de datos ya guarda `business_id` en todo, pero "Agregar otro negocio" abre un diálogo honesto; falta la pantalla real de crear/cambiar de negocio.
+
+**⚠️ Decisión de alcance (2026-09-11):** de esta lista, solo se van a construir **Cotizaciones**, **Estadísticas** y **Sitio Web**. Todo lo demás (Empleados, Reportes, las 3 pantallas de Facturación, Multi-negocio) queda deliberadamente congelado — se deja el placeholder "Próximamente" tal cual, sin trabajarlo, por si más adelante se retoma. No es deuda técnica ni un olvido: es alcance definido por la dueña del negocio. No propongas construir esas piezas a menos que ella lo pida explícitamente otra vez.
 
 ### 4. Sincronización de catálogo — Maw Maw Beauty + Oskin → Luxury Finds
 Código completo, **probado con una corrida real en modo simulado (dry-run) contra el catálogo real de Supabase** (sin escribir nada porque faltan las migraciones 002/003):
