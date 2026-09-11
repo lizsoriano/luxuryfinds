@@ -51,7 +51,7 @@ export default function CartPage() {
                   <div className="cart-table-row cart-table-head" role="row">
                     <span role="columnheader" aria-hidden />
                     <span role="columnheader">Producto</span>
-                    <span role="columnheader" className="cart-col-center">Precio</span>
+                    <span role="columnheader" className="cart-col-center cart-col-price">Precio</span>
                     <span role="columnheader" className="cart-col-center">Cantidad</span>
                     <span role="columnheader" className="cart-col-right">Subtotal</span>
                   </div>
@@ -81,7 +81,7 @@ export default function CartPage() {
                           <span className="cart-table-brand">{item.brand}</span>
                         </span>
                       </span>
-                      <span role="cell" className="cart-col-center">{money(item.priceCents)}</span>
+                      <span role="cell" className="cart-col-center cart-col-price">{money(item.priceCents)}</span>
                       <span role="cell" className="cart-col-center">
                         <input
                           className="cart-qty-input"
