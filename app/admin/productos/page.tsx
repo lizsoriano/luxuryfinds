@@ -78,12 +78,6 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
             >
               Exportar
             </a>
-            <span className="admin-soon-chip" title="Importar productos desde Excel — próximamente">
-              Importar
-            </span>
-            <span className="admin-soon-chip" title="Generar productos con IA — próximamente">
-              ✨ Agregar con IA
-            </span>
             <Button href="/admin/productos/nuevo" size="small">
               Agregar producto <span aria-hidden>＋</span>
             </Button>
