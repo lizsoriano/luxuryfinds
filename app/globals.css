@@ -155,3 +155,6 @@ body{font-weight:400}
 .login-mode-switch{display:flex;gap:6px;margin-bottom:18px;padding:4px;border-radius:11px;background:var(--beige)}
 .login-mode-switch button{flex:1;min-height:36px;border:0;border-radius:8px;background:transparent;color:var(--muted);font-size:12px;font-weight:650;cursor:pointer}
 .login-mode-switch button.active{background:var(--white);color:var(--ink);box-shadow:var(--shadow-soft)}
+
+.dialog-form.admin-form-grid .admin-form-actions{grid-column:1/-1}
+@media(max-width:600px){.dialog-wide{width:min(100%,500px)}}
