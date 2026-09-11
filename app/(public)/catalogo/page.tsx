@@ -35,6 +35,7 @@ function buildQuery(current: SearchParams, overrides: Partial<SearchParams>) {
 
 const SORT_OPTIONS: { value: CatalogSort; label: string }[] = [
   { value: "recommended", label: "Recomendados" },
+  { value: "bestsellers", label: "Más vendidos" },
   { value: "recent", label: "Más nuevo al más viejo" },
   { value: "price_asc", label: "Precio: menor a mayor" },
   { value: "price_desc", label: "Precio: mayor a menor" },
@@ -59,6 +60,7 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
   let products: CatalogProduct[] = [];
   let hasNextPage = false;
   let error = false;
+  let errorMessage = "";
   let categories: { id: string; name: string; slug: string }[] = [];
   let brands: { id: string; name: string }[] = [];
 
@@ -81,8 +83,10 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
     hasNextPage = result.hasNextPage;
     categories = categoryList;
     brands = brandList;
-  } catch {
+  } catch (e) {
     error = true;
+    errorMessage = e instanceof Error ? e.message : String(e);
+    console.error("[catalogo] failed to load:", e);
   }
 
   const activeFilterCount = [sp.categoria, sp.marca, sp.precio_min, sp.precio_max].filter(Boolean).length;
@@ -164,7 +168,7 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
         </details>
 
         {error ? (
-          <EmptyState title="No pudimos cargar el catálogo" description="Intenta de nuevo en unos minutos." />
+          <EmptyState title="No pudimos cargar el catálogo" description={errorMessage || "Intenta de nuevo en unos minutos."} />
         ) : products.length ? (
           <>
             <div className="product-grid">
