@@ -292,7 +292,6 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
 
   let truncated = false;
   let exhausted = false;
-  const batch: SourceProduct[] = [];
   const imageBudget: ImageBudget = {
     // Image work is abandoned before the run's own deadline so the checkpoint
     // always gets written; see IMAGE_TAIL_MS.
@@ -301,35 +300,43 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
     skipped: 0,
   };
 
-  const flush = async () => {
-    for (const product of batch) {
-      try {
-        await ingestProduct({
-          product,
-          index,
-          counters,
-          errors,
-          priceMoves,
-          createdSamples,
-          matchedByMethod,
-          brandFor,
-          categories,
-          takenSlugs,
-          canWrite,
-          runId,
-          imageBudget,
-        });
-      } catch (error) {
-        // One product can never end the run.
-        errors.add(
-          `${product.source}:ingest`,
-          error instanceof Error ? error.message : String(error),
-          product.externalProductId,
-        );
-      }
+  // Products are ingested ONE AT A TIME, not in batches. Batching bought
+  // nothing here - the batch was written with a serial loop anyway - but it did
+  // cost precision: the time and image-budget checks below only ran once per
+  // batch, so up to BATCH_SIZE products could be created photo-less after the
+  // photo budget had already run out. BATCH_SIZE now only paces the progress
+  // callback, which is all it was ever really doing.
+  let sinceProgress = 0;
+  const ingestOne = async (product: SourceProduct) => {
+    try {
+      await ingestProduct({
+        product,
+        index,
+        counters,
+        errors,
+        priceMoves,
+        createdSamples,
+        matchedByMethod,
+        brandFor,
+        categories,
+        takenSlugs,
+        canWrite,
+        runId,
+        imageBudget,
+      });
+    } catch (error) {
+      // One product can never end the run.
+      errors.add(
+        `${product.source}:ingest`,
+        error instanceof Error ? error.message : String(error),
+        product.externalProductId,
+      );
     }
-    batch.length = 0;
-    options.onProgress?.(counters);
+    sinceProgress += 1;
+    if (sinceProgress >= BATCH_SIZE) {
+      sinceProgress = 0;
+      options.onProgress?.(counters);
+    }
   };
 
   // The last page that was read AND written in full.
@@ -359,9 +366,8 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
 
       for (const product of products) {
         counters.products_scanned += 1;
-        batch.push(product);
         doneInPage += 1;
-        if (batch.length >= BATCH_SIZE) await flush();
+        await ingestOne(product);
         // Checked inside the page too: an Oskin page is 100 products and copying
         // their photos can outlast the budget on its own.
         //
@@ -377,7 +383,6 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
           break;
         }
       }
-      await flush();
 
       if (truncated) {
         // Stopped part-way. Remember exactly how far in, so the next invocation
@@ -399,9 +404,9 @@ export async function runSync(options: RunOptions): Promise<RunResult> {
         break;
       }
     }
-    await flush();
+    options.onProgress?.(counters);
   } catch (error) {
-    await flush();
+    options.onProgress?.(counters);
     errors.add(`${options.source}:fatal`, error instanceof Error ? error.message : String(error));
   }
 
