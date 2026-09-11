@@ -80,8 +80,8 @@ export function ClientDialog({
           </label>
           {!client ? (
             <p className="admin-hint">
-              Se crea también su cuenta de acceso con una contraseña aleatoria. Para entrar al sitio deberá usar
-              &quot;olvidé mi contraseña&quot; con su celular o correo.
+              Se crea también su cuenta de acceso. No necesita contraseña: en &quot;Iniciar sesión&quot; puede entrar
+              solo con este celular, en la pestaña &quot;Solo mi celular&quot;.
             </p>
           ) : null}
           {state.error && (

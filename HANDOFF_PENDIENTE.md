@@ -26,6 +26,14 @@ Este documento resume lo que ya está construido y, sobre todo, **lo que falta p
 
 ## 🔴 ACCIÓN INMEDIATA — lo único que falta para producción
 
+### 0. Habilitar el proveedor "Phone" en Supabase Auth (nuevo — login solo con celular)
+
+Se agregó un modo de acceso "Solo mi celular" en `/login` (pestaña junto a "Correo y contraseña"): la clienta solo escribe su celular, sin contraseña ni código — pensado para que cualquier clienta que la admin registre en `/admin/clientes` (donde ya solo nombre, apellido y celular son obligatorios) pueda entrar de inmediato. El código (`app/(public)/login/actions.ts` → `phoneLoginAction`) ya está escrito, ya pasó `typecheck` y ya se probó de punta a punta contra Supabase real (creando y borrando una clienta de prueba) — **pero falló con el error `Phone logins are disabled`**: el proyecto de Supabase tiene el proveedor de teléfono apagado a nivel de Auth, así que ningún inicio de sesión por celular funciona todavía (ni el nuevo, ni el que ya existía por celular+contraseña en la otra pestaña).
+
+**Para desbloquearlo:** entra al dashboard de Supabase → tu proyecto → **Authentication → Sign In / Providers → Phone** → actívalo. No se envía ningún SMS real (las cuentas se crean con `phone_confirm: true` desde el panel admin, y el login pasa por un password temporal generado en el servidor, invisible para la clienta), así que no debería requerir configurar un proveedor de SMS de verdad para que esto funcione — pero si el dashboard de Supabase no te deja guardar el toggle sin elegir un proveedor de SMS (Twilio, etc.), avísame y lo resolvemos juntos (hay opciones gratuitas). Una vez activado, pruebo de nuevo con una clienta real y confirmo que quede funcionando.
+
+**Nota de seguridad, para que la decisión sea informada:** este modo es intencionalmente débil — quien conozca el celular de una clienta puede entrar a su cuenta (ver su historial de pedidos, dirección, etc.), sin ninguna otra verificación. Se implementó así porque fue lo que pediste explícitamente ("con poner su celular basta, sin factor de autenticación"); la pestaña de correo+contraseña sigue disponible para quien prefiera más seguridad. Las cuentas de administradoras (`admin_users`) están excluidas de este modo aunque compartan la misma tabla de autenticación — ese acceso siempre exige correo+contraseña.
+
 ### 1. Copiar las variables de entorno a Vercel (3 de 8 ya confirmadas)
 
 Las 3 de Supabase ya están funcionando en producción — se comprobó al loguearse en `/admin` y ver datos reales. **Faltan confirmar las otras 5** (Telegram, sync, cifrado de devoluciones). Todas ya tienen valor real en tu `.env` local — **Vercel no las lee de ahí, hay que copiarlas a mano** (o por CLI) en el proyecto de Vercel:
