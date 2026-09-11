@@ -301,26 +301,51 @@ export async function getCatalogProducts(filters: CatalogFilters = {}) {
 }
 
 /** Products a client has favorited, most recently favorited first. Reuses the same public-catalog shape. */
-export async function getProductsByIds(ids: string[]): Promise<CatalogProduct[]> {
-  if (!ids.length) return [];
+/**
+ * `identities` are the same slug-or-id values ProductCard/CartContext/favorites
+ * use everywhere else (see identityOf in app/api/favorites/route.ts) - NOT
+ * necessarily products.id. A product with a slug is identified by its slug,
+ * so filtering on the id column alone would silently match nothing for it.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function getProductsByIds(identities: string[]): Promise<CatalogProduct[]> {
+  if (!identities.length) return [];
   const supabase = createAdminSupabaseClient();
   const db = supabase.schema("luxury_finds");
 
-  const { data, error } = await db
-    .from("products")
-    .select(PRODUCT_SELECT)
-    .eq("is_public", true)
-    .eq("is_active", true)
-    .eq("product_variants.is_active", true)
-    .in("id", ids);
-  if (error) throw new Error(`No fue posible cargar tus favoritos: ${error.message}`);
+  // Split by shape rather than one .or() filter: PostgREST tries to cast every
+  // value in an `id.in.(...)` clause to uuid, and a plain slug isn't one - that
+  // throws (22P02) instead of just not matching, so slugs and ids need separate
+  // .in() queries, not a shared OR.
+  const uuids = identities.filter((value) => UUID_RE.test(value));
+  const slugs = identities.filter((value) => !UUID_RE.test(value));
 
-  const rows = (data ?? []) as unknown as ProductRow[];
-  const byId = new Map(rows.map((row) => [row.id, row]));
-  // ids arrives ordered (most recently favorited first) - preserve that order
-  // rather than whatever order Postgres happened to return rows in.
-  return ids.flatMap((id, index) => {
-    const row = byId.get(id);
+  const baseQuery = () =>
+    db
+      .from("products")
+      .select(PRODUCT_SELECT)
+      .eq("is_public", true)
+      .eq("is_active", true)
+      .eq("product_variants.is_active", true);
+
+  const [bySlug, byUuid] = await Promise.all([
+    slugs.length ? baseQuery().in("slug", slugs) : Promise.resolve({ data: [], error: null }),
+    uuids.length ? baseQuery().in("id", uuids) : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (bySlug.error) throw new Error(`No fue posible cargar tus favoritos: ${bySlug.error.message}`);
+  if (byUuid.error) throw new Error(`No fue posible cargar tus favoritos: ${byUuid.error.message}`);
+
+  const rows = [...(bySlug.data ?? []), ...(byUuid.data ?? [])] as unknown as ProductRow[];
+  const byIdentity = new Map<string, ProductRow>();
+  for (const row of rows) {
+    byIdentity.set(row.id, row);
+    if (row.slug) byIdentity.set(row.slug, row);
+  }
+  // identities arrives ordered (most recently favorited first) - preserve that
+  // order rather than whatever order Postgres happened to return rows in.
+  return identities.flatMap((identity, index) => {
+    const row = byIdentity.get(identity);
     if (!row) return [];
     const mapped = mapProductRow(row, index, supabase);
     return mapped ? [mapped] : [];
