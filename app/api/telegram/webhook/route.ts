@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminSupabaseClient } from "../../../../lib/supabase/admin";
 import { getTelegramWebhookSecret } from "../../../../lib/telegram/env";
+import { sendTelegramMessage } from "../../../../lib/telegram/send";
 
 type TelegramUpdate = {
   message?: {
@@ -41,14 +42,33 @@ export async function POST(request: NextRequest) {
     if (match && chatId) {
       const clientId = match[1];
       const admin = createAdminSupabaseClient();
-      const { error } = await admin
+      const { data: client, error } = await admin
         .schema("luxury_finds")
         .from("clients")
         .update({ telegram_chat_id: chatId })
-        .eq("id", clientId);
+        .eq("id", clientId)
+        .select("first_name")
+        .maybeSingle();
       if (error) {
         console.error("[telegram webhook] No fue posible vincular telegram_chat_id", error);
+        await sendTelegramMessage(chatId, "No pudimos vincular tu cuenta. Intenta de nuevo desde tu cuenta en el sitio.");
+      } else if (client) {
+        await sendTelegramMessage(
+          chatId,
+          `¡Listo, ${client.first_name}! Tu cuenta de Luxury Finds ya está vinculada. Aquí vas a recibir la confirmación de tus pedidos y pagos. 🛍️`,
+        );
+      } else {
+        await sendTelegramMessage(chatId, "No encontramos esa cuenta. Entra a tu cuenta en el sitio y vuelve a intentar vincular Telegram desde ahí.");
       }
+    } else if (chatId) {
+      // Any other message (no /start payload, or a plain "hola") - the bot only
+      // links accounts and forwards order/payment notifications, it doesn't hold
+      // a real conversation. Reply instead of staying silent, which read as "the
+      // bot doesn't do anything" even when it was working correctly.
+      await sendTelegramMessage(
+        chatId,
+        "Este bot envía tus confirmaciones de pedidos y pagos de Luxury Finds. Vincula tu cuenta desde el botón \"Vincular Telegram\" en tu perfil del sitio.",
+      );
     }
   } catch (error) {
     console.error("[telegram webhook] Error procesando el update", error);
