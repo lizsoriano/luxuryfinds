@@ -1,7 +1,14 @@
 import { createAdminSupabaseClient } from "./admin";
 
 export type CatalogType = "ON_DEMAND" | "IMMEDIATE";
-export type CatalogSort = "recommended" | "price_asc" | "price_desc" | "name_asc" | "name_desc" | "recent";
+export type CatalogSort =
+  | "recommended"
+  | "price_asc"
+  | "price_desc"
+  | "name_asc"
+  | "name_desc"
+  | "recent"
+  | "bestsellers";
 
 export type CatalogProduct = {
   id: string;
@@ -50,6 +57,73 @@ type ProductRow = {
 
 function firstRelation<T>(value: Relation<T>): T | null {
   return Array.isArray(value) ? (value[0] ?? null) : value;
+}
+
+const TONES = ["rose", "cream", "wine", "beige"] as const;
+
+function mapProductRow(
+  row: ProductRow,
+  toneIndex: number,
+  supabase: ReturnType<typeof createAdminSupabaseClient>,
+): CatalogProduct | null {
+  const variant = row.product_variants?.[0];
+  if (!variant) return null;
+
+  const category = firstRelation(row.categories)?.name ?? "Selección";
+  const productBrand = firstRelation(row.brands)?.name ?? "Luxury Finds";
+  const image = [...(row.product_images ?? [])].sort((a, b) => a.sort_order - b.sort_order)[0];
+  const imageUrl = image
+    ? supabase.storage.from("oskinmx-catalog").getPublicUrl(image.storage_key).data.publicUrl
+    : null;
+
+  return {
+    id: row.slug ?? row.id,
+    slug: row.slug,
+    name: row.name,
+    category: `${category} · ${productBrand}`,
+    brand: productBrand,
+    variant: variant.name,
+    priceCents: variant.price_cents,
+    availability: row.catalog_type === "IMMEDIATE" ? "Entrega inmediata" : "Por pedido",
+    imageUrl,
+    tone: TONES[toneIndex % TONES.length],
+  };
+}
+
+const PRODUCT_SELECT = `
+  id,
+  slug,
+  name,
+  catalog_type,
+  categories(name),
+  brands(name),
+  product_variants(id, name, price_cents, is_active),
+  product_images(storage_key, sort_order)
+`;
+
+/** Real product ids, ranked by total units sold (order_items + direct POS sale_items). */
+async function rankByBestsellers(limit = 200): Promise<string[]> {
+  const supabase = createAdminSupabaseClient();
+  const db = supabase.schema("luxury_finds");
+  const totals = new Map<string, number>();
+
+  const [orderItems, saleItems] = await Promise.all([
+    db.from("order_items").select("product_id, quantity").not("product_id", "is", null).limit(5000),
+    db.from("sale_items").select("product_id, quantity").not("product_id", "is", null).limit(5000),
+  ]);
+  for (const row of orderItems.data ?? []) {
+    if (!row.product_id) continue;
+    totals.set(row.product_id, (totals.get(row.product_id) ?? 0) + Number(row.quantity ?? 0));
+  }
+  for (const row of saleItems.data ?? []) {
+    if (!row.product_id) continue;
+    totals.set(row.product_id, (totals.get(row.product_id) ?? 0) + Number(row.quantity ?? 0));
+  }
+
+  return [...totals.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([id]) => id);
 }
 
 const PAGE_SIZE = 24;
@@ -160,18 +234,12 @@ export async function getCatalogProducts(filters: CatalogFilters = {}) {
     searchBrandIds = (data ?? []).map((b) => b.id);
   }
 
+  let bestsellerRank: string[] | null = null;
+  if (sort === "bestsellers") bestsellerRank = await rankByBestsellers();
+
   let query = db
     .from("products")
-    .select(`
-      id,
-      slug,
-      name,
-      catalog_type,
-      categories(name),
-      brands(name),
-      product_variants(id, name, price_cents, is_active),
-      product_images(storage_key, sort_order)
-    `)
+    .select(PRODUCT_SELECT)
     .eq("is_public", true)
     .eq("is_active", true)
     .eq("product_variants.is_active", true);
@@ -179,6 +247,7 @@ export async function getCatalogProducts(filters: CatalogFilters = {}) {
   if (catalogType) query = query.eq("catalog_type", catalogType);
   if (categoryId) query = query.eq("category_id", categoryId);
   if (brandId) query = query.eq("brand_id", brandId);
+  if (bestsellerRank) query = query.in("id", bestsellerRank.length ? bestsellerRank : ["00000000-0000-0000-0000-000000000000"]);
   if (search) {
     const term = `%${search}%`;
     const parts = [`name.ilike.${term}`];
@@ -188,43 +257,37 @@ export async function getCatalogProducts(filters: CatalogFilters = {}) {
 
   if (sort === "name_asc") query = query.order("name", { ascending: true });
   else if (sort === "name_desc") query = query.order("name", { ascending: false });
-  else query = query.order("created_at", { ascending: false });
+  else if (!bestsellerRank) query = query.order("created_at", { ascending: false });
 
-  const from = (page - 1) * PAGE_SIZE;
-  query = query.range(from, from + PAGE_SIZE - 1);
+  // Bestsellers rank comes from a separate aggregate, not a column Postgres can
+  // ORDER BY - fetch every match (bounded by the rank's own cap) and sort/page
+  // in memory instead of relying on .range() for this one sort.
+  if (!bestsellerRank) {
+    const from = (page - 1) * PAGE_SIZE;
+    query = query.range(from, from + PAGE_SIZE - 1);
+  }
 
   const { data, error } = await query;
   if (error) throw new Error(`No fue posible cargar el catálogo: ${error.message}`);
 
   let products = ((data ?? []) as unknown as ProductRow[]).flatMap((row, index) => {
-    const variant = row.product_variants?.[0];
-    if (!variant) return [];
-
-    const category = firstRelation(row.categories)?.name ?? "Selección";
-    const productBrand = firstRelation(row.brands)?.name ?? "Luxury Finds";
-    const image = [...(row.product_images ?? [])].sort(
-      (a, b) => a.sort_order - b.sort_order,
-    )[0];
-    const imageUrl = image
-      ? supabase.storage.from("oskinmx-catalog").getPublicUrl(image.storage_key).data
-          .publicUrl
-      : null;
-    const tones = ["rose", "cream", "wine", "beige"] as const;
-
-    return [{
-      id: row.slug ?? row.id,
-      slug: row.slug,
-      name: row.name,
-      category: `${category} · ${productBrand}`,
-      brand: productBrand,
-      variant: variant.name,
-      priceCents: variant.price_cents,
-      availability:
-        row.catalog_type === "IMMEDIATE" ? "Entrega inmediata" : "Por pedido",
-      imageUrl,
-      tone: tones[index % tones.length],
-    } satisfies CatalogProduct];
+    const mapped = mapProductRow(row, index, supabase);
+    return mapped ? [mapped] : [];
   });
+
+  let bestsellerTotal: number | null = null;
+  if (bestsellerRank) {
+    const rankIndex = new Map(bestsellerRank.map((id, i) => [id, i]));
+    const byDbId = new Map(((data ?? []) as unknown as ProductRow[]).map((row) => [row.slug ?? row.id, row.id]));
+    products = [...products].sort((a, b) => {
+      const ra = rankIndex.get(byDbId.get(a.id) ?? "") ?? Number.MAX_SAFE_INTEGER;
+      const rb = rankIndex.get(byDbId.get(b.id) ?? "") ?? Number.MAX_SAFE_INTEGER;
+      return ra - rb;
+    });
+    bestsellerTotal = products.length;
+    const from = (page - 1) * PAGE_SIZE;
+    products = products.slice(from, from + PAGE_SIZE);
+  }
 
   if (typeof minPrice === "number") products = products.filter((p) => p.priceCents >= minPrice * 100);
   if (typeof maxPrice === "number") products = products.filter((p) => p.priceCents <= maxPrice * 100);
@@ -232,5 +295,34 @@ export async function getCatalogProducts(filters: CatalogFilters = {}) {
   if (sort === "price_asc") products = [...products].sort((a, b) => a.priceCents - b.priceCents);
   else if (sort === "price_desc") products = [...products].sort((a, b) => b.priceCents - a.priceCents);
 
-  return { products, page, pageSize: PAGE_SIZE, hasNextPage: (data?.length ?? 0) === PAGE_SIZE };
+  const hasNextPage =
+    bestsellerTotal !== null ? page * PAGE_SIZE < bestsellerTotal : (data?.length ?? 0) === PAGE_SIZE;
+  return { products, page, pageSize: PAGE_SIZE, hasNextPage };
+}
+
+/** Products a client has favorited, most recently favorited first. Reuses the same public-catalog shape. */
+export async function getProductsByIds(ids: string[]): Promise<CatalogProduct[]> {
+  if (!ids.length) return [];
+  const supabase = createAdminSupabaseClient();
+  const db = supabase.schema("luxury_finds");
+
+  const { data, error } = await db
+    .from("products")
+    .select(PRODUCT_SELECT)
+    .eq("is_public", true)
+    .eq("is_active", true)
+    .eq("product_variants.is_active", true)
+    .in("id", ids);
+  if (error) throw new Error(`No fue posible cargar tus favoritos: ${error.message}`);
+
+  const rows = (data ?? []) as unknown as ProductRow[];
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  // ids arrives ordered (most recently favorited first) - preserve that order
+  // rather than whatever order Postgres happened to return rows in.
+  return ids.flatMap((id, index) => {
+    const row = byId.get(id);
+    if (!row) return [];
+    const mapped = mapProductRow(row, index, supabase);
+    return mapped ? [mapped] : [];
+  });
 }
