@@ -158,3 +158,25 @@ body{font-weight:400}
 
 .dialog-form.admin-form-grid .admin-form-actions{grid-column:1/-1}
 @media(max-width:600px){.dialog-wide{width:min(100%,500px)}}
+
+.stat-card .stat-delta{display:flex;align-items:center;gap:5px;margin-bottom:4px;font-style:normal;font-size:11px;font-weight:700}
+.stat-card .stat-delta i{font-style:normal;font-size:8px;line-height:1}
+.stat-delta-up{color:var(--success)}
+.stat-delta-down{color:var(--danger)}
+.stat-delta-flat{color:var(--admin-muted)}
+.stats-chart{height:210px;margin-top:18px;display:flex;align-items:stretch;justify-content:space-between;gap:5px;overflow-x:auto;padding-bottom:2px}
+.stats-chart-col{flex:1 1 0;min-width:13px;max-width:58px;display:flex;flex-direction:column;gap:8px}
+.stats-chart-bar{flex:1;display:flex;align-items:flex-end;border-radius:8px;background:#fafafa}
+.stats-chart-bar>span{display:block;width:100%;min-height:3px;border-radius:8px;background:var(--terracotta)}
+.stats-chart-col.is-empty .stats-chart-bar>span{background:var(--admin-border)}
+.stats-chart-col>small{color:var(--admin-muted);font-size:10px;text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums;min-height:13px}
+.stats-rank{display:flex;flex-direction:column;gap:16px;margin-top:18px}
+.stats-rank-row>div:first-child{display:flex;align-items:baseline;justify-content:space-between;gap:12px;font-size:12px;color:var(--admin-text)}
+.stats-rank-row>div:first-child span{color:var(--admin-muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.stats-rank-track{height:6px;margin-top:7px;border-radius:6px;background:var(--cream);overflow:hidden}
+.stats-rank-track>span{display:block;height:100%;border-radius:6px;background:var(--terracotta)}
+.stats-rank-row>small{display:block;margin-top:5px;color:var(--admin-muted);font-size:11px}
+.stats-breakdown{display:grid;gap:12px;margin-top:18px}
+.stats-breakdown>div{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding-bottom:12px;border-bottom:1px solid var(--admin-border);font-size:13px;color:var(--admin-muted)}
+.stats-breakdown>div:last-child{padding-bottom:0;border-bottom:0}
+.stats-breakdown strong{color:var(--admin-text);font-variant-numeric:tabular-nums}
