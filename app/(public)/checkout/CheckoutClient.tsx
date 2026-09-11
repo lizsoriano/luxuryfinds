@@ -68,7 +68,7 @@ export function CheckoutClient() {
         <p>
           Folio <strong>{result.orderId.slice(0, 8).toUpperCase()}</strong> · {result.itemsCount} artículo(s) · {money(result.totalCents)}
         </p>
-        <p>Nos pondremos en contacto contigo por WhatsApp para continuar con el pago.</p>
+        <p>Nos pondremos en contacto contigo por Telegram para continuar con el pago.</p>
         {result.telegramLinkUrl && (
           <Card className="telegram-card" style={{ marginTop: 18, textAlign: "left" }}>
             <p>Vincula Telegram para recibir la confirmación de tus pedidos ahí también.</p>

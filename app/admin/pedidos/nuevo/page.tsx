@@ -41,7 +41,7 @@ export default async function NewOrderPage() {
       <PageHeader
         eyebrow="VENDER"
         title="Nuevo pedido"
-        description="Para pedidos que entran por WhatsApp, teléfono o en persona. Se crea como borrador; confírmalo desde su detalle cuando quede claro."
+        description="Para pedidos que entran por Telegram, teléfono o en persona. Se crea como borrador; confírmalo desde su detalle cuando quede claro."
         action={
           <Button href="/admin/pedidos" variant="secondary" size="small">
             Volver

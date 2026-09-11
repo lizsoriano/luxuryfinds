@@ -1,10 +1,12 @@
 import { PageHeader } from "../../../components/ui/PageHeader";
 import { Card } from "../../../components/ui/Card";
 import { Button } from "../../../components/ui/Button";
+import { hasTelegramEnv, getTelegramEnv } from "../../../lib/telegram/env";
 
 export const metadata = { title: "Contacto | Luxury Finds" };
 
 export default function ContactPage() {
+  const telegramUrl = hasTelegramEnv() ? `https://t.me/${getTelegramEnv().botUsername}` : "https://t.me/";
   return <main className="simple-page">
     <div className="shell narrow-shell">
       <PageHeader
@@ -15,9 +17,9 @@ export default function ContactPage() {
       <div className="steps-grid">
         <Card className="step-card">
           <span aria-hidden>💬</span>
-          <h2>WhatsApp</h2>
+          <h2>Telegram</h2>
           <p>Respondemos de lunes a viernes. Es la forma más rápida de contactarnos.</p>
-          <Button href="https://wa.me/526122343170" variant="primary" size="small">Escribir por WhatsApp</Button>
+          <Button href={telegramUrl} variant="primary" size="small">Escribir por Telegram</Button>
         </Card>
         <Card className="step-card">
           <span aria-hidden>📷</span>
