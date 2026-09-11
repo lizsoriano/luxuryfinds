@@ -43,8 +43,13 @@ export function ClientDialog({
       <Button type="button" variant={triggerVariant} size="small" onClick={() => setOpen(true)}>
         {triggerLabel}
       </Button>
-      <Dialog open={open} title={client ? "Editar clienta" : "Nueva clienta"} onClose={() => setOpen(false)}>
-        <form action={action} className="dialog-form">
+      <Dialog
+        open={open}
+        title={client ? "Editar clienta" : "Nueva clienta"}
+        onClose={() => setOpen(false)}
+        className="dialog-wide"
+      >
+        <form action={action} className="dialog-form admin-form-grid">
           {client ? <input type="hidden" name="id" value={client.id} /> : null}
           <Input id="client-first" name="firstName" label="Nombre *" defaultValue={client?.first_name ?? ""} required />
           <Input id="client-last" name="lastName" label="Apellido *" defaultValue={client?.last_name ?? ""} required />
@@ -59,14 +64,16 @@ export function ClientDialog({
           <Input id="client-email" name="email" label="Correo" type="email" defaultValue={client?.email ?? ""} />
           <Input id="client-instagram" name="instagram" label="Instagram" defaultValue={client?.instagram ?? ""} />
           <Input id="client-address" name="address" label="Dirección" defaultValue={client?.address ?? ""} />
-          <Textarea
-            id="client-notes"
-            name="notes"
-            label="Notas internas"
-            rows={3}
-            defaultValue={client?.internal_notes ?? ""}
-          />
-          <label className="admin-switch" htmlFor="client-plans">
+          <div className="field-wide">
+            <Textarea
+              id="client-notes"
+              name="notes"
+              label="Notas internas"
+              rows={2}
+              defaultValue={client?.internal_notes ?? ""}
+            />
+          </div>
+          <label className="admin-switch field-wide" htmlFor="client-plans">
             <input
               id="client-plans"
               type="checkbox"
@@ -79,13 +86,13 @@ export function ClientDialog({
             </span>
           </label>
           {!client ? (
-            <p className="admin-hint">
+            <p className="admin-hint field-wide">
               Se crea también su cuenta de acceso. No necesita contraseña: en &quot;Iniciar sesión&quot; puede entrar
               solo con este celular, en la pestaña &quot;Solo mi celular&quot;.
             </p>
           ) : null}
           {state.error && (
-            <p className="form-message form-error" role="alert">
+            <p className="form-message form-error field-wide" role="alert">
               {state.error}
             </p>
           )}
