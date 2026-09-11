@@ -1,3 +1,4 @@
+import { listQuotesForClient } from "./admin-quotes";
 import { adminDb, DEFAULT_BUSINESS_ID } from "./business";
 
 // ---------------------------------------------------------------------------
@@ -114,7 +115,7 @@ export async function getClientDetail(id: string) {
   if (error) throw new Error(error.message);
   if (!data) return null;
 
-  const [tickets, sales, metrics] = await Promise.all([
+  const [tickets, sales, metrics, quotes] = await Promise.all([
     db
       .from("tickets")
       .select("id, ticket_number, product_name_snapshot, agreed_total_cents, payment_mode, financial_status, logistics_status, created_at")
@@ -128,6 +129,10 @@ export async function getClientDetail(id: string) {
       .order("sold_at", { ascending: false })
       .limit(25),
     getClientMetrics([id]),
+    // Quotes are budgets, not purchases: they are listed on the card but never
+    // counted in the metrics above, and they degrade to `unavailable` on their
+    // own before migration 007 has been applied.
+    listQuotesForClient(id),
   ]);
   if (tickets.error) throw new Error(tickets.error.message);
 
@@ -136,6 +141,8 @@ export async function getClientDetail(id: string) {
     tickets: tickets.data ?? [],
     sales: sales.error ? [] : (sales.data ?? []),
     salesUnavailable: Boolean(sales.error),
+    quotes: quotes.quotes,
+    quotesUnavailable: quotes.unavailable,
     metrics: metrics.get(id) ?? { purchaseCount: 0, totalCents: 0, lastPurchaseAt: null },
   };
 }
