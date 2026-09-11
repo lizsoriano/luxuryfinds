@@ -30,7 +30,10 @@ function buildQuery(current: SearchParams, overrides: Partial<SearchParams>) {
     if (value !== undefined && value !== null && value !== "") params.set(key, String(value));
   }
   const qs = params.toString();
-  return qs ? `?${qs}` : ".";
+  // Absolute path, not "." - /catalogo has no trailing slash, so a relative "."
+  // resolves to its parent directory (the site root "/"), not the catalog page
+  // itself. That silently dropped every search/filter reset onto the homepage.
+  return qs ? `?${qs}` : "/catalogo";
 }
 
 const SORT_OPTIONS: { value: CatalogSort; label: string }[] = [
@@ -97,7 +100,7 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
         <p className="catalog-breadcrumb"><Link href="/">Inicio</Link> <span aria-hidden>.</span> Catálogo</p>
         <h1 className="catalog-title">Catálogo</h1>
 
-        <form className="catalog-search" method="get" action=".">
+        <form className="catalog-search" method="get" action="/catalogo">
           {sp.categoria && <input type="hidden" name="categoria" value={sp.categoria} />}
           {sp.marca && <input type="hidden" name="marca" value={sp.marca} />}
           {catalogType && <input type="hidden" name="tipo" value={catalogType} />}
@@ -117,7 +120,7 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
         <details className="filter-disclosure">
           <summary>Filtrar{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}</summary>
           <div className="filter-panel">
-            <form method="get" action="." className="filter-panel-form">
+            <form method="get" action="/catalogo" className="filter-panel-form">
               {sp.q && <input type="hidden" name="q" value={sp.q} />}
               {catalogType && <input type="hidden" name="tipo" value={catalogType} />}
 
