@@ -5,6 +5,7 @@ import { useCart } from "../../lib/cart/CartContext";
 
 const links = [
   ["Catálogo", "/catalogo"], ["New In", "/catalogo?orden=recent"], ["Entrega inmediata", "/entrega-inmediata"],
+  ["Productos en camino", "/productos-en-camino"],
 ];
 const accountLinks = [
   ["Mi cuenta", "/login"], ["Favoritos", "/favoritos"], ["Dudas", "/como-comprar"],
