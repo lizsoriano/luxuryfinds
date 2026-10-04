@@ -2,44 +2,35 @@
 
 import { revalidatePath } from "next/cache";
 import { describeError, failure, ok, type ActionState } from "../../../lib/actions";
-import { DEFAULT_BUSINESS_ID, adminDb, logActivity, requireAdminActor } from "../../../lib/supabase/business";
+import { adminDb, logActivity, requireAdminActor } from "../../../lib/supabase/business";
+import { insertSupplier, readSupplierInput } from "../../../lib/supabase/admin-contacts";
 
 function revalidate() {
   revalidatePath("/admin/proveedores");
+  revalidatePath("/admin/compras/nueva");
   revalidatePath("/admin/vender");
   revalidatePath("/admin/balance");
-}
-
-function readForm(formData: FormData) {
-  return {
-    name: String(formData.get("name") ?? "").trim(),
-    company: String(formData.get("company") ?? "").trim() || null,
-    phone: String(formData.get("phone") ?? "").trim() || null,
-    email: String(formData.get("email") ?? "").trim().toLowerCase() || null,
-    address: String(formData.get("address") ?? "").trim() || null,
-    notes: String(formData.get("notes") ?? "").trim() || null,
-  };
 }
 
 export async function createSupplierAction(_state: ActionState, formData: FormData): Promise<ActionState> {
   try {
     const actor = await requireAdminActor();
-    const values = readForm(formData);
-    if (!values.name) return failure("El nombre del proveedor es obligatorio.");
-    if (values.email && !values.email.includes("@")) return failure("El correo no es válido.");
+    const parsed = readSupplierInput(formData);
+    if (!parsed.ok) return failure(parsed.error);
+    const values = parsed.values;
 
-    const { data, error } = await adminDb()
-      .from("suppliers")
-      .insert({ ...values, business_id: DEFAULT_BUSINESS_ID, is_active: true, created_by_admin_id: actor.id })
-      .select("id")
-      .single();
-    if (error) return failure(describeError(new Error(error.message), "No fue posible crear el proveedor."));
+    let supplierId: string;
+    try {
+      supplierId = await insertSupplier(actor.id, values);
+    } catch (error) {
+      return failure(describeError(error, "No fue posible crear el proveedor."));
+    }
 
     await logActivity({
       adminUserId: actor.id,
       action: "SUPPLIER_CREATED",
       entityType: "suppliers",
-      entityId: data.id as string,
+      entityId: supplierId,
       newData: values,
     });
     revalidate();
@@ -54,9 +45,9 @@ export async function updateSupplierAction(_state: ActionState, formData: FormDa
     const actor = await requireAdminActor();
     const id = String(formData.get("id") ?? "");
     if (!id) return failure("Proveedor no encontrado.");
-    const values = readForm(formData);
-    if (!values.name) return failure("El nombre del proveedor es obligatorio.");
-    if (values.email && !values.email.includes("@")) return failure("El correo no es válido.");
+    const parsed = readSupplierInput(formData);
+    if (!parsed.ok) return failure(parsed.error);
+    const values = parsed.values;
 
     const { error } = await adminDb()
       .from("suppliers")

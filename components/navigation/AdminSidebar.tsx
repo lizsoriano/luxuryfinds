@@ -83,6 +83,14 @@ const groups: NavGroup[] = [
           { label: "Sincronización", href: "/admin/inventario/sincronizacion", icon: "globe" },
         ],
       },
+      // Buying in US stores through a shopper (phase 1: open, capture, square,
+      // confirm, pay). Next to Inventario because it is where stock comes from.
+      {
+        label: "Compras con shopper",
+        href: "/admin/compras",
+        icon: "shopper",
+        title: "Compras en tiendas de EE.UU. a través de tu shopper",
+      },
       { label: "Cotizaciones", href: "/admin/cotizaciones", icon: "quote" },
       { label: "Empleados", href: "/admin/empleados", icon: "users" },
       { label: "Sitio Web", href: "/admin/sitio-web", icon: "globe" },
@@ -122,6 +130,7 @@ const ICONS: Record<string, ReactElement> = {
   bolt: <><path d="M13 3 5 13.5h6L10 21l8-10.5h-6L13 3Z" /></>,
   inbound: <><path d="M3 8l9-4.5L21 8v9l-9 4.5L3 17V8Z" /><path d="M12 9v7M9 13l3 3 3-3" /></>,
   tag: <><path d="M3 12.5V4h8.5L21 13.5 13.5 21 3 12.5Z" /><circle cx="7.5" cy="7.5" r="1.3" /></>,
+  shopper: <><path d="M5 8h14l-1.2 12H6.2L5 8Z" /><path d="M9 8V6.5a3 3 0 0 1 6 0V8" /><path d="M9.5 14.5h5M12.5 12l2.5 2.5-2.5 2.5" /></>,
   supplier: <><path d="M3 9.5 12 4l9 5.5v8L12 20l-9-5.5v-8Z" /><path d="M3 9.5 12 15l9-5.5M12 15v5" /></>,
   help: <><circle cx="12" cy="12" r="8.5" /><path d="M9.7 9.4a2.4 2.4 0 1 1 3.3 2.2c-.7.3-1 .9-1 1.6v.3" /><path d="M12 17h.01" /></>,
   logout: <><path d="M15 5h3.5A1.5 1.5 0 0 1 20 6.5v11a1.5 1.5 0 0 1-1.5 1.5H15" /><path d="M10 16l-4-4 4-4M6 12h9" /></>,
@@ -169,7 +178,7 @@ function NavLink({ item, pathname, onNavigate }: { item: NavItem; pathname: stri
 
   if (!item.children?.length) {
     return (
-      <Link className={active ? "active" : ""} href={item.href} onClick={onNavigate}>
+      <Link className={active ? "active" : ""} href={item.href} onClick={onNavigate} title={item.title}>
         <NavIcon name={item.icon} />
         {item.label}
       </Link>

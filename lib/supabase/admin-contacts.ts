@@ -246,6 +246,41 @@ export async function getSupplierSpend(supplierIds: string[]) {
   return result;
 }
 
+export type SupplierInput = {
+  name: string;
+  company: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  notes: string | null;
+};
+
+/** The one validation for a supplier, used by /admin/proveedores and by "Crear shopper" in Compras. */
+export function readSupplierInput(formData: FormData): { ok: true; values: SupplierInput } | { ok: false; error: string } {
+  const values: SupplierInput = {
+    name: String(formData.get("name") ?? "").trim(),
+    company: String(formData.get("company") ?? "").trim() || null,
+    phone: String(formData.get("phone") ?? "").trim() || null,
+    email: String(formData.get("email") ?? "").trim().toLowerCase() || null,
+    address: String(formData.get("address") ?? "").trim() || null,
+    notes: String(formData.get("notes") ?? "").trim() || null,
+  };
+  if (!values.name) return { ok: false, error: "El nombre del proveedor es obligatorio." };
+  if (values.email && !values.email.includes("@")) return { ok: false, error: "El correo no es válido." };
+  return { ok: true, values };
+}
+
+/** Inserts an active supplier for the default business. Throws with the database message on failure. */
+export async function insertSupplier(adminId: string, values: SupplierInput): Promise<string> {
+  const { data, error } = await adminDb()
+    .from("suppliers")
+    .insert({ ...values, business_id: DEFAULT_BUSINESS_ID, is_active: true, created_by_admin_id: adminId })
+    .select("id")
+    .single();
+  if (error) throw new Error(error.message);
+  return data.id as string;
+}
+
 export async function listSupplierOptions(limit = 200) {
   const { data, error } = await adminDb()
     .from("suppliers")
