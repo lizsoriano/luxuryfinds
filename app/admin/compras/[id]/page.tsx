@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ConfirmAction } from "../../../../components/admin/ConfirmAction";
 import { Badge } from "../../../../components/ui/Badge";
@@ -6,9 +7,20 @@ import { Card } from "../../../../components/ui/Card";
 import { EmptyState } from "../../../../components/ui/EmptyState";
 import { PageHeader } from "../../../../components/ui/PageHeader";
 import { StatCard } from "../../../../components/ui/StatCard";
-import { businessToday, formatDate, formatDateTime, formatMoney, initialsOf } from "../../../../lib/format";
-import { listSupplierOptions } from "../../../../lib/supabase/admin-contacts";
 import {
+  businessToday,
+  FINANCIAL_STATUS_LABELS,
+  formatDate,
+  formatDateTime,
+  formatMoney,
+  initialsOf,
+  LOGISTICS_STATUS_LABELS,
+} from "../../../../lib/format";
+import { listClientOptions, listSupplierOptions } from "../../../../lib/supabase/admin-contacts";
+import {
+  ASSIGNMENT_STATUS_LABELS,
+  assignmentUnavailableMessage,
+  getPurchaseAssignments,
   getPurchaseDetail,
   listStoreSuggestions,
   PURCHASE_ITEM_STATUS_LABELS,
@@ -29,6 +41,7 @@ import {
   type TicketSummary,
 } from "../../../../lib/supabase/purchase-math";
 import { ConfirmPurchaseDialog, PaymentDialog, VoidPaymentDialog, type ConfirmPreview } from "../AccountForms";
+import { AssignDialog, CancelAssignmentDialog, type ClientOption } from "../AssignForms";
 import { EditPurchaseDialog } from "../PurchaseHeaderForm";
 import { ItemCapture, ItemEditDialog, TicketDialog } from "../TicketForms";
 import { cancelPurchaseAction, deleteItemAction, deleteTicketAction } from "../actions";
@@ -149,6 +162,23 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
   const capturedMxn = safeMxn(summary.capturedWithTaxUsdCents, purchase.exchange_rate);
   const confirmation = isOpen ? confirmationState(detail) : null;
   const allItems = tickets.flatMap((ticket) => ticket.items.map((item) => ({ ...item, storeName: ticket.store_name })));
+
+  // Phase 2 (migration 011): who each confirmed line went to. Degrades to a notice.
+  let assignmentData: Awaited<ReturnType<typeof getPurchaseAssignments>> | null = null;
+  let assignmentError: string | null = null;
+  let clients: ClientOption[] = [];
+  if (isConfirmed) {
+    try {
+      [assignmentData, clients] = await Promise.all([getPurchaseAssignments(purchase.id), listClientOptions().catch(() => [])]);
+    } catch (error) {
+      assignmentError = error instanceof Error ? error.message : "error desconocido";
+    }
+  }
+  const assignmentNotice = assignmentData ? assignmentUnavailableMessage(assignmentData.state) : null;
+  const canAssign = assignmentData?.state === "ready";
+  const activeAssignments = (assignmentData?.assignments ?? []).filter((row) => row.status === "ACTIVE");
+  const soldCents = activeAssignments.reduce((sum, row) => sum + row.totalCents, 0);
+  const soldCostCents = activeAssignments.reduce((sum, row) => sum + row.cost_mxn_cents, 0);
 
   return (
     <main className="admin-content">
@@ -337,66 +367,173 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
               <p className="micro-label">INVENTARIO POR LLEGAR</p>
               <h2>Comprados, pendientes de envío</h2>
             </div>
+            <Button href={`/admin/compras/pendientes?purchase=${purchase.id}`} variant="secondary" size="small">
+              Ver en pendientes
+            </Button>
           </div>
-          <div className="admin-table-scroll">
-            <table className="admin-data-table">
-              <thead>
-                <tr>
-                  <th>Producto</th>
-                  <th>Tienda</th>
-                  <th>Estado</th>
-                  <th className="numeric">Cant.</th>
-                  <th className="numeric">Precio tienda c/u</th>
-                  <th className="numeric">Costo c/u MXN</th>
-                  <th className="numeric">Costo total MXN</th>
-                </tr>
-              </thead>
-              <tbody>
-                {allItems.map((item) => (
-                  <tr key={item.id}>
-                    <td>
-                      <div className="admin-cell-main">
-                        {item.photoUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img className="admin-thumb" src={item.photoUrl} alt="" />
-                        ) : (
-                          <span className="admin-thumb admin-thumb-fallback" aria-hidden>
-                            {initialsOf(item.name)}
-                          </span>
-                        )}
-                        <span>
-                          <strong>{item.name}</strong>
-                          {item.variant_label ? <span className="admin-cell-sub">{item.variant_label}</span> : null}
-                        </span>
-                      </div>
-                    </td>
-                    <td style={{ color: "var(--admin-muted)" }}>{item.storeName}</td>
-                    <td>
-                      <Badge tone={item.status === "PURCHASED" ? "rose" : "neutral"}>{PURCHASE_ITEM_STATUS_LABELS[item.status]}</Badge>
-                    </td>
-                    <td className="numeric">{item.quantity}</td>
-                    <td className="numeric">{formatUsd(item.unit_price_usd_cents)}</td>
-                    <td className="numeric">{item.unit_cost_mxn_cents !== null ? formatMoney(item.unit_cost_mxn_cents) : "—"}</td>
-                    <td className="numeric">{item.line_cost_mxn_cents !== null ? formatMoney(item.line_cost_mxn_cents) : "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <td colSpan={6} style={{ textAlign: "right", fontWeight: 600 }}>
-                    Total (= lo que le debes al shopper)
-                  </td>
-                  <td className="numeric" style={{ fontWeight: 600 }}>
-                    {formatMoney(allItems.reduce((sum, item) => sum + (item.line_cost_mxn_cents ?? 0), 0))}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
+          {assignmentError ? (
+            <p className="form-message form-error" role="alert">
+              No pudimos cargar las asignaciones: {assignmentError}
+            </p>
+          ) : assignmentNotice ? (
+            <div className="admin-notice">
+              <strong>{assignmentNotice}</strong>
+              Para asignar estas piezas a tus clientas (y generar su ticket de venta) corre ese archivo en el editor SQL de
+              Supabase. Mientras tanto la compra, sus costos y los abonos funcionan igual.
+            </div>
+          ) : null}
+          <ul className="assign-list">
+            {allItems.map((item) => {
+              const counts = assignmentData?.availability.get(item.id) ?? {
+                purchased: item.quantity,
+                assigned: 0,
+                available: item.quantity,
+                assignedCostMxnCents: 0,
+              };
+              const rows = (assignmentData?.assignments ?? []).filter((row) => row.purchase_item_id === item.id);
+              return (
+                <li key={item.id} id={`articulo-${item.id}`} className="assign-item">
+                  <div className="assign-item-head">
+                    {item.photoUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img className="shopper-item-thumb" src={item.photoUrl} alt="" />
+                    ) : (
+                      <span className="shopper-item-thumb admin-thumb-fallback" aria-hidden>
+                        {initialsOf(item.name)}
+                      </span>
+                    )}
+                    <div className="shopper-item-main">
+                      <strong>{item.name}</strong>
+                      <small>
+                        {item.variant_label ? `${item.variant_label} · ` : ""}
+                        {item.storeName} · {formatUsd(item.unit_price_usd_cents)} c/u en tienda
+                      </small>
+                      <span className="shopper-badges">
+                        <Badge tone={item.status === "PURCHASED" ? "rose" : "neutral"}>{PURCHASE_ITEM_STATUS_LABELS[item.status]}</Badge>
+                      </span>
+                    </div>
+                    {canAssign && counts.available > 0 && item.status === "PURCHASED" && item.line_cost_mxn_cents !== null ? (
+                      <AssignDialog
+                        clients={clients}
+                        item={{
+                          id: item.id,
+                          purchaseId: purchase.id,
+                          name: item.name,
+                          variantLabel: item.variant_label,
+                          storeName: item.storeName,
+                          purchased: counts.purchased,
+                          assigned: counts.assigned,
+                          available: counts.available,
+                          assignedCostMxnCents: counts.assignedCostMxnCents,
+                          lineCostMxnCents: item.line_cost_mxn_cents,
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                  <dl className="assign-counts">
+                    <div>
+                      <dt>Comprado</dt>
+                      <dd>{counts.purchased}</dd>
+                    </div>
+                    <div>
+                      <dt>Asignado</dt>
+                      <dd>{canAssign ? counts.assigned : "—"}</dd>
+                    </div>
+                    <div className={canAssign && counts.available > 0 ? "assign-counts-strong" : undefined}>
+                      <dt>Disponible</dt>
+                      <dd>{canAssign ? counts.available : "—"}</dd>
+                    </div>
+                    <div>
+                      <dt>Costo c/u</dt>
+                      <dd>{item.unit_cost_mxn_cents !== null ? formatMoney(item.unit_cost_mxn_cents) : "—"}</dd>
+                    </div>
+                    <div>
+                      <dt>Costo línea</dt>
+                      <dd>{item.line_cost_mxn_cents !== null ? formatMoney(item.line_cost_mxn_cents) : "—"}</dd>
+                    </div>
+                  </dl>
+                  {rows.length ? (
+                    <ul className="assign-rows">
+                      {rows.map((row) => {
+                        const cancelled = row.status === "CANCELLED";
+                        return (
+                          <li key={row.id} className={cancelled ? "assign-row assign-row-cancelled" : "assign-row"}>
+                            <div className="assign-row-main">
+                              <strong>{row.clientName}</strong>
+                              <small>
+                                {row.quantity} × {formatMoney(row.unit_price_cents)} = <b>{formatMoney(row.totalCents)}</b>
+                                {" · "}costo {formatMoney(row.cost_mxn_cents)}
+                                {" · "}utilidad {formatMoney(row.totalCents - row.cost_mxn_cents)}
+                              </small>
+                              <small>
+                                Ticket{" "}
+                                <Link className="assign-ticket-link" href={`/admin/pedidos/${row.order_id}`}>
+                                  {row.ticketNumber ?? "—"}
+                                </Link>
+                                {" · "}
+                                {formatDateTime(row.created_at)}
+                              </small>
+                              {cancelled ? (
+                                <small>
+                                  Cancelada el {formatDateTime(row.cancelled_at)}
+                                  {row.cancellation_reason ? `: ${row.cancellation_reason}` : ""}
+                                </small>
+                              ) : null}
+                              <span className="shopper-badges">
+                                <Badge tone={cancelled ? "neutral" : "success"}>{ASSIGNMENT_STATUS_LABELS[row.status]}</Badge>
+                                {!cancelled && row.ticketLogisticsStatus ? (
+                                  <Badge tone="rose">{LOGISTICS_STATUS_LABELS[row.ticketLogisticsStatus] ?? row.ticketLogisticsStatus}</Badge>
+                                ) : null}
+                                {!cancelled && row.ticketFinancialStatus ? (
+                                  <Badge tone={row.ticketFinancialStatus === "PAID" ? "success" : "warning"}>
+                                    {FINANCIAL_STATUS_LABELS[row.ticketFinancialStatus] ?? row.ticketFinancialStatus}
+                                  </Badge>
+                                ) : null}
+                              </span>
+                            </div>
+                            {!cancelled && row.ticketLogisticsStatus === "ORDERED" ? (
+                              <CancelAssignmentDialog
+                                assignmentId={row.id}
+                                purchaseId={purchase.id}
+                                summary={`${row.clientName}: ${row.quantity} pza × ${formatMoney(row.unit_price_cents)} (ticket ${row.ticketNumber ?? "—"})`}
+                              />
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+          <dl className="shopper-totals shopper-totals-wide" style={{ marginTop: 12 }}>
+            <div className="shopper-totals-strong">
+              <dt>Costo total (= lo que le debes al shopper)</dt>
+              <dd>{formatMoney(allItems.reduce((sum, item) => sum + (item.line_cost_mxn_cents ?? 0), 0))}</dd>
+            </div>
+            {canAssign ? (
+              <>
+                <div>
+                  <dt>Vendido a clientas (asignaciones activas)</dt>
+                  <dd>{formatMoney(soldCents)}</dd>
+                </div>
+                <div>
+                  <dt>Costo de lo vendido</dt>
+                  <dd>{formatMoney(soldCostCents)}</dd>
+                </div>
+                <div>
+                  <dt>Utilidad de lo vendido (sin paquetería)</dt>
+                  <dd>{formatMoney(soldCents - soldCostCents)}</dd>
+                </div>
+              </>
+            ) : null}
+          </dl>
           <p className="admin-hint" style={{ marginTop: 12 }}>
             Costo puesto en tienda: precio + su parte del tax del ticket + comisión, en pesos al TC de la compra. No incluye
             paquetería (se repartirá al crear el embarque). Con varias piezas, el costo por pieza va redondeado al centavo; el
-            costo total de la línea es el exacto.
+            costo total de la línea es el exacto. Al asignar, cada clienta recibe su ticket de venta con el precio que tú pongas;
+            lo que no asignes queda disponible.
           </p>
         </Card>
       ) : null}

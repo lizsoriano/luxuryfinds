@@ -388,6 +388,115 @@ export function computePurchaseConfirmation(input: {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 2: assigning purchased units to clients
+// ---------------------------------------------------------------------------
+
+export const ASSIGNMENT_MIGRATION_FILE = "database/migrations/011_purchase_assignments.sql";
+
+/** $10,000,000.00 per unit — anything above is a typo. */
+export const MAX_SALE_PRICE_CENTS = 1_000_000_000;
+
+/**
+ * Frozen cost (MXN centavos) of assigning `quantity` units of a line, given the
+ * ACTIVE assignments it already has. Same formula as assign_purchase_item() in
+ * database/migrations/011_purchase_assignments.sql, which is the authority (it
+ * runs with the line locked); this copy lets the dialog show the cost and the
+ * margin before saving.
+ *
+ *   F(n) = floor(lineCost × n / lineQuantity), F(lineQuantity) = lineCost
+ *   cost = max(0, F(assigned + quantity) − cost already frozen in ACTIVE ones)
+ *
+ * Proportional by units with the rounding residue carried to the units assigned
+ * last; a fully assigned line adds up to exactly line_cost_mxn_cents and no cost
+ * is ever negative, whatever was assigned or cancelled before (see 011).
+ */
+export function assignmentCostMxnCents(input: {
+  lineCostMxnCents: number;
+  lineQuantity: number;
+  activeAssignedQuantity: number;
+  activeAssignedCostMxnCents: number;
+  quantity: number;
+}): number {
+  const { lineCostMxnCents, lineQuantity, activeAssignedQuantity, activeAssignedCostMxnCents, quantity } = input;
+  for (const value of [lineCostMxnCents, lineQuantity, activeAssignedQuantity, activeAssignedCostMxnCents, quantity]) {
+    if (!Number.isInteger(value) || value < 0) throw new Error("Datos de costo no válidos.");
+  }
+  if (lineQuantity < 1 || quantity < 1) throw new Error("Cantidad no válida.");
+  if (activeAssignedQuantity + quantity > lineQuantity) throw new Error("No hay tantas piezas disponibles.");
+  const after = activeAssignedQuantity + quantity;
+  const target =
+    after === lineQuantity ? lineCostMxnCents : Number((BigInt(lineCostMxnCents) * BigInt(after)) / BigInt(lineQuantity));
+  return Math.max(0, target - activeAssignedCostMxnCents);
+}
+
+export type AssignmentPreview = {
+  quantity: number;
+  unitPriceCents: number;
+  /** quantity × unit price: the ticket's agreed total. */
+  saleTotalCents: number;
+  /** Frozen cost of these units (assignmentCostMxnCents). */
+  costMxnCents: number;
+  profitCents: number;
+  /** Per piece, for display (may carry fractions of a centavo). */
+  unitCostMxnCents: number;
+  unitProfitCents: number;
+  /** Gross margin over the sale price; null when the price is 0. */
+  marginPercent: number | null;
+};
+
+export function previewAssignment(input: {
+  lineCostMxnCents: number;
+  lineQuantity: number;
+  activeAssignedQuantity: number;
+  activeAssignedCostMxnCents: number;
+  quantity: number;
+  unitPriceCents: number;
+}): AssignmentPreview {
+  const costMxnCents = assignmentCostMxnCents(input);
+  const saleTotalCents = input.unitPriceCents * input.quantity;
+  const profitCents = saleTotalCents - costMxnCents;
+  return {
+    quantity: input.quantity,
+    unitPriceCents: input.unitPriceCents,
+    saleTotalCents,
+    costMxnCents,
+    profitCents,
+    unitCostMxnCents: costMxnCents / input.quantity,
+    unitProfitCents: profitCents / input.quantity,
+    marginPercent: saleTotalCents > 0 ? (profitCents / saleTotalCents) * 100 : null,
+  };
+}
+
+/**
+ * The sale price as typed in pesos: "1250", "1,250.5", "$1,250.50". At most 2
+ * decimals, never negative. Same pesos→centavos conversion as the rest of the
+ * panel (lib/format.ts#parseMoneyToCents) after a stricter format check.
+ */
+export function parseSalePriceToCents(raw: unknown): { ok: true; value: number } | { ok: false; error: string } {
+  const typed = String(raw ?? "").trim().replace(/^\$\s*/, "");
+  if (!typed) return { ok: false, error: "Escribe el precio de venta por pieza en pesos (puede ser 0)." };
+  if (typed.startsWith("-")) return { ok: false, error: "El precio de venta no puede ser negativo." };
+  if (!/^(\d{1,3}(,\d{3})+|\d+)(\.\d{1,2})?$/.test(typed)) {
+    return { ok: false, error: "Escribe el precio en pesos con hasta 2 decimales (por ejemplo 1250 o 1,250.50)." };
+  }
+  const [whole, fraction = ""] = typed.replace(/,/g, "").split(".");
+  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+  if (!Number.isSafeInteger(cents)) return { ok: false, error: "Ese precio no es válido." };
+  if (cents > MAX_SALE_PRICE_CENTS) return { ok: false, error: "Ese precio es demasiado alto. Revísalo." };
+  return { ok: true, value: cents };
+}
+
+/** "3" -> 3; rejects 0, 1.5, "", text. `max` = units still available. */
+export function parseAssignQuantity(raw: unknown, max: number): { ok: true; value: number } | { ok: false; error: string } {
+  const typed = String(raw ?? "").trim();
+  if (!/^\d+$/.test(typed)) return { ok: false, error: "La cantidad debe ser un número entero (1, 2, 3…)." };
+  const value = Number(typed);
+  if (value < 1) return { ok: false, error: "La cantidad debe ser al menos 1." };
+  if (value > max) return { ok: false, error: max <= 0 ? "Ya no quedan piezas disponibles de este artículo." : `Solo quedan ${max} pieza(s) disponibles.` };
+  return { ok: true, value };
+}
+
+// ---------------------------------------------------------------------------
 // Formatting
 // ---------------------------------------------------------------------------
 

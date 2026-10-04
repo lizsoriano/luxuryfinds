@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { failure, ok, type ActionState } from "../../../lib/actions";
 import {
+  assignPurchaseItem,
   cancelPurchase,
+  cancelPurchaseAssignment,
   confirmPurchase,
   createPurchase,
   deleteItem,
@@ -210,6 +212,51 @@ export async function voidPaymentAction(_state: ActionState, formData: FormData)
     return ok("Abono anulado.");
   } catch (error) {
     return failure(describePurchaseError(error, "No fue posible anular el abono."));
+  }
+}
+
+/** Phase 2: an assignment creates/cancels a pedido + ticket, so those screens refresh too. */
+function revalidateAssignment(purchaseId?: string | null, orderId?: string | null) {
+  revalidate(purchaseId);
+  revalidatePath("/admin/compras/pendientes");
+  revalidatePath("/admin/pedidos");
+  if (orderId) revalidatePath(`/admin/pedidos/${orderId}`);
+  revalidatePath("/admin/en-camino");
+  revalidatePath("/admin/clientes");
+  revalidatePath("/admin/cobranza");
+}
+
+export async function assignPurchaseItemAction(_state: PurchaseActionState, formData: FormData): Promise<PurchaseActionState> {
+  try {
+    const actor = await requireAdminActor();
+    const result = await assignPurchaseItem({
+      adminId: actor.id,
+      purchaseItemId: field(formData, "itemId"),
+      clientId: field(formData, "clientId"),
+      quantity: field(formData, "quantity"),
+      unitPrice: field(formData, "unitPrice"),
+    });
+    if (!result.ok) return failure(result.error);
+    revalidateAssignment(result.purchaseId || field(formData, "purchaseId"), result.orderId);
+    return { ...ok(`Asignado. Se generó el ticket ${result.ticketNumber} para la clienta.`), id: result.orderId, label: result.ticketNumber };
+  } catch (error) {
+    return failure(describePurchaseError(error, "No fue posible asignar el artículo."));
+  }
+}
+
+export async function cancelAssignmentAction(_state: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const actor = await requireAdminActor();
+    const result = await cancelPurchaseAssignment({
+      adminId: actor.id,
+      assignmentId: field(formData, "assignmentId"),
+      reason: field(formData, "reason"),
+    });
+    if (!result.ok) return failure(result.error);
+    revalidateAssignment(result.purchaseId || field(formData, "purchaseId"), result.orderId);
+    return ok(`Asignación cancelada (ticket ${result.ticketNumber}). Las piezas vuelven a estar disponibles.`);
+  } catch (error) {
+    return failure(describePurchaseError(error, "No fue posible cancelar la asignación."));
   }
 }
 

@@ -84,12 +84,21 @@ const groups: NavGroup[] = [
         ],
       },
       // Buying in US stores through a shopper (phase 1: open, capture, square,
-      // confirm, pay). Next to Inventario because it is where stock comes from.
+      // confirm, pay; phase 2: assign to clients). Next to Inventario because it
+      // is where stock comes from.
       {
         label: "Compras con shopper",
         href: "/admin/compras",
         icon: "shopper",
         title: "Compras en tiendas de EE.UU. a través de tu shopper",
+        children: [
+          {
+            label: "Pendientes de envío",
+            href: "/admin/compras/pendientes",
+            icon: "inbound",
+            title: "Comprados con shopper, pendientes de envío: asignados y disponibles",
+          },
+        ],
       },
       { label: "Cotizaciones", href: "/admin/cotizaciones", icon: "quote" },
       { label: "Empleados", href: "/admin/empleados", icon: "users" },
@@ -167,7 +176,6 @@ function activeChildHref(pathname: string, children: NavItem[]) {
 }
 
 function NavLink({ item, pathname, onNavigate }: { item: NavItem; pathname: string; onNavigate: () => void }) {
-  const active = isActive(pathname, item.href);
   const branchActive = isBranchActive(pathname, item);
   // The branch you are standing in is open by default; the toggle is an
   // explicit override on top of that, so navigating re-opens the active branch
@@ -175,6 +183,9 @@ function NavLink({ item, pathname, onNavigate }: { item: NavItem; pathname: stri
   const [override, setOverride] = useState<boolean | null>(null);
   const expanded = override ?? branchActive;
   const activeChild = item.children?.length ? activeChildHref(pathname, item.children) : null;
+  // A child nested under its parent's path (/admin/compras/pendientes under
+  // /admin/compras) lights up only the child, not both.
+  const active = isActive(pathname, item.href) && !activeChild;
 
   if (!item.children?.length) {
     return (
