@@ -205,3 +205,30 @@ body{font-weight:400}
 .admin-inline-link{color:var(--terracotta);font-size:11px;font-weight:650;text-decoration:underline;text-underline-offset:2px}.admin-inline-link:hover{color:var(--terracotta-dark)}
 .admin-notice code{font-size:11px;padding:1px 5px;border-radius:6px;background:rgba(255,255,255,.7)}
 @media(prefers-reduced-motion:reduce){.admin-inline-spinner{animation-duration:2s}}
+.admin-data-table .admin-col-cost{width:156px;padding-left:6px;padding-right:6px}
+.admin-products-table th,.admin-products-table td{padding-left:8px;padding-right:8px}.admin-products-table .admin-cell-main{min-width:196px}.admin-products-table th:first-child,.admin-products-table td:first-child{padding-left:4px;padding-right:4px}
+.admin-inline-cost-row{display:flex;align-items:center;gap:4px}
+.admin-inline-cost .admin-inline-input{width:90px;padding-left:32px;padding-right:21px;font-size:12px}.admin-inline-cost .admin-inline-prefix{left:8px;font-size:11px}.admin-inline-cost .admin-inline-status{right:6px}
+.admin-inline-select{height:39px;width:58px;padding:0 2px 0 7px;border:1px solid var(--admin-border);border-radius:var(--radius-md);background:var(--white);color:var(--admin-text);font-size:12px;font-weight:600;cursor:pointer;outline:none}
+.admin-inline-select:hover:not(:disabled){border-color:#cfcfcf}.admin-inline-select:focus{border-color:var(--terracotta);box-shadow:0 0 0 3px var(--terracotta-tint)}.admin-inline-select:disabled{background:#f5f5f5;color:var(--admin-muted);cursor:not-allowed}
+.admin-inline-cost-mxn{color:var(--admin-muted);font-size:11px;font-weight:600;line-height:1.2;white-space:nowrap}.admin-inline-cost-mxn.is-hint{color:#835b2b}
+.admin-inline-cost .admin-inline-message{max-width:150px}
+.admin-list-meta{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;margin:0 0 12px}.admin-list-meta .admin-result-count{margin:0}
+.admin-cost-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12px;color:var(--admin-text)}
+.admin-cost-setting{position:relative;display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}.admin-cost-setting>label{font-weight:650;white-space:nowrap}
+.admin-cost-setting .admin-inline-input{height:34px}
+.admin-cost-setting[data-warn=true] .admin-inline-input{border-color:#d8b27c;background:rgba(185,133,69,.06)}
+.admin-cost-setting[data-status=saved] .admin-inline-input{border-color:var(--success)}.admin-cost-setting[data-status=saved] .admin-inline-status{color:var(--success)}
+.admin-cost-setting[data-status=error] .admin-inline-input{border-color:var(--danger);background:rgba(168,68,81,.05)}.admin-cost-setting[data-status=error] .admin-inline-status{color:var(--danger)}
+.admin-cost-setting-error{position:absolute;top:calc(100% + 2px);right:0;z-index:2;padding:1px 4px;border-radius:6px;background:var(--admin-bg);white-space:nowrap;color:var(--danger);font-size:11px;font-weight:600}
+.admin-cost-bar-sep{color:var(--admin-muted)}
+.admin-cost-bar-note{color:var(--admin-muted);font-size:11px}.admin-cost-bar-note.is-warn{color:#835b2b;font-weight:600}.admin-cost-bar-note code{font-size:11px;padding:1px 5px;border-radius:6px;background:rgba(185,133,69,.12)}
+.admin-public-toggle{display:inline-flex;flex-direction:column;align-items:flex-start;gap:4px}
+.admin-badge-button{min-height:24px;padding:7px 9px;border:0;font-family:inherit;cursor:pointer;transition:box-shadow 150ms ease,filter 150ms ease}
+.admin-badge-button:hover:not(:disabled){box-shadow:0 0 0 1px currentColor;filter:saturate(1.3)}
+.admin-badge-button:focus-visible{outline:2px solid var(--terracotta);outline-offset:2px}
+.admin-badge-button:disabled{cursor:progress;opacity:.75}
+.admin-public-toggle-error{min-width:96px;max-width:150px;color:var(--danger);font-size:11px;font-weight:600;line-height:1.35;white-space:normal}
+.admin-field-note{color:var(--admin-muted);font-size:10px;font-weight:500}.input-computed{background:#f5f5f5;color:var(--admin-muted);cursor:not-allowed}
+.admin-inline-field,.admin-public-toggle{position:relative}
+@media(max-width:760px){.admin-cost-bar-sep{display:none}}

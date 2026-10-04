@@ -19,6 +19,8 @@ type ExistingVariant = {
   sku: string | null;
   price_cents: number;
   cost_cents: number;
+  /** Set when the cost was calculated from a US store cost (migration 009). */
+  store_cost_usd_cents?: number | null;
   min_quantity: number;
   unit_label: string | null;
   stock: number;
@@ -384,7 +386,7 @@ export function ProductForm({
             type="number"
             min="0"
             max="100"
-            step="0.01"
+            step="0.001"
             defaultValue={String(product?.tax_rate_percent ?? 0)}
           />
 
@@ -475,15 +477,36 @@ export function ProductForm({
                     defaultValue={centsToInput(variant.price_cents)}
                     required
                   />
-                  <Input
-                    id={`variant-cost-${variant.id}`}
-                    name="variantCost"
-                    label="Costo"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    defaultValue={centsToInput(variant.cost_cents)}
-                  />
+                  {variant.store_cost_usd_cents !== null && variant.store_cost_usd_cents !== undefined ? (
+                    // Calculated from the USD cost in the Productos list: read-only here
+                    // so the two never disagree (the same value is posted back).
+                    <label className="field" htmlFor={`variant-cost-${variant.id}`}>
+                      <span>
+                        Costo <small className="admin-field-note">calculado desde el costo en USD</small>
+                      </span>
+                      <input
+                        className="input input-computed"
+                        id={`variant-cost-${variant.id}`}
+                        name="variantCost"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        readOnly
+                        title={`Calculado desde US$${centsToInput(variant.store_cost_usd_cents)}. Cámbialo desde la lista de productos.`}
+                        defaultValue={centsToInput(variant.cost_cents)}
+                      />
+                    </label>
+                  ) : (
+                    <Input
+                      id={`variant-cost-${variant.id}`}
+                      name="variantCost"
+                      label="Costo"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      defaultValue={centsToInput(variant.cost_cents)}
+                    />
+                  )}
                   <Input
                     id={`variant-min-${variant.id}`}
                     name="variantMinQuantity"
