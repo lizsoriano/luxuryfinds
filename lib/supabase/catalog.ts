@@ -1,4 +1,5 @@
 import { createAdminSupabaseClient } from "./admin";
+import { withInTransitFallback } from "./in-transit";
 
 export type CatalogType = "ON_DEMAND" | "IMMEDIATE";
 export type CatalogSort =
@@ -237,37 +238,47 @@ export async function getCatalogProducts(filters: CatalogFilters = {}) {
   let bestsellerRank: string[] | null = null;
   if (sort === "bestsellers") bestsellerRank = await rankByBestsellers();
 
-  let query = db
-    .from("products")
-    .select(PRODUCT_SELECT, { count: "exact" })
-    .eq("is_public", true)
-    .eq("is_active", true)
-    .eq("product_variants.is_active", true);
+  // Merchandise the owner already bought but that is still on its way
+  // (products.in_transit, migration 008) is not available for immediate
+  // delivery yet, so it stays out of the public listings until she marks it
+  // received. Before migration 008 runs the column does not exist and nothing
+  // can be in transit: withInTransitFallback re-runs the very same query without
+  // that filter, so the public catalogue never breaks on a pending migration.
+  const buildQuery = (filterInTransit: boolean) => {
+    let query = db
+      .from("products")
+      .select(PRODUCT_SELECT, { count: "exact" })
+      .eq("is_public", true)
+      .eq("is_active", true)
+      .eq("product_variants.is_active", true);
 
-  if (catalogType) query = query.eq("catalog_type", catalogType);
-  if (categoryId) query = query.eq("category_id", categoryId);
-  if (brandId) query = query.eq("brand_id", brandId);
-  if (bestsellerRank) query = query.in("id", bestsellerRank.length ? bestsellerRank : ["00000000-0000-0000-0000-000000000000"]);
-  if (search) {
-    const term = `%${search}%`;
-    const parts = [`name.ilike.${term}`];
-    if (searchBrandIds.length) parts.push(`brand_id.in.(${searchBrandIds.join(",")})`);
-    query = query.or(parts.join(","));
-  }
+    if (filterInTransit) query = query.eq("in_transit", false);
+    if (catalogType) query = query.eq("catalog_type", catalogType);
+    if (categoryId) query = query.eq("category_id", categoryId);
+    if (brandId) query = query.eq("brand_id", brandId);
+    if (bestsellerRank) query = query.in("id", bestsellerRank.length ? bestsellerRank : ["00000000-0000-0000-0000-000000000000"]);
+    if (search) {
+      const term = `%${search}%`;
+      const parts = [`name.ilike.${term}`];
+      if (searchBrandIds.length) parts.push(`brand_id.in.(${searchBrandIds.join(",")})`);
+      query = query.or(parts.join(","));
+    }
 
-  if (sort === "name_asc") query = query.order("name", { ascending: true });
-  else if (sort === "name_desc") query = query.order("name", { ascending: false });
-  else if (!bestsellerRank) query = query.order("created_at", { ascending: false });
+    if (sort === "name_asc") query = query.order("name", { ascending: true });
+    else if (sort === "name_desc") query = query.order("name", { ascending: false });
+    else if (!bestsellerRank) query = query.order("created_at", { ascending: false });
 
-  // Bestsellers rank comes from a separate aggregate, not a column Postgres can
-  // ORDER BY - fetch every match (bounded by the rank's own cap) and sort/page
-  // in memory instead of relying on .range() for this one sort.
-  if (!bestsellerRank) {
-    const from = (page - 1) * PAGE_SIZE;
-    query = query.range(from, from + PAGE_SIZE - 1);
-  }
+    // Bestsellers rank comes from a separate aggregate, not a column Postgres can
+    // ORDER BY - fetch every match (bounded by the rank's own cap) and sort/page
+    // in memory instead of relying on .range() for this one sort.
+    if (!bestsellerRank) {
+      const from = (page - 1) * PAGE_SIZE;
+      query = query.range(from, from + PAGE_SIZE - 1);
+    }
+    return query;
+  };
 
-  const { data, error, count } = await query;
+  const { data, error, count } = await withInTransitFallback(buildQuery);
   if (error) throw new Error(`No fue posible cargar el catálogo: ${error.message}`);
 
   let products = ((data ?? []) as unknown as ProductRow[]).flatMap((row, index) => {

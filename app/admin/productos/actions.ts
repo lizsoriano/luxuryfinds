@@ -3,7 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { describeError, failure, ok, type ActionState } from "../../../lib/actions";
 import { parseMoneyToCents, parseQuantity, slugify } from "../../../lib/format";
-import { ensureUniqueSlug } from "../../../lib/supabase/admin-catalog";
+import {
+  QUICK_STOCK_REASON,
+  ensureUniqueSlug,
+  markProductReceived,
+  updateVariantQuick,
+} from "../../../lib/supabase/admin-catalog";
+import { IN_TRANSIT_MIGRATION_FILE } from "../../../lib/supabase/in-transit";
 import {
   MAX_PRODUCT_IMAGES,
   PRODUCT_IMAGE_BUCKET,
@@ -26,10 +32,11 @@ type ProductKind = "SIMPLE" | "VARIANTS" | "MEASURED";
 
 /**
  * products.weekly_plan_eligible only exists once
- * database/migrations/004_weekly_plan_checkout.sql has been applied. Rather
- * than fail the whole create/update when it hasn't, retry once without that
- * one field so the rest of the product still saves, and tell the admin why
- * the checkbox didn't stick.
+ * database/migrations/004_weekly_plan_checkout.sql has been applied, and
+ * products.in_transit once database/migrations/008_products_in_transit.sql has.
+ * Rather than fail the whole create/update when one is missing, retry without
+ * the missing field(s) so the rest of the product still saves, and tell the
+ * admin why the switch didn't stick (only when it was actually switched on).
  */
 function isMissingColumnError(message: string) {
   return message.includes("does not exist") || message.includes("schema cache") || message.includes("Could not find the");
@@ -38,8 +45,62 @@ function isMissingColumnError(message: string) {
 const WEEKLY_PLAN_MIGRATION_WARNING =
   " El plan semanal no se guardó: aplica database/migrations/004_weekly_plan_checkout.sql en Supabase.";
 
+/**
+ * Saving merchandise as "en camino" without the column would quietly turn it
+ * into regular, sellable Entrega inmediata stock — so that one is refused
+ * instead of dropped. (in_transit = false is dropped silently: it is exactly
+ * what every product already is before the migration.)
+ */
+const IN_TRANSIT_MIGRATION_BLOCKED = `No se guardó: para marcar mercancía “en camino” primero aplica ${IN_TRANSIT_MIGRATION_FILE} en el editor SQL de Supabase. Si ya la tienes en la tienda, desmarca “Viene en camino”.`;
+
+type OptionalColumn = { column: string; value: unknown; warning: string; blockIfMissing?: string };
+
+async function writeWithOptionalColumns<R extends { error: { message: string } | null }>(
+  write: (optionalFields: Record<string, unknown>) => PromiseLike<R>,
+  optional: OptionalColumn[],
+): Promise<{ result: R; warning: string; blocked: string | null }> {
+  let remaining = optional;
+  for (;;) {
+    const result = await write(Object.fromEntries(remaining.map((field) => [field.column, field.value])));
+    const message = result.error?.message ?? "";
+    if (!result.error || !remaining.length || !isMissingColumnError(message)) {
+      const dropped = optional.filter((field) => !remaining.includes(field));
+      return { result, warning: dropped.map((field) => field.warning).join(""), blocked: null };
+    }
+    // Drop the column(s) the error names; if it names none of ours, drop them all.
+    const named = remaining.filter((field) => message.includes(field.column));
+    const dropping = named.length ? named : remaining;
+    const blocking = dropping.find((field) => field.blockIfMissing);
+    if (blocking) return { result, warning: "", blocked: blocking.blockIfMissing ?? null };
+    remaining = remaining.filter((field) => !dropping.includes(field));
+  }
+}
+
+function optionalProductColumns(weeklyPlanEligible: boolean, inTransit: boolean): OptionalColumn[] {
+  return [
+    {
+      column: "weekly_plan_eligible",
+      value: weeklyPlanEligible,
+      warning: weeklyPlanEligible ? WEEKLY_PLAN_MIGRATION_WARNING : "",
+    },
+    {
+      column: "in_transit",
+      value: inTransit,
+      warning: "",
+      blockIfMissing: inTransit ? IN_TRANSIT_MIGRATION_BLOCKED : undefined,
+    },
+  ];
+}
+
+/** Only Entrega inmediata merchandise can be "en camino"; ON_DEMAND is always false. */
+function readInTransit(formData: FormData, catalogType: "ON_DEMAND" | "IMMEDIATE") {
+  return catalogType === "IMMEDIATE" && formData.get("inTransit") === "on";
+}
+
 function revalidateCatalog() {
   revalidatePath("/admin/productos");
+  revalidatePath("/admin/productos/entrega-inmediata");
+  revalidatePath("/admin/productos/en-camino");
   revalidatePath("/admin/inventario");
   revalidatePath("/admin/vender");
   revalidatePath("/catalogo");
@@ -204,6 +265,7 @@ export async function createProductAction(_state: ActionState, formData: FormDat
     const catalogType = String(formData.get("catalogType") ?? "IMMEDIATE") === "ON_DEMAND" ? "ON_DEMAND" : "IMMEDIATE";
 
     const weeklyPlanEligible = formData.get("weeklyPlanEligible") === "on";
+    const inTransit = readInTransit(formData, catalogType);
     const productFields = {
       name,
       slug,
@@ -218,16 +280,16 @@ export async function createProductAction(_state: ActionState, formData: FormDat
       created_by_admin_id: actor.id,
     };
 
-    let weeklyPlanWarning = "";
-    let insertResult = await db
-      .from("products")
-      .insert({ ...productFields, weekly_plan_eligible: weeklyPlanEligible })
-      .select("id")
-      .single();
-    if (insertResult.error && isMissingColumnError(insertResult.error.message)) {
-      insertResult = await db.from("products").insert(productFields).select("id").single();
-      if (weeklyPlanEligible) weeklyPlanWarning = WEEKLY_PLAN_MIGRATION_WARNING;
-    }
+    const { result: insertResult, warning: migrationWarning, blocked } = await writeWithOptionalColumns(
+      (optionalFields) =>
+        db
+          .from("products")
+          .insert({ ...productFields, ...optionalFields })
+          .select("id")
+          .single(),
+      optionalProductColumns(weeklyPlanEligible, inTransit),
+    );
+    if (blocked) return failure(blocked);
     const { data: product, error: productError } = insertResult;
     if (productError) return failure(describeError(new Error(productError.message), "No fue posible crear el producto."));
 
@@ -296,10 +358,10 @@ export async function createProductAction(_state: ActionState, formData: FormDat
       action: "PRODUCT_CREATED",
       entityType: "products",
       entityId: productId,
-      newData: { name, slug, kind, variants: parsed.variants.length },
+      newData: { name, slug, kind, variants: parsed.variants.length, catalog_type: catalogType, in_transit: inTransit },
     });
     revalidateCatalog();
-    return ok(`Producto "${name}" creado.${imageWarning}${weeklyPlanWarning}`);
+    return ok(`Producto "${name}" creado.${imageWarning}${migrationWarning}`);
   } catch (error) {
     return failure(describeError(error, "No fue posible crear el producto."));
   }
@@ -331,27 +393,29 @@ export async function updateProductAction(_state: ActionState, formData: FormDat
       previous.name === name ? previous.slug : await ensureUniqueSlug("products", slugify(name), id);
 
     const weeklyPlanEligible = formData.get("weeklyPlanEligible") === "on";
+    const catalogType = String(formData.get("catalogType") ?? "IMMEDIATE") === "ON_DEMAND" ? "ON_DEMAND" : "IMMEDIATE";
+    const inTransit = readInTransit(formData, catalogType);
     const productUpdate = {
       name,
       slug,
       description: String(formData.get("description") ?? "").trim() || null,
       internal_code: String(formData.get("internalCode") ?? "").trim() || null,
       category_id: categoryId,
-      catalog_type: String(formData.get("catalogType") ?? "IMMEDIATE") === "ON_DEMAND" ? "ON_DEMAND" : "IMMEDIATE",
+      catalog_type: catalogType,
       tax_rate_percent: taxRate,
       is_public: formData.get("isPublic") === "on",
       updated_at: new Date().toISOString(),
     };
 
-    let weeklyPlanWarning = "";
-    let updateResult = await db
-      .from("products")
-      .update({ ...productUpdate, weekly_plan_eligible: weeklyPlanEligible })
-      .eq("id", id);
-    if (updateResult.error && isMissingColumnError(updateResult.error.message)) {
-      updateResult = await db.from("products").update(productUpdate).eq("id", id);
-      if (weeklyPlanEligible) weeklyPlanWarning = WEEKLY_PLAN_MIGRATION_WARNING;
-    }
+    const { result: updateResult, warning: migrationWarning, blocked } = await writeWithOptionalColumns(
+      (optionalFields) =>
+        db
+          .from("products")
+          .update({ ...productUpdate, ...optionalFields })
+          .eq("id", id),
+      optionalProductColumns(weeklyPlanEligible, inTransit),
+    );
+    if (blocked) return failure(blocked);
     const { error } = updateResult;
     if (error) return failure(describeError(new Error(error.message), "No fue posible actualizar el producto."));
 
@@ -415,11 +479,11 @@ export async function updateProductAction(_state: ActionState, formData: FormDat
       entityType: "products",
       entityId: id,
       previousData: previous,
-      newData: { name, slug, category_id: categoryId, tax_rate_percent: taxRate },
+      newData: { name, slug, category_id: categoryId, tax_rate_percent: taxRate, catalog_type: catalogType, in_transit: inTransit },
     });
     revalidateCatalog();
     revalidatePath(`/admin/productos/${id}`);
-    return ok(`Producto actualizado.${imageWarning}${weeklyPlanWarning}`);
+    return ok(`Producto actualizado.${imageWarning}${migrationWarning}`);
   } catch (error) {
     return failure(describeError(error, "No fue posible actualizar el producto."));
   }
@@ -606,5 +670,67 @@ export async function deleteProductImageAction(_state: ActionState, formData: Fo
     return ok("Imagen eliminada.");
   } catch (error) {
     return failure(describeError(error, "No fue posible eliminar la imagen."));
+  }
+}
+
+/**
+ * Inline Stock / Precio inputs of the Productos lists. Only checks the session
+ * and parses the field; the rule (price in cents, stock as a ledger adjustment
+ * computed against the stock read at save time) lives in updateVariantQuick.
+ */
+export async function updateVariantQuickAction(_state: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const actor = await requireAdminActor();
+    const variantId = String(formData.get("variantId") ?? "");
+    const field = String(formData.get("field") ?? "");
+    if (field !== "price" && field !== "stock") return failure("Campo no válido.");
+
+    const raw = formData.get("value");
+    const value = field === "price" ? parseMoneyToCents(raw) : parseQuantity(raw);
+    if (value === null) return failure(field === "price" ? "Escribe un precio válido." : "Escribe una cantidad válida.");
+
+    const result = await updateVariantQuick({ variantId, field, value, adminId: actor.id });
+    if (!result.ok) return failure(result.error);
+    if (!result.changed) return ok("Sin cambios.");
+
+    await logActivity({
+      adminUserId: actor.id,
+      action: field === "price" ? "PRODUCT_PRICE_QUICK_EDIT" : "INVENTORY_ADJUSTMENT",
+      entityType: field === "price" ? "product_variants" : "inventory_movements",
+      entityId: result.variantId,
+      previousData: field === "price" ? { price_cents: result.previous } : { stock: result.previous },
+      newData:
+        field === "price"
+          ? { price_cents: result.next, productId: result.productId }
+          : { stock: result.next, quantityDelta: result.delta, reason: QUICK_STOCK_REASON, productId: result.productId },
+    });
+    revalidateCatalog();
+    return ok(field === "price" ? "Precio guardado." : "Cantidad guardada.");
+  } catch (error) {
+    return failure(describeError(error, "No fue posible guardar el cambio."));
+  }
+}
+
+/** "Marcar como recibido" on Productos en camino: the merchandise becomes Entrega inmediata stock. */
+export async function markProductReceivedAction(_state: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const actor = await requireAdminActor();
+    const id = String(formData.get("id") ?? "");
+    const result = await markProductReceived(id);
+    if (!result.ok) return failure(result.error);
+
+    await logActivity({
+      adminUserId: actor.id,
+      action: "PRODUCT_RECEIVED",
+      entityType: "products",
+      entityId: id,
+      previousData: { in_transit: true },
+      newData: { in_transit: false },
+    });
+    revalidateCatalog();
+    revalidatePath(`/admin/productos/${id}`);
+    return ok(`"${result.name}" pasó a Entrega inmediata.`);
+  } catch (error) {
+    return failure(describeError(error, "No fue posible marcar el producto como recibido."));
   }
 }

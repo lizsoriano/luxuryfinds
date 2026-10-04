@@ -1,5 +1,6 @@
 import { getAdminSession } from "../../../../lib/supabase/auth";
-import { listProductsForExport } from "../../../../lib/supabase/admin-catalog";
+import { isProductSegment, listProductsForExport } from "../../../../lib/supabase/admin-catalog";
+import { SEGMENTS } from "../segments";
 
 export const dynamic = "force-dynamic";
 
@@ -15,11 +16,24 @@ export async function GET(request: Request) {
   }
 
   const url = new URL(request.url);
-  const rows = await listProductsForExport({
-    search: url.searchParams.get("q") ?? undefined,
-    categoryId: url.searchParams.get("categoria") ?? undefined,
-    includeArchived: url.searchParams.get("archivados") === "1",
-  });
+  // Each list exports only its own section; without `segmento` (old links) it
+  // keeps exporting everything, as before.
+  const rawSegment = url.searchParams.get("segmento");
+  const segment = isProductSegment(rawSegment) ? rawSegment : undefined;
+  let rows;
+  try {
+    rows = await listProductsForExport({
+      search: url.searchParams.get("q") ?? undefined,
+      categoryId: url.searchParams.get("categoria") ?? undefined,
+      includeArchived: url.searchParams.get("archivados") === "1",
+      segment,
+    });
+  } catch (error) {
+    return new Response(error instanceof Error ? error.message : "No fue posible exportar.", {
+      status: 503,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
 
   const header = ["Producto", "Código", "Categoría", "Tipo", "Variante", "SKU", "Stock", "Precio", "Costo", "Estado"];
   const lines = [header.join(",")];
@@ -36,7 +50,7 @@ export async function GET(request: Request) {
   return new Response(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="productos-luxury-finds.csv"`,
+      "Content-Disposition": `attachment; filename="${segment ? SEGMENTS[segment].exportFileName : "productos"}-luxury-finds.csv"`,
     },
   });
 }

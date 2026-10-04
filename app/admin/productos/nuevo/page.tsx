@@ -1,11 +1,19 @@
 import { Card } from "../../../../components/ui/Card";
 import { PageHeader } from "../../../../components/ui/PageHeader";
-import { listActiveCategories } from "../../../../lib/supabase/admin-catalog";
+import { isProductSegment, listActiveCategories } from "../../../../lib/supabase/admin-catalog";
 import { ProductForm } from "../ProductForm";
+import { SEGMENTS } from "../segments";
 
 export const dynamic = "force-dynamic";
 
-export default async function NewProductPage() {
+export default async function NewProductPage({ searchParams }: { searchParams: Promise<{ tipo?: string }> }) {
+  // "Agregar producto" from each Inventario list preselects that list's Disponibilidad.
+  const { tipo } = await searchParams;
+  const segment = isProductSegment(tipo) ? tipo : null;
+  const defaults = segment
+    ? { catalogType: segment === "online" ? ("ON_DEMAND" as const) : ("IMMEDIATE" as const), inTransit: segment === "en-camino" }
+    : undefined;
+
   let categories: Array<{ id: string; name: string }> = [];
   let loadError: string | null = null;
   try {
@@ -29,7 +37,11 @@ export default async function NewProductPage() {
         </Card>
       ) : null}
       <div style={{ marginTop: 24 }}>
-        <ProductForm categories={categories} />
+        <ProductForm
+          categories={categories}
+          defaults={defaults}
+          backHref={segment ? SEGMENTS[segment].path : SEGMENTS.online.path}
+        />
       </div>
     </main>
   );
