@@ -7,8 +7,14 @@ import { Badge } from "../../../components/ui/Badge";
 import { ConfirmAction } from "../../../components/admin/ConfirmAction";
 import { IconAction } from "../../../components/admin/IconAction";
 import { formatMoney, formatQuantity } from "../../../lib/format";
-import { bulkArchiveProductsAction, duplicateProductAction, setProductActiveAction } from "./actions";
-import type { ProductListRow } from "../../../lib/supabase/admin-catalog";
+import {
+  bulkArchiveProductsAction,
+  duplicateProductAction,
+  markProductReceivedAction,
+  setProductActiveAction,
+} from "./actions";
+import type { ProductListRow, ProductSegment } from "../../../lib/supabase/admin-catalog";
+import { InlineVariantField } from "./InlineVariantField";
 
 const PencilIcon = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -27,6 +33,13 @@ const TrashIcon = () => (
     <path d="M4 7h16" strokeLinecap="round" />
     <path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" strokeLinecap="round" strokeLinejoin="round" />
     <path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" />
+  </svg>
+);
+const ReceivedIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M3 7l9-4 9 4-9 4-9-4Z" strokeLinejoin="round" />
+    <path d="M3 7v10l9 4 9-4V7" strokeLinejoin="round" />
+    <path d="m8.5 13.5 2.5 2.5 4.5-5" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 const RestoreIcon = () => (
@@ -73,7 +86,64 @@ function BulkBar({ selected, onClear }: { selected: string[]; onClear: () => voi
   );
 }
 
-export function ProductsTable({ products }: { products: ProductListRow[] }) {
+/**
+ * Stock and Precio are edited in place for single-variant products (one price,
+ * one stock: unambiguous). A product with several variants can have a different
+ * price per tone/size, so it shows its total and price range and links to the
+ * full form instead.
+ */
+function StockCell({ product }: { product: ProductListRow }) {
+  const [variant] = product.variants;
+  if (product.variants.length !== 1) {
+    return (
+      <span className="admin-inline-readonly">
+        {product.variants.length ? formatQuantity(product.stock, product.variants[0]?.unit_label) : "—"}
+      </span>
+    );
+  }
+  return (
+    <InlineVariantField
+      variantId={variant.id}
+      field="stock"
+      value={variant.stock}
+      allowsDecimal={product.product_kind === "MEASURED"}
+      unitLabel={variant.unit_label}
+      disabled={!product.is_active}
+      label={`Cantidad de ${product.name}`}
+    />
+  );
+}
+
+function PriceCell({ product }: { product: ProductListRow }) {
+  const [variant] = product.variants;
+  if (product.variants.length !== 1) {
+    return (
+      <span className="admin-inline-readonly">
+        {!product.variants.length
+          ? "Sin variantes"
+          : product.priceCents === product.maxPriceCents
+            ? formatMoney(product.priceCents)
+            : `${formatMoney(product.priceCents)} – ${formatMoney(product.maxPriceCents)}`}
+        {product.variants.length ? (
+          <Link href={`/admin/productos/${product.id}`} className="admin-inline-link">
+            Editar variantes
+          </Link>
+        ) : null}
+      </span>
+    );
+  }
+  return (
+    <InlineVariantField
+      variantId={variant.id}
+      field="price"
+      value={variant.price_cents}
+      disabled={!product.is_active}
+      label={`Precio de ${product.name}`}
+    />
+  );
+}
+
+export function ProductsTable({ products, segment }: { products: ProductListRow[]; segment?: ProductSegment }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const allSelected = products.length > 0 && products.every((p) => selected.has(p.id));
 
@@ -108,8 +178,8 @@ export function ProductsTable({ products }: { products: ProductListRow[] }) {
               <th>Producto</th>
               <th>Categoría</th>
               <th>Tipo</th>
-              <th className="numeric">Stock</th>
-              <th className="numeric">Precio</th>
+              <th className="numeric admin-col-stock">Stock</th>
+              <th className="numeric admin-col-price">Precio</th>
               <th>Catálogo</th>
               <th aria-label="Acciones" />
             </tr>
@@ -148,8 +218,12 @@ export function ProductsTable({ products }: { products: ProductListRow[] }) {
                     {product.product_kind === "VARIANTS" ? "Variantes" : product.product_kind === "MEASURED" ? "Medidas" : "Básico"}
                   </Badge>
                 </td>
-                <td className="numeric">{formatQuantity(product.stock, product.variants[0]?.unit_label)}</td>
-                <td className="numeric">{formatMoney(product.priceCents)}</td>
+                <td className="numeric admin-col-stock">
+                  <StockCell product={product} />
+                </td>
+                <td className="numeric admin-col-price">
+                  <PriceCell product={product} />
+                </td>
                 <td>
                   {!product.is_active ? (
                     <Badge tone="neutral">Archivado</Badge>
@@ -161,6 +235,18 @@ export function ProductsTable({ products }: { products: ProductListRow[] }) {
                 </td>
                 <td>
                   <div className="admin-row-actions">
+                    {segment === "en-camino" && product.is_active ? (
+                      <ConfirmAction
+                        action={markProductReceivedAction}
+                        fields={{ id: product.id }}
+                        triggerLabel="Marcar como recibido"
+                        triggerIcon={<ReceivedIcon />}
+                        title="Marcar como recibido"
+                        description={`"${product.name}" ya llegó a la tienda: pasa a Productos entrega inmediata y desde ese momento se puede vender (y, si está visible, aparece en el sitio). Revisa que la cantidad sea la que realmente recibiste.`}
+                        confirmLabel="Ya lo recibí"
+                        variant="primary"
+                      />
+                    ) : null}
                     <Link href={`/admin/productos/${product.id}`} className="admin-icon-btn" aria-label="Editar" title="Editar">
                       <PencilIcon />
                     </Link>

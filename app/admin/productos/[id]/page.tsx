@@ -6,6 +6,7 @@ import { PageHeader } from "../../../../components/ui/PageHeader";
 import { getProductDetail, listActiveCategories } from "../../../../lib/supabase/admin-catalog";
 import { deleteProductImageAction } from "../actions";
 import { ProductForm } from "../ProductForm";
+import { SEGMENTS, segmentOf } from "../segments";
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +74,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
         <ProductForm
           categories={categories}
           existingImageCount={product.images.length}
+          backHref={SEGMENTS[segmentOf(product)].path}
           product={{
             id: product.id,
             name: product.name,
@@ -84,6 +86,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
             tax_rate_percent: product.tax_rate_percent,
             is_public: product.is_public,
             weekly_plan_eligible: product.weekly_plan_eligible,
+            in_transit: product.in_transit,
             variants: product.variants.map((variant) => ({
               id: variant.id,
               name: variant.name,

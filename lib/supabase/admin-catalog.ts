@@ -1,5 +1,7 @@
+import { describeError } from "../actions";
 import { adminDb, PRODUCT_IMAGE_BUCKET } from "./business";
 import { createAdminSupabaseClient } from "./admin";
+import { IN_TRANSIT_UNAVAILABLE_MESSAGE, isMissingInTransitColumn, withInTransitFallback } from "./in-transit";
 
 export type CategoryRow = {
   id: string;
@@ -19,11 +21,26 @@ export type CategoryRow = {
  * they simply treat every product as not-yet-eligible until it has.
  */
 export async function getWeeklyPlanEligibility(productIds: string[]): Promise<Map<string, boolean>> {
+  return getOptionalFlag("weekly_plan_eligible", productIds);
+}
+
+/**
+ * `products.in_transit` (database/migrations/008_products_in_transit.sql) is
+ * read the same way, for the same reason: until the migration runs, every
+ * product simply reads as "not in transit".
+ */
+export async function getInTransitFlags(productIds: string[]): Promise<Map<string, boolean>> {
+  return getOptionalFlag("in_transit", productIds);
+}
+
+async function getOptionalFlag(column: "weekly_plan_eligible" | "in_transit", productIds: string[]) {
   const map = new Map<string, boolean>();
   if (!productIds.length) return map;
-  const { data, error } = await adminDb().from("products").select("id, weekly_plan_eligible").in("id", productIds);
+  const { data, error } = await adminDb().from("products").select(`id, ${column}`).in("id", productIds);
   if (error) return map;
-  for (const row of data ?? []) map.set(row.id as string, Boolean(row.weekly_plan_eligible));
+  for (const row of (data ?? []) as unknown as Array<Record<string, unknown>>) {
+    map.set(row.id as string, Boolean(row[column]));
+  }
   return map;
 }
 
@@ -105,6 +122,8 @@ export async function getStockFor(variantIds: string[]): Promise<StockMap> {
   return map;
 }
 
+export type ProductListVariant = VariantRow & { stock: number };
+
 export type ProductListRow = {
   id: string;
   name: string;
@@ -116,16 +135,35 @@ export type ProductListRow = {
   catalog_type: "ON_DEMAND" | "IMMEDIATE";
   categoryName: string | null;
   imageUrl: string | null;
-  variants: VariantRow[];
+  /** Active variants only, each with its own available stock (from the same single stock read as the totals). */
+  variants: ProductListVariant[];
   stock: number;
   minQuantity: number;
+  /** Cheapest active variant. */
   priceCents: number;
+  /** Most expensive active variant (equals priceCents for a single-variant product). */
+  maxPriceCents: number;
   costCents: number;
 };
 
 const PAGE_SIZE = 20;
 
 export type ProductSort = "recent" | "oldest" | "name_asc" | "name_desc";
+
+/**
+ * The three Inventario lists the owner asked for:
+ *  - online     catalogue sold by order (catalog_type ON_DEMAND, the synced stores)
+ *  - inmediata  stock she has in hand (IMMEDIATE and not in transit)
+ *  - en-camino  stock she already bought that is on its way (IMMEDIATE + in_transit)
+ * No segment means every product (Inventario still uses it that way).
+ */
+export type ProductSegment = "online" | "inmediata" | "en-camino";
+
+export const PRODUCT_SEGMENTS: readonly ProductSegment[] = ["online", "inmediata", "en-camino"];
+
+export function isProductSegment(value: unknown): value is ProductSegment {
+  return typeof value === "string" && (PRODUCT_SEGMENTS as readonly string[]).includes(value);
+}
 
 export type ProductQuery = {
   search?: string;
@@ -135,7 +173,45 @@ export type ProductQuery = {
   page?: number;
   pageSize?: number;
   sort?: ProductSort;
+  segment?: ProductSegment;
 };
+
+/**
+ * Applies the segment's catalog_type filter and, when `filterInTransit` is set,
+ * its in_transit filter. Generic over the PostgREST builder so listProducts and
+ * the CSV export share exactly the same rule.
+ */
+function applySegment<B extends { eq: (column: string, value: unknown) => B }>(
+  builder: B,
+  segment: ProductSegment | undefined,
+  filterInTransit: boolean,
+): B {
+  if (segment === "online") return builder.eq("catalog_type", "ON_DEMAND");
+  if (segment === "inmediata") {
+    const immediate = builder.eq("catalog_type", "IMMEDIATE");
+    return filterInTransit ? immediate.eq("in_transit", false) : immediate;
+  }
+  if (segment === "en-camino") return builder.eq("catalog_type", "IMMEDIATE").eq("in_transit", true);
+  return builder;
+}
+
+/**
+ * Runs a segment query. "inmediata" falls back to "every IMMEDIATE product" when
+ * migration 008 is missing (nothing can be in transit yet, so that is exact);
+ * "en-camino" cannot be answered at all without the column and reports
+ * `unavailable` instead of failing.
+ */
+async function runSegmentQuery<R extends { error: { message: string } | null }>(
+  segment: ProductSegment | undefined,
+  run: (filterInTransit: boolean) => PromiseLike<R>,
+): Promise<{ result: R; unavailable: boolean }> {
+  if (segment === "inmediata") return { result: await withInTransitFallback(run), unavailable: false };
+  const result = await run(segment === "en-camino");
+  if (segment === "en-camino" && result.error && isMissingInTransitColumn(result.error.message)) {
+    return { result, unavailable: true };
+  }
+  return { result, unavailable: false };
+}
 
 function relationName(value: unknown): string | null {
   if (!value) return null;
@@ -144,35 +220,52 @@ function relationName(value: unknown): string | null {
 }
 
 export async function listProducts(query: ProductQuery = {}) {
-  const { search, categoryId, stockFilter = "all", includeArchived = false, sort = "recent" } = query;
+  const { search, categoryId, stockFilter = "all", includeArchived = false, sort = "recent", segment } = query;
   const pageSize = query.pageSize ?? PAGE_SIZE;
   const page = Math.max(1, query.page ?? 1);
   const db = adminDb();
-
-  let builder = db
-    .from("products")
-    .select(
-      `id, name, slug, internal_code, is_public, is_active, product_kind, catalog_type, created_at,
-       categories(name),
-       product_variants(id, product_id, name, sku, barcode, unit_label, price_cents, cost_cents, min_quantity, is_active, attributes),
-       product_images(storage_key, sort_order)`,
-      { count: "exact" },
-    );
-
-  if (!includeArchived) builder = builder.eq("is_active", true);
-  if (categoryId) builder = builder.eq("category_id", categoryId);
-  if (search) builder = builder.or(`name.ilike.%${search}%,internal_code.ilike.%${search}%`);
-
   const from = (page - 1) * pageSize;
-  builder =
-    sort === "oldest"
-      ? builder.order("created_at", { ascending: true })
-      : sort === "name_asc"
-        ? builder.order("name", { ascending: true })
-        : sort === "name_desc"
-          ? builder.order("name", { ascending: false })
-          : builder.order("created_at", { ascending: false });
-  const { data, error, count } = await builder.range(from, from + pageSize - 1);
+
+  const run = (filterInTransit: boolean) => {
+    let builder = db
+      .from("products")
+      .select(
+        `id, name, slug, internal_code, is_public, is_active, product_kind, catalog_type, created_at,
+         categories(name),
+         product_variants(id, product_id, name, sku, barcode, unit_label, price_cents, cost_cents, min_quantity, is_active, attributes),
+         product_images(storage_key, sort_order)`,
+        { count: "exact" },
+      );
+
+    if (!includeArchived) builder = builder.eq("is_active", true);
+    if (categoryId) builder = builder.eq("category_id", categoryId);
+    if (search) builder = builder.or(`name.ilike.%${search}%,internal_code.ilike.%${search}%`);
+    builder = applySegment(builder, segment, filterInTransit);
+
+    builder =
+      sort === "oldest"
+        ? builder.order("created_at", { ascending: true })
+        : sort === "name_asc"
+          ? builder.order("name", { ascending: true })
+          : sort === "name_desc"
+            ? builder.order("name", { ascending: false })
+            : builder.order("created_at", { ascending: false });
+    return builder.range(from, from + pageSize - 1);
+  };
+
+  const { result, unavailable } = await runSegmentQuery(segment, run);
+  if (unavailable) {
+    return {
+      products: [] as ProductListRow[],
+      page,
+      pageSize,
+      total: 0,
+      hasNextPage: false,
+      filtered: false,
+      unavailable: true,
+    };
+  }
+  const { data, error, count } = result;
   if (error) throw new Error(error.message);
 
   const rows = (data ?? []) as unknown as Array<{
@@ -200,6 +293,7 @@ export async function listProducts(query: ProductQuery = {}) {
       (best, variant) => (!best || variant.price_cents < best.price_cents ? variant : best),
       null,
     );
+    const priciest = variants.reduce((max, variant) => Math.max(max, Number(variant.price_cents ?? 0)), 0);
     return {
       id: row.id,
       name: row.name,
@@ -211,10 +305,11 @@ export async function listProducts(query: ProductQuery = {}) {
       catalog_type: row.catalog_type,
       categoryName: relationName(row.categories),
       imageUrl: productImageUrl(image?.storage_key),
-      variants,
+      variants: variants.map((variant) => ({ ...variant, stock: stock.get(variant.id) ?? 0 })),
       stock: totalStock,
       minQuantity: variants.reduce((sum, variant) => sum + Number(variant.min_quantity ?? 0), 0),
       priceCents: cheapest?.price_cents ?? 0,
+      maxPriceCents: priciest,
       costCents: cheapest?.cost_cents ?? 0,
     };
   });
@@ -231,6 +326,7 @@ export async function listProducts(query: ProductQuery = {}) {
     total: count ?? products.length,
     hasNextPage: (count ?? 0) > from + pageSize,
     filtered: stockFilter !== "all",
+    unavailable: false,
   };
 }
 
@@ -238,20 +334,26 @@ const EXPORT_CAP = 5000;
 
 /** Same filters as listProducts but unpaginated (capped), for the CSV export button. */
 export async function listProductsForExport(query: Omit<ProductQuery, "page" | "pageSize"> = {}) {
-  const { search, categoryId, includeArchived = false } = query;
+  const { search, categoryId, includeArchived = false, segment } = query;
   const db = adminDb();
-  let builder = db
-    .from("products")
-    .select(
-      `id, name, internal_code, is_public, is_active, product_kind, catalog_type,
-       categories(name),
-       product_variants(id, name, sku, barcode, price_cents, cost_cents, min_quantity, is_active)`,
-    );
-  if (!includeArchived) builder = builder.eq("is_active", true);
-  if (categoryId) builder = builder.eq("category_id", categoryId);
-  if (search) builder = builder.or(`name.ilike.%${search}%,internal_code.ilike.%${search}%`);
+  const run = (filterInTransit: boolean) => {
+    let builder = db
+      .from("products")
+      .select(
+        `id, name, internal_code, is_public, is_active, product_kind, catalog_type,
+         categories(name),
+         product_variants(id, name, sku, barcode, price_cents, cost_cents, min_quantity, is_active)`,
+      );
+    if (!includeArchived) builder = builder.eq("is_active", true);
+    if (categoryId) builder = builder.eq("category_id", categoryId);
+    if (search) builder = builder.or(`name.ilike.%${search}%,internal_code.ilike.%${search}%`);
+    builder = applySegment(builder, segment, filterInTransit);
+    return builder.order("name").limit(EXPORT_CAP);
+  };
 
-  const { data, error } = await builder.order("name").limit(EXPORT_CAP);
+  const { result, unavailable } = await runSegmentQuery(segment, run);
+  if (unavailable) throw new Error(IN_TRANSIT_UNAVAILABLE_MESSAGE);
+  const { data, error } = result;
   if (error) throw new Error(error.message);
 
   const rows = (data ?? []) as unknown as Array<{
@@ -378,17 +480,23 @@ const SELLABLE_CAP = 300;
  * not lose the basket to a page reload on every keystroke.
  */
 export async function listSellableVariants(limit = SELLABLE_CAP): Promise<SellableVariant[]> {
-  const { data, error } = await adminDb()
-    .from("products")
-    .select(
-      `id, name, product_kind, is_active,
-       categories(name),
-       product_variants(id, name, sku, barcode, unit_label, price_cents, cost_cents, is_active),
-       product_images(storage_key, sort_order)`,
-    )
-    .eq("is_active", true)
-    .order("name")
-    .limit(limit);
+  // Merchandise still on its way (products.in_transit) is not sellable yet,
+  // even when a quantity was already captured for it. Without migration 008
+  // the column does not exist and nothing can be in transit, so the same query
+  // simply runs without that filter.
+  const { data, error } = await withInTransitFallback((filterInTransit) => {
+    let builder = adminDb()
+      .from("products")
+      .select(
+        `id, name, product_kind, is_active,
+         categories(name),
+         product_variants(id, name, sku, barcode, unit_label, price_cents, cost_cents, is_active),
+         product_images(storage_key, sort_order)`,
+      )
+      .eq("is_active", true);
+    if (filterInTransit) builder = builder.eq("in_transit", false);
+    return builder.order("name").limit(limit);
+  });
   if (error) throw new Error(error.message);
 
   const rows = (data ?? []) as unknown as Array<{
@@ -448,6 +556,7 @@ export type ProductDetail = {
   category_id: string | null;
   tax_rate_percent: number;
   weekly_plan_eligible: boolean;
+  in_transit: boolean;
   variants: Array<VariantRow & { stock: number }>;
   images: Array<{ id: string; storage_key: string; url: string | null; sort_order: number }>;
 };
@@ -465,18 +574,20 @@ export async function getProductDetail(id: string): Promise<ProductDetail | null
   if (error) throw new Error(error.message);
   if (!data) return null;
 
-  const row = data as unknown as Omit<ProductDetail, "variants" | "images" | "weekly_plan_eligible"> & {
+  const row = data as unknown as Omit<ProductDetail, "variants" | "images" | "weekly_plan_eligible" | "in_transit"> & {
     product_variants: VariantRow[];
     product_images: Array<{ id: string; storage_key: string; sort_order: number }>;
   };
-  const [stock, weeklyPlan] = await Promise.all([
+  const [stock, weeklyPlan, inTransit] = await Promise.all([
     getStockFor((row.product_variants ?? []).map((variant) => variant.id)),
     getWeeklyPlanEligibility([id]),
+    getInTransitFlags([id]),
   ]);
 
   return {
     ...row,
     weekly_plan_eligible: weeklyPlan.get(id) ?? false,
+    in_transit: row.catalog_type === "IMMEDIATE" && (inTransit.get(id) ?? false),
     tax_rate_percent: Number(row.tax_rate_percent ?? 0),
     variants: (row.product_variants ?? []).map((variant) => ({
       ...variant,
@@ -502,4 +613,202 @@ export async function ensureUniqueSlug(table: "categories" | "products", base: s
     if (!data?.length) return candidate;
   }
   return `${root}-${Date.now()}`;
+}
+
+// ---------------------------------------------------------------------------
+// Inventory movements
+// ---------------------------------------------------------------------------
+
+/**
+ * The only two movement types schema.sql allows outside of a sale/pedido/
+ * delivery: RECEIPT (new stock coming in, always positive) and
+ * MANUAL_ADJUSTMENT (a correction, either direction, e.g. shrinkage/breakage
+ * found on a physical count). Both write straight into inventory_movements —
+ * the same ledger Vender and Pedidos already use — so variant_stock and every
+ * KPI derived from it stay correct with no separate stock field to keep in sync.
+ */
+export const MANUAL_MOVEMENT_TYPES = ["RECEIPT", "MANUAL_ADJUSTMENT"] as const;
+export type ManualMovementType = (typeof MANUAL_MOVEMENT_TYPES)[number];
+
+export type MovementResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Shared by the Inventario movement dialog and the quick stock edit in the
+ * Productos lists. Refuses to leave stock negative and respects the table's
+ * CHECK (RECEIPT > 0, MANUAL_ADJUSTMENT <> 0). `currentStock` may be passed when
+ * the caller has just read it, to skip a second read.
+ */
+export async function recordManualMovement(input: {
+  variantId: string;
+  movementType: ManualMovementType;
+  quantityDelta: number;
+  reason: string;
+  adminId: string | null;
+  currentStock?: number;
+}): Promise<MovementResult> {
+  const { variantId, movementType, quantityDelta, reason, adminId } = input;
+  if (!MANUAL_MOVEMENT_TYPES.includes(movementType)) return { ok: false, error: "Tipo de movimiento no válido." };
+  if (!Number.isFinite(quantityDelta) || quantityDelta === 0) {
+    return { ok: false, error: "Escribe una cantidad distinta de cero." };
+  }
+  if (movementType === "RECEIPT" && quantityDelta < 0) {
+    return { ok: false, error: "Una entrada debe ser una cantidad positiva." };
+  }
+
+  if (quantityDelta < 0) {
+    const available = input.currentStock ?? (await getStockFor([variantId])).get(variantId) ?? 0;
+    if (available + quantityDelta < 0) {
+      return {
+        ok: false,
+        error: `El ajuste dejaría el stock en negativo: disponible ${available}, ajuste ${quantityDelta}.`,
+      };
+    }
+  }
+
+  const { error } = await adminDb().from("inventory_movements").insert({
+    variant_id: variantId,
+    movement_type: movementType,
+    quantity_delta: quantityDelta,
+    reason,
+    created_by_admin_id: adminId,
+  });
+  if (error) return { ok: false, error: describeError(new Error(error.message), "No fue posible registrar el movimiento.") };
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Quick edit from the Productos lists
+// ---------------------------------------------------------------------------
+
+export const QUICK_STOCK_REASON = "Ajuste rápido desde la lista de productos";
+
+export type QuickEditField = "price" | "stock";
+
+export type QuickEditResult =
+  | {
+      ok: true;
+      changed: boolean;
+      field: QuickEditField;
+      productId: string;
+      productName: string;
+      variantId: string;
+      /** Cents for price, units for stock. */
+      previous: number;
+      next: number;
+      /** Only for stock: the movement actually written (0 when nothing changed). */
+      delta: number;
+    }
+  | { ok: false; error: string };
+
+const round3 = (value: number) => Math.round(value * 1000) / 1000;
+
+/**
+ * Business logic behind the inline Stock / Precio inputs. Kept out of the
+ * server action (which only checks the session) so it can be exercised with
+ * the service key and an explicit admin id.
+ *
+ *  price  -> `value` is the new price in cents; updates product_variants.price_cents.
+ *  stock  -> `value` is the quantity the admin says is on hand. Stock is never
+ *            written as a number: the difference against variant_stock, read
+ *            here at save time (not whatever the page showed), is appended to
+ *            the ledger as a MANUAL_ADJUSTMENT. No difference, no movement.
+ */
+export async function updateVariantQuick(input: {
+  variantId: string;
+  field: QuickEditField;
+  value: number;
+  adminId: string | null;
+}): Promise<QuickEditResult> {
+  const { variantId, field, value, adminId } = input;
+  if (!variantId) return { ok: false, error: "Variante no encontrada." };
+  if (field !== "price" && field !== "stock") return { ok: false, error: "Campo no válido." };
+  if (!Number.isFinite(value)) {
+    return { ok: false, error: field === "price" ? "Escribe un precio válido." : "Escribe una cantidad válida." };
+  }
+  if (value < 0) {
+    return { ok: false, error: field === "price" ? "El precio no puede ser negativo." : "La cantidad no puede ser negativa." };
+  }
+
+  const db = adminDb();
+  const { data, error } = await db
+    .from("product_variants")
+    .select("id, product_id, price_cents, is_active, products(name, product_kind, is_active)")
+    .eq("id", variantId)
+    .maybeSingle();
+  if (error) return { ok: false, error: describeError(new Error(error.message), "No fue posible leer la variante.") };
+  if (!data) return { ok: false, error: "Variante no encontrada." };
+
+  const product = (Array.isArray(data.products) ? data.products[0] : data.products) as
+    | { name: string; product_kind: ProductListRow["product_kind"] | null; is_active: boolean }
+    | null;
+  if (!product) return { ok: false, error: "Producto no encontrado." };
+  if (!product.is_active) return { ok: false, error: "El producto está archivado. Restáuralo para editarlo." };
+  if (!data.is_active) return { ok: false, error: "Esta variante está desactivada." };
+
+  const base = {
+    ok: true as const,
+    field,
+    productId: data.product_id as string,
+    productName: product.name,
+    variantId,
+  };
+
+  if (field === "price") {
+    if (!Number.isInteger(value)) return { ok: false, error: "El precio debe ir en centavos enteros." };
+    const previous = Number(data.price_cents ?? 0);
+    if (previous === value) return { ...base, changed: false, previous, next: value, delta: 0 };
+    const { error: updateError } = await db
+      .from("product_variants")
+      .update({ price_cents: value, updated_at: new Date().toISOString() })
+      .eq("id", variantId);
+    if (updateError) {
+      return { ok: false, error: describeError(new Error(updateError.message), "No fue posible guardar el precio.") };
+    }
+    return { ...base, changed: true, previous, next: value, delta: 0 };
+  }
+
+  const measured = (product.product_kind ?? "SIMPLE") === "MEASURED";
+  const target = round3(value);
+  if (!measured && !Number.isInteger(target)) {
+    return { ok: false, error: "Este producto solo admite cantidades enteras." };
+  }
+
+  const current = (await getStockFor([variantId])).get(variantId) ?? 0;
+  const delta = round3(target - current);
+  if (delta === 0) return { ...base, changed: false, previous: current, next: target, delta: 0 };
+
+  const movement = await recordManualMovement({
+    variantId,
+    movementType: "MANUAL_ADJUSTMENT",
+    quantityDelta: delta,
+    reason: QUICK_STOCK_REASON,
+    adminId,
+    currentStock: current,
+  });
+  if (!movement.ok) return movement;
+  return { ...base, changed: true, previous: current, next: target, delta };
+}
+
+/**
+ * "Marcar como recibido": the merchandise arrived, so it leaves "en camino" and
+ * becomes regular Entrega inmediata stock (in_transit = false). Only IMMEDIATE
+ * products can be in transit at all.
+ */
+export async function markProductReceived(productId: string): Promise<
+  { ok: true; name: string } | { ok: false; error: string }
+> {
+  if (!productId) return { ok: false, error: "Producto no encontrado." };
+  const { data, error } = await adminDb()
+    .from("products")
+    .update({ in_transit: false, updated_at: new Date().toISOString() })
+    .eq("id", productId)
+    .eq("catalog_type", "IMMEDIATE")
+    .select("id, name");
+  if (error) {
+    if (isMissingInTransitColumn(error.message)) return { ok: false, error: IN_TRANSIT_UNAVAILABLE_MESSAGE };
+    return { ok: false, error: describeError(new Error(error.message), "No fue posible marcar el producto como recibido.") };
+  }
+  const row = data?.[0];
+  if (!row) return { ok: false, error: "El producto ya no existe o no es de entrega inmediata." };
+  return { ok: true, name: row.name as string };
 }

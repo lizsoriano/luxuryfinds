@@ -186,3 +186,22 @@ body{font-weight:400}
 .admin-dropzone.dragging{border-color:var(--terracotta);background:var(--terracotta-tint);color:var(--terracotta-dark)}
 .admin-dropzone.disabled{cursor:not-allowed;opacity:.6}
 .admin-dropzone.disabled:hover{border-color:var(--admin-border);background:#fafafa;color:var(--admin-muted)}
+/* Inline Stock / Precio editing in the Productos lists */
+.admin-data-table .admin-col-stock{width:88px;padding-left:6px;padding-right:6px}.admin-data-table .admin-col-price{width:128px;padding-left:6px;padding-right:6px}
+.admin-inline-field{display:inline-flex;flex-direction:column;align-items:flex-end;gap:4px;vertical-align:middle}
+.admin-inline-control{position:relative;display:flex;align-items:center}
+.admin-inline-input{height:39px;padding:0 28px 0 10px;border:1px solid var(--admin-border);border-radius:var(--radius-md);background:var(--white);color:var(--admin-text);font-size:13px;font-weight:600;text-align:right;font-variant-numeric:tabular-nums;outline:none;transition:border-color 150ms ease,box-shadow 150ms ease,background 150ms ease}
+.admin-inline-stock .admin-inline-input{width:76px}.admin-inline-price .admin-inline-input{width:116px;padding-left:22px}.admin-inline-stock .admin-inline-input.has-suffix{width:104px;padding-right:50px}
+.admin-inline-input:hover:not(:disabled){border-color:#cfcfcf}.admin-inline-input:focus{border-color:var(--terracotta);box-shadow:0 0 0 3px var(--terracotta-tint)}
+.admin-inline-input:disabled{background:#f5f5f5;color:var(--admin-muted);cursor:not-allowed}
+.admin-inline-affix{position:absolute;top:50%;transform:translateY(-50%);color:var(--admin-muted);font-size:13px;font-weight:600;pointer-events:none}.admin-inline-prefix{left:10px}.admin-inline-suffix{right:28px;font-size:11px}
+.admin-inline-status{position:absolute;right:9px;top:50%;width:14px;height:14px;transform:translateY(-50%);display:grid;place-items:center;font-size:12px;font-weight:800;line-height:1;pointer-events:none}
+.admin-inline-field[data-status=saving] .admin-inline-input{color:var(--admin-muted)}
+.admin-inline-field[data-status=saved] .admin-inline-input{border-color:var(--success)}.admin-inline-field[data-status=saved] .admin-inline-status{color:var(--success)}
+.admin-inline-field[data-status=error] .admin-inline-input{border-color:var(--danger);background:rgba(168,68,81,.05)}.admin-inline-field[data-status=error] .admin-inline-status{color:var(--danger)}
+.admin-inline-spinner{width:12px;height:12px;border:2px solid var(--admin-border);border-top-color:var(--terracotta);border-radius:50%;animation:admin-inline-spin 700ms linear infinite}@keyframes admin-inline-spin{to{transform:rotate(360deg)}}
+.admin-inline-message{max-width:116px;color:var(--danger);font-size:11px;font-weight:600;line-height:1.35;text-align:right;white-space:normal}
+.admin-inline-readonly{display:inline-flex;flex-direction:column;align-items:flex-end;gap:3px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.admin-inline-link{color:var(--terracotta);font-size:11px;font-weight:650;text-decoration:underline;text-underline-offset:2px}.admin-inline-link:hover{color:var(--terracotta-dark)}
+.admin-notice code{font-size:11px;padding:1px 5px;border-radius:6px;background:rgba(255,255,255,.7)}
+@media(prefers-reduced-motion:reduce){.admin-inline-spinner{animation-duration:2s}}

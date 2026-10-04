@@ -6,7 +6,7 @@ import { Button } from "../../../components/ui/Button";
 import { Card } from "../../../components/ui/Card";
 import { Input, Select, Textarea } from "../../../components/ui/Fields";
 import { emptyActionState } from "../../../lib/actions";
-import { formatQuantity } from "../../../lib/format";
+import { centsToInput, formatQuantity } from "../../../lib/format";
 import { createProductAction, updateProductAction } from "./actions";
 
 const MAX_IMAGES = 3;
@@ -35,8 +35,11 @@ export type EditableProduct = {
   tax_rate_percent: number;
   is_public: boolean;
   weekly_plan_eligible: boolean;
+  in_transit: boolean;
   variants: ExistingVariant[];
 };
+
+type CatalogType = EditableProduct["catalog_type"];
 
 const KINDS = [
   {
@@ -55,10 +58,6 @@ const KINDS = [
     description: "Se vende por unidad de medida (kg, m, l) y admite cantidades con decimales.",
   },
 ];
-
-function money(cents: number) {
-  return (cents / 100).toFixed(2);
-}
 
 function ImagePicker({ remaining }: { remaining: number }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -249,10 +248,16 @@ export function ProductForm({
   categories,
   product,
   existingImageCount = 0,
+  defaults,
+  backHref = "/admin/productos",
 }: {
   categories: CategoryOption[];
   product?: EditableProduct;
   existingImageCount?: number;
+  /** New products only: preselected from the list the admin came from. */
+  defaults?: { catalogType: CatalogType; inTransit: boolean };
+  /** The list this product belongs to (or the one the admin came from). */
+  backHref?: string;
 }) {
   const isEdit = Boolean(product);
   const [state, action, pending] = useActionState(
@@ -260,6 +265,9 @@ export function ProductForm({
     emptyActionState,
   );
   const [kind, setKind] = useState<EditableProduct["product_kind"]>(product?.product_kind ?? "SIMPLE");
+  const [catalogType, setCatalogType] = useState<CatalogType>(
+    product?.catalog_type ?? defaults?.catalogType ?? "IMMEDIATE",
+  );
   const firstVariant = product?.variants[0];
 
   return (
@@ -362,7 +370,8 @@ export function ProductForm({
             id="product-catalog-type"
             name="catalogType"
             label="Disponibilidad"
-            defaultValue={product?.catalog_type ?? "IMMEDIATE"}
+            value={catalogType}
+            onChange={(event) => setCatalogType(event.target.value === "ON_DEMAND" ? "ON_DEMAND" : "IMMEDIATE")}
           >
             <option value="IMMEDIATE">Entrega inmediata</option>
             <option value="ON_DEMAND">Por pedido</option>
@@ -420,6 +429,25 @@ export function ProductForm({
             </span>
           </label>
 
+          {catalogType === "IMMEDIATE" ? (
+            <label className="admin-switch field-wide" htmlFor="product-in-transit">
+              <input
+                id="product-in-transit"
+                type="checkbox"
+                name="inTransit"
+                defaultChecked={product?.in_transit ?? defaults?.inTransit ?? false}
+              />
+              <span>
+                Viene en camino (ya lo pedí)
+                <small>
+                  Mercancía que ya compraste y todavía no llega a la tienda. Aparece en Inventario › Productos en
+                  camino y no se puede vender (ni en Vender ni en el sitio) hasta que la marques como recibida.
+                  Requiere database/migrations/008_products_in_transit.sql aplicada en Supabase.
+                </small>
+              </span>
+            </label>
+          ) : null}
+
           {isEdit && product ? (
             <div className="field-wide">
               <p className="micro-label">PRECIOS Y EXISTENCIAS POR VARIANTE</p>
@@ -444,7 +472,7 @@ export function ProductForm({
                     type="number"
                     min="0"
                     step="0.01"
-                    defaultValue={money(variant.price_cents)}
+                    defaultValue={centsToInput(variant.price_cents)}
                     required
                   />
                   <Input
@@ -454,7 +482,7 @@ export function ProductForm({
                     type="number"
                     min="0"
                     step="0.01"
-                    defaultValue={money(variant.cost_cents)}
+                    defaultValue={centsToInput(variant.cost_cents)}
                   />
                   <Input
                     id={`variant-min-${variant.id}`}
@@ -488,7 +516,7 @@ export function ProductForm({
           )}
 
           <div className="admin-form-actions">
-            <Button href="/admin/productos" variant="secondary" size="small">
+            <Button href={backHref} variant="secondary" size="small">
               Volver al listado
             </Button>
             <Button type="submit" size="small" disabled={pending}>

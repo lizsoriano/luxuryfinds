@@ -22,6 +22,11 @@ export function formatMoneyCompact(cents: number) {
   return MONEY_COMPACT.format((Number(cents) || 0) / 100);
 }
 
+/** 123450 cents -> "1234.50": the value a pesos <input> shows (inverse of parseMoneyToCents). */
+export function centsToInput(cents: number) {
+  return ((Number(cents) || 0) / 100).toFixed(2);
+}
+
 /** "1234.5" | "1,234.50" | "$1,234.50" -> 123450 cents. Returns null when unparseable. */
 export function parseMoneyToCents(value: FormDataEntryValue | string | null | undefined) {
   if (value === null || value === undefined) return null;

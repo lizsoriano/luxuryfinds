@@ -5,7 +5,7 @@ import { useState, type ReactElement } from "react";
 import { Dialog } from "../ui/Dialog";
 import { Button } from "../ui/Button";
 
-type NavItem = { label: string; href: string; icon: string; children?: NavItem[] };
+type NavItem = { label: string; href: string; icon: string; title?: string; children?: NavItem[] };
 type NavGroup = { label: string; items: NavItem[] };
 
 // Navigation merges two taxonomies without losing a single existing route:
@@ -63,7 +63,22 @@ const groups: NavGroup[] = [
         href: "/admin/inventario",
         icon: "layers",
         children: [
-          { label: "Productos", href: "/admin/productos", icon: "box" },
+          // Productos = pedidos online (ON_DEMAND). The other two lists are the
+          // owner's own stock: in hand, and already bought but still on its way
+          // (not to be confused with Vender > En camino, which is clients' pedidos).
+          { label: "Productos", href: "/admin/productos", icon: "box", title: "Productos de pedidos online" },
+          {
+            label: "Entrega inmediata",
+            href: "/admin/productos/entrega-inmediata",
+            icon: "bolt",
+            title: "Productos entrega inmediata",
+          },
+          {
+            label: "Productos en camino",
+            href: "/admin/productos/en-camino",
+            icon: "inbound",
+            title: "Productos que vienen en camino",
+          },
           { label: "Categorías", href: "/admin/categorias", icon: "tag" },
           { label: "Sincronización", href: "/admin/inventario/sincronizacion", icon: "globe" },
         ],
@@ -104,6 +119,8 @@ const ICONS: Record<string, ReactElement> = {
   invoice: <><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z" /><path d="M9 8h6M9 12h6" /></>,
   quote: <><rect x="5" y="3" width="14" height="18" rx="2" /><path d="M9 8h6M9 12h6M9 16h3" /></>,
   globe: <><circle cx="12" cy="12" r="8.5" /><path d="M3.5 12h17M12 3.5c2.4 2.4 3.6 5.4 3.6 8.5S14.4 18.1 12 20.5c-2.4-2.4-3.6-5.4-3.6-8.5S9.6 5.9 12 3.5Z" /></>,
+  bolt: <><path d="M13 3 5 13.5h6L10 21l8-10.5h-6L13 3Z" /></>,
+  inbound: <><path d="M3 8l9-4.5L21 8v9l-9 4.5L3 17V8Z" /><path d="M12 9v7M9 13l3 3 3-3" /></>,
   tag: <><path d="M3 12.5V4h8.5L21 13.5 13.5 21 3 12.5Z" /><circle cx="7.5" cy="7.5" r="1.3" /></>,
   supplier: <><path d="M3 9.5 12 4l9 5.5v8L12 20l-9-5.5v-8Z" /><path d="M3 9.5 12 15l9-5.5M12 15v5" /></>,
   help: <><circle cx="12" cy="12" r="8.5" /><path d="M9.7 9.4a2.4 2.4 0 1 1 3.3 2.2c-.7.3-1 .9-1 1.6v.3" /><path d="M12 17h.01" /></>,
@@ -128,6 +145,18 @@ function isBranchActive(pathname: string, item: NavItem) {
   return isActive(pathname, item.href) || Boolean(item.children?.some((child) => isActive(pathname, child.href)));
 }
 
+/**
+ * Among siblings only the most specific match is highlighted: /admin/productos
+ * is a prefix of /admin/productos/en-camino, so plain prefix matching would light
+ * up "Productos" and "Productos en camino" together. /admin/productos/[id] and
+ * /admin/productos/nuevo still resolve to "Productos" (no longer sibling matches).
+ */
+function activeChildHref(pathname: string, children: NavItem[]) {
+  return children
+    .filter((child) => isActive(pathname, child.href))
+    .reduce<string | null>((best, child) => (!best || child.href.length > best.length ? child.href : best), null);
+}
+
 function NavLink({ item, pathname, onNavigate }: { item: NavItem; pathname: string; onNavigate: () => void }) {
   const active = isActive(pathname, item.href);
   const branchActive = isBranchActive(pathname, item);
@@ -136,6 +165,7 @@ function NavLink({ item, pathname, onNavigate }: { item: NavItem; pathname: stri
   // without an effect having to push state back in.
   const [override, setOverride] = useState<boolean | null>(null);
   const expanded = override ?? branchActive;
+  const activeChild = item.children?.length ? activeChildHref(pathname, item.children) : null;
 
   if (!item.children?.length) {
     return (
@@ -166,7 +196,13 @@ function NavLink({ item, pathname, onNavigate }: { item: NavItem; pathname: stri
       {expanded && (
         <div className="admin-nav-children">
           {item.children.map((child) => (
-            <Link className={isActive(pathname, child.href) ? "active" : ""} href={child.href} key={child.href} onClick={onNavigate}>
+            <Link
+              className={child.href === activeChild ? "active" : ""}
+              href={child.href}
+              key={child.href}
+              onClick={onNavigate}
+              title={child.title}
+            >
               <NavIcon name={child.icon} />
               {child.label}
             </Link>
