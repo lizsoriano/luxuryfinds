@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useRef, useState } from "react";
+import { useActionState, useRef, useState, type DragEvent } from "react";
 import { Badge } from "../../../components/ui/Badge";
 import { Button } from "../../../components/ui/Button";
 import { Card } from "../../../components/ui/Card";
@@ -63,6 +63,7 @@ function money(cents: number) {
 function ImagePicker({ remaining }: { remaining: number }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [previews, setPreviews] = useState<Array<{ name: string; url: string }>>([]);
+  const [dragging, setDragging] = useState(false);
 
   const syncFromInput = () => {
     const files = Array.from(inputRef.current?.files ?? []);
@@ -72,16 +73,27 @@ function ImagePicker({ remaining }: { remaining: number }) {
     });
   };
 
+  const applyFiles = (files: File[]) => {
+    const input = inputRef.current;
+    if (!input) return;
+    const transfer = new DataTransfer();
+    files.slice(0, remaining).forEach((file) => transfer.items.add(file));
+    input.files = transfer.files;
+    syncFromInput();
+  };
+
   const handleChange = () => {
     const input = inputRef.current;
     if (!input) return;
-    const files = Array.from(input.files ?? []);
-    if (files.length > remaining) {
-      const transfer = new DataTransfer();
-      files.slice(0, remaining).forEach((file) => transfer.items.add(file));
-      input.files = transfer.files;
-    }
-    syncFromInput();
+    applyFiles(Array.from(input.files ?? []));
+  };
+
+  const handleDrop = (event: DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+    setDragging(false);
+    if (remaining <= 0) return;
+    const dropped = Array.from(event.dataTransfer.files ?? []).filter((file) => file.type.startsWith("image/"));
+    if (dropped.length) applyFiles(dropped);
   };
 
   const removeAt = (index: number) => {
@@ -99,16 +111,27 @@ function ImagePicker({ remaining }: { remaining: number }) {
   return (
     <div className="field field-wide">
       <span>Imágenes (máximo {MAX_IMAGES})</span>
-      <input
-        ref={inputRef}
-        className="input"
-        type="file"
-        name="images"
-        accept="image/jpeg,image/png,image/webp,image/avif"
-        multiple
-        onChange={handleChange}
-        disabled={remaining <= 0}
-      />
+      <label
+        className={`admin-dropzone${dragging ? " dragging" : ""}${remaining <= 0 ? " disabled" : ""}`}
+        onDragOver={(event) => {
+          event.preventDefault();
+          if (remaining > 0) setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={handleDrop}
+      >
+        <input
+          ref={inputRef}
+          className="sr-only"
+          type="file"
+          name="images"
+          accept="image/jpeg,image/png,image/webp,image/avif"
+          multiple
+          onChange={handleChange}
+          disabled={remaining <= 0}
+        />
+        <span>{dragging ? "Suelta para agregar" : "Arrastra tus imágenes aquí o haz clic para elegirlas"}</span>
+      </label>
       <p className="admin-hint">
         {remaining <= 0
           ? `Este producto ya tiene ${MAX_IMAGES} imágenes. Elimina alguna para subir otra.`
