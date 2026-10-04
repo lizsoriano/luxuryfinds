@@ -196,6 +196,9 @@ export function parseListingFragment(html: string): ParsedCard[] {
 }
 
 function cardToProduct(card: ParsedCard, brand: string | null, categories: string[]): SourceProduct | null {
+  // Maw Maw's own "Gift Card / Rasca & Gana" promo cards are not merchandise we sell.
+  if (/maw\s*gift\s*card/i.test(card.rawName)) return null;
+
   const visible = card.variants.filter((variant) => variant.is_visible !== false);
   const usable = visible.length ? visible : card.variants;
   if (!usable.length) return null;

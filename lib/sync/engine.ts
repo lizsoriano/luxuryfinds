@@ -761,7 +761,9 @@ async function createProduct(context: IngestContext) {
       slug,
       description: product.description ?? product.shortDescription ?? null,
       relevant_information: product.shortDescription ?? null,
-      catalog_type: product.onDemand ? "ON_DEMAND" : "IMMEDIATE",
+      // Entrega inmediata is only for stock the owner uploads by hand from the
+      // panel; anything a store sync brings in is, by definition, ordered on demand.
+      catalog_type: "ON_DEMAND",
       brand_id: brandId,
       category_id: resolveCategory(categories, product.categories),
       // Published only when we actually know what to charge for it.
