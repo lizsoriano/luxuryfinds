@@ -5,12 +5,14 @@ import { Card } from "../../../components/ui/Card";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { PageHeader } from "../../../components/ui/PageHeader";
 import {
+  getCostSettings,
   listActiveCategories,
   listProducts,
   type ProductSegment,
   type ProductSort,
 } from "../../../lib/supabase/admin-catalog";
 import { IN_TRANSIT_MIGRATION_FILE } from "../../../lib/supabase/in-transit";
+import { CostSettingsBar } from "./CostSettingsBar";
 import { ProductsTable } from "./ProductsTable";
 import { SEGMENTS } from "./segments";
 
@@ -49,8 +51,9 @@ export async function ProductsListPage({
 
   let result;
   let categories: Array<{ id: string; name: string }> = [];
+  let costSettings;
   try {
-    [result, categories] = await Promise.all([
+    [result, categories, costSettings] = await Promise.all([
       listProducts({
         search: sp.q?.trim() || undefined,
         categoryId: sp.categoria || undefined,
@@ -60,6 +63,7 @@ export async function ProductsListPage({
         segment,
       }),
       listActiveCategories(),
+      getCostSettings(),
     ]);
   } catch (error) {
     return (
@@ -165,13 +169,28 @@ export async function ProductsListPage({
             </div>
           </FilterForm>
 
-          <p className="admin-result-count">
-            {result.total} producto{result.total === 1 ? "" : "s"}
-          </p>
+          <div className="admin-list-meta">
+            <p className="admin-result-count">
+              {result.total} producto{result.total === 1 ? "" : "s"}
+            </p>
+            <CostSettingsBar
+              usdMxnRate={costSettings.usdMxnRate}
+              usTaxFactor={costSettings.usTaxFactor}
+              storeCostAvailable={result.storeCostAvailable}
+              loadError={costSettings.error}
+            />
+          </div>
 
           <Card className="admin-panel">
             {result.products.length ? (
-              <ProductsTable products={result.products} segment={segment} />
+              <ProductsTable
+                products={result.products}
+                segment={segment}
+                storeCost={{
+                  available: result.storeCostAvailable,
+                  hasRate: costSettings.usdMxnRate !== null && !costSettings.error,
+                }}
+              />
             ) : (
               <EmptyState
                 title={sp.q || sp.categoria ? "Sin resultados" : config.emptyTitle}

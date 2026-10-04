@@ -7,9 +7,12 @@ import {
   QUICK_STOCK_REASON,
   ensureUniqueSlug,
   markProductReceived,
+  setProductPublic,
+  updateCostSetting,
   updateVariantQuick,
 } from "../../../lib/supabase/admin-catalog";
 import { IN_TRANSIT_MIGRATION_FILE } from "../../../lib/supabase/in-transit";
+import { parseUsdToCents, type StoreCostActionState } from "../../../lib/supabase/store-cost";
 import {
   MAX_PRODUCT_IMAGES,
   PRODUCT_IMAGE_BUCKET,
@@ -674,24 +677,66 @@ export async function deleteProductImageAction(_state: ActionState, formData: Fo
 }
 
 /**
- * Inline Stock / Precio inputs of the Productos lists. Only checks the session
- * and parses the field; the rule (price in cents, stock as a ledger adjustment
- * computed against the stock read at save time) lives in updateVariantQuick.
+ * Inline Stock / Precio / Costo tienda inputs of the Productos lists. Only
+ * checks the session and parses the field; the rules (price in cents, stock as
+ * a ledger adjustment computed against the stock read at save time, peso cost
+ * calculated from the USD cost with the settings read at save time) live in
+ * updateVariantQuick.
  */
-export async function updateVariantQuickAction(_state: ActionState, formData: FormData): Promise<ActionState> {
+export async function updateVariantQuickAction(_state: ActionState, formData: FormData): Promise<StoreCostActionState> {
   try {
     const actor = await requireAdminActor();
     const variantId = String(formData.get("variantId") ?? "");
     const field = String(formData.get("field") ?? "");
-    if (field !== "price" && field !== "stock") return failure("Campo no válido.");
+    if (field !== "price" && field !== "stock" && field !== "store_cost" && field !== "commission") {
+      return failure("Campo no válido.");
+    }
 
     const raw = formData.get("value");
-    const value = field === "price" ? parseMoneyToCents(raw) : parseQuantity(raw);
-    if (value === null) return failure(field === "price" ? "Escribe un precio válido." : "Escribe una cantidad válida.");
+    let value: number | null;
+    if (field === "store_cost") {
+      value = parseUsdToCents(raw);
+      if (value !== null && Number.isNaN(value)) return failure("Escribe un costo en dólares válido (por ejemplo 24.50).");
+    } else if (field === "commission") {
+      value = Number(String(raw ?? "").trim() || Number.NaN);
+    } else {
+      value = field === "price" ? parseMoneyToCents(raw) : parseQuantity(raw);
+      if (value === null) return failure(field === "price" ? "Escribe un precio válido." : "Escribe una cantidad válida.");
+    }
 
     const result = await updateVariantQuick({ variantId, field, value, adminId: actor.id });
     if (!result.ok) return failure(result.error);
-    if (!result.changed) return ok("Sin cambios.");
+    const variant = result.storeCost?.next;
+    if (!result.changed) return { ...ok("Sin cambios."), variant };
+
+    if (result.storeCost) {
+      await logActivity({
+        adminUserId: actor.id,
+        action: "PRODUCT_COST_QUICK_EDIT",
+        entityType: "product_variants",
+        entityId: result.variantId,
+        previousData: {
+          store_cost_usd_cents: result.storeCost.previous.storeCostUsdCents,
+          commission_percent: result.storeCost.previous.commissionPercent,
+          cost_cents: result.storeCost.previous.costCents,
+        },
+        newData: {
+          store_cost_usd_cents: result.storeCost.next.storeCostUsdCents,
+          commission_percent: result.storeCost.next.commissionPercent,
+          cost_cents: result.storeCost.next.costCents,
+          usd_mxn_rate: result.storeCost.usdMxnRate,
+          us_tax_factor: result.storeCost.taxFactor,
+          productId: result.productId,
+        },
+      });
+      revalidateCatalog();
+      return {
+        ...ok(
+          field === "commission" ? "Comisión guardada." : variant?.storeCostUsdCents === null ? "Costo en USD borrado." : "Costo guardado.",
+        ),
+        variant,
+      };
+    }
 
     await logActivity({
       adminUserId: actor.id,
@@ -708,6 +753,62 @@ export async function updateVariantQuickAction(_state: ActionState, formData: Fo
     return ok(field === "price" ? "Precio guardado." : "Cantidad guardada.");
   } catch (error) {
     return failure(describeError(error, "No fue posible guardar el cambio."));
+  }
+}
+
+/**
+ * Tipo de cambio USD→MXN / Tax bar above the product lists. Saving a new rate
+ * does not recalculate costs already saved (each is the cost at purchase time).
+ */
+export async function updateCostSettingAction(_state: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const actor = await requireAdminActor();
+    const key = String(formData.get("key") ?? "");
+    const result = await updateCostSetting({ key, value: formData.get("value"), adminId: actor.id });
+    if (!result.ok) return failure(result.error);
+    if (!result.changed) return ok("Sin cambios.");
+
+    await logActivity({
+      adminUserId: actor.id,
+      action: "COST_SETTING_UPDATED",
+      entityType: "app_settings",
+      entityId: result.key,
+      previousData: { value: result.previous },
+      newData: { value: result.next },
+    });
+    revalidatePath("/admin/productos");
+    revalidatePath("/admin/productos/entrega-inmediata");
+    revalidatePath("/admin/productos/en-camino");
+    revalidatePath("/admin/configuracion");
+    return ok(result.key === "usd_mxn_rate" ? "Tipo de cambio guardado." : "Tax guardado.");
+  } catch (error) {
+    return failure(describeError(error, "No fue posible guardar el ajuste."));
+  }
+}
+
+/** Visible / Oculto chip of the Catálogo column: one click shows or hides the product. */
+export async function setProductPublicAction(_state: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const actor = await requireAdminActor();
+    const id = String(formData.get("id") ?? "");
+    const isPublic = String(formData.get("public") ?? "") === "true";
+    const result = await setProductPublic({ productId: id, isPublic });
+    if (!result.ok) return failure(result.error);
+    if (!result.changed) return ok(result.next ? "Ya estaba visible." : "Ya estaba oculto.");
+
+    await logActivity({
+      adminUserId: actor.id,
+      action: result.next ? "PRODUCT_PUBLISHED" : "PRODUCT_HIDDEN",
+      entityType: "products",
+      entityId: id,
+      previousData: { is_public: result.previous },
+      newData: { is_public: result.next },
+    });
+    revalidateCatalog();
+    revalidatePath(`/admin/productos/${id}`);
+    return ok(result.next ? `"${result.name}" ya es visible en el catálogo.` : `"${result.name}" quedó oculto.`);
+  } catch (error) {
+    return failure(describeError(error, "No fue posible cambiar la visibilidad."));
   }
 }
 

@@ -93,6 +93,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
               sku: variant.sku,
               price_cents: variant.price_cents,
               cost_cents: variant.cost_cents,
+              store_cost_usd_cents: variant.store_cost_usd_cents,
               min_quantity: variant.min_quantity,
               unit_label: variant.unit_label,
               stock: variant.stock,

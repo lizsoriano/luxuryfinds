@@ -2,6 +2,21 @@ import { describeError } from "../actions";
 import { adminDb, PRODUCT_IMAGE_BUCKET } from "./business";
 import { createAdminSupabaseClient } from "./admin";
 import { IN_TRANSIT_UNAVAILABLE_MESSAGE, isMissingInTransitColumn, withInTransitFallback } from "./in-transit";
+import {
+  DEFAULT_US_TAX_FACTOR,
+  MISSING_RATE_MESSAGE,
+  STORE_COST_UNAVAILABLE_MESSAGE,
+  USD_MXN_RATE_KEY,
+  US_TAX_FACTOR_KEY,
+  computeStoreCostMxnCents,
+  isCommissionOption,
+  isMissingStoreCostColumn,
+  parseCostSetting,
+  readStoredSetting,
+  storeCostColumns,
+  withStoreCostFallback,
+  type CostSettingKey,
+} from "./store-cost";
 
 export type CategoryRow = {
   id: string;
@@ -91,7 +106,19 @@ type VariantRow = {
   min_quantity: number;
   is_active: boolean;
   attributes: Record<string, unknown>;
+  /** Only present once migration 009 is applied (see ./store-cost). */
+  store_cost_usd_cents?: number | null;
+  commission_percent?: number | string | null;
 };
+
+/** The two store-cost columns as numbers (null / 0 before migration 009). */
+function normalizeStoreCost(variant: VariantRow) {
+  const usd = variant.store_cost_usd_cents;
+  return {
+    store_cost_usd_cents: usd === null || usd === undefined ? null : Number(usd),
+    commission_percent: Number(variant.commission_percent ?? 0),
+  };
+}
 
 export type StockMap = Map<string, number>;
 
@@ -122,7 +149,11 @@ export async function getStockFor(variantIds: string[]): Promise<StockMap> {
   return map;
 }
 
-export type ProductListVariant = VariantRow & { stock: number };
+export type ProductListVariant = VariantRow & {
+  stock: number;
+  store_cost_usd_cents: number | null;
+  commission_percent: number;
+};
 
 export type ProductListRow = {
   id: string;
@@ -226,13 +257,13 @@ export async function listProducts(query: ProductQuery = {}) {
   const db = adminDb();
   const from = (page - 1) * pageSize;
 
-  const run = (filterInTransit: boolean) => {
+  const run = (filterInTransit: boolean, includeStoreCost: boolean) => {
     let builder = db
       .from("products")
       .select(
         `id, name, slug, internal_code, is_public, is_active, product_kind, catalog_type, created_at,
          categories(name),
-         product_variants(id, product_id, name, sku, barcode, unit_label, price_cents, cost_cents, min_quantity, is_active, attributes),
+         product_variants(id, product_id, name, sku, barcode, unit_label, price_cents, cost_cents, min_quantity, is_active, attributes${storeCostColumns(includeStoreCost)}),
          product_images(storage_key, sort_order)`,
         { count: "exact" },
       );
@@ -253,7 +284,12 @@ export async function listProducts(query: ProductQuery = {}) {
     return builder.range(from, from + pageSize - 1);
   };
 
-  const { result, unavailable } = await runSegmentQuery(segment, run);
+  // Two optional columns sets, each retried without when its migration is
+  // missing: in_transit (008) for the segment filter, the store-cost columns
+  // (009) for the "Costo tienda" cell.
+  const { result, unavailable } = await runSegmentQuery(segment, (filterInTransit) =>
+    withStoreCostFallback((includeStoreCost) => run(filterInTransit, includeStoreCost)),
+  );
   if (unavailable) {
     return {
       products: [] as ProductListRow[],
@@ -263,6 +299,7 @@ export async function listProducts(query: ProductQuery = {}) {
       hasNextPage: false,
       filtered: false,
       unavailable: true,
+      storeCostAvailable: false,
     };
   }
   const { data, error, count } = result;
@@ -305,7 +342,11 @@ export async function listProducts(query: ProductQuery = {}) {
       catalog_type: row.catalog_type,
       categoryName: relationName(row.categories),
       imageUrl: productImageUrl(image?.storage_key),
-      variants: variants.map((variant) => ({ ...variant, stock: stock.get(variant.id) ?? 0 })),
+      variants: variants.map((variant) => ({
+        ...variant,
+        ...normalizeStoreCost(variant),
+        stock: stock.get(variant.id) ?? 0,
+      })),
       stock: totalStock,
       minQuantity: variants.reduce((sum, variant) => sum + Number(variant.min_quantity ?? 0), 0),
       priceCents: cheapest?.price_cents ?? 0,
@@ -327,6 +368,8 @@ export async function listProducts(query: ProductQuery = {}) {
     hasNextPage: (count ?? 0) > from + pageSize,
     filtered: stockFilter !== "all",
     unavailable: false,
+    /** False until migration 009 adds the store-cost columns. */
+    storeCostAvailable: result.storeCostApplied,
   };
 }
 
@@ -557,24 +600,31 @@ export type ProductDetail = {
   tax_rate_percent: number;
   weekly_plan_eligible: boolean;
   in_transit: boolean;
-  variants: Array<VariantRow & { stock: number }>;
+  /** False until migration 009 adds the store-cost columns. */
+  storeCostAvailable: boolean;
+  variants: Array<VariantRow & { stock: number; store_cost_usd_cents: number | null; commission_percent: number }>;
   images: Array<{ id: string; storage_key: string; url: string | null; sort_order: number }>;
 };
 
 export async function getProductDetail(id: string): Promise<ProductDetail | null> {
-  const { data, error } = await adminDb()
-    .from("products")
-    .select(
-      `id, name, slug, description, internal_code, is_public, is_active, product_kind, catalog_type, category_id, tax_rate_percent,
-       product_variants(id, product_id, name, sku, barcode, unit_label, price_cents, cost_cents, min_quantity, is_active, attributes),
-       product_images(id, storage_key, sort_order)`,
-    )
-    .eq("id", id)
-    .maybeSingle();
+  const { data, error, storeCostApplied } = await withStoreCostFallback((includeStoreCost) =>
+    adminDb()
+      .from("products")
+      .select(
+        `id, name, slug, description, internal_code, is_public, is_active, product_kind, catalog_type, category_id, tax_rate_percent,
+         product_variants(id, product_id, name, sku, barcode, unit_label, price_cents, cost_cents, min_quantity, is_active, attributes${storeCostColumns(includeStoreCost)}),
+         product_images(id, storage_key, sort_order)`,
+      )
+      .eq("id", id)
+      .maybeSingle(),
+  );
   if (error) throw new Error(error.message);
   if (!data) return null;
 
-  const row = data as unknown as Omit<ProductDetail, "variants" | "images" | "weekly_plan_eligible" | "in_transit"> & {
+  const row = data as unknown as Omit<
+    ProductDetail,
+    "variants" | "images" | "weekly_plan_eligible" | "in_transit" | "storeCostAvailable"
+  > & {
     product_variants: VariantRow[];
     product_images: Array<{ id: string; storage_key: string; sort_order: number }>;
   };
@@ -589,8 +639,10 @@ export async function getProductDetail(id: string): Promise<ProductDetail | null
     weekly_plan_eligible: weeklyPlan.get(id) ?? false,
     in_transit: row.catalog_type === "IMMEDIATE" && (inTransit.get(id) ?? false),
     tax_rate_percent: Number(row.tax_rate_percent ?? 0),
+    storeCostAvailable: storeCostApplied,
     variants: (row.product_variants ?? []).map((variant) => ({
       ...variant,
+      ...normalizeStoreCost(variant),
       min_quantity: Number(variant.min_quantity ?? 0),
       stock: stock.get(variant.id) ?? 0,
     })),
@@ -682,7 +734,18 @@ export async function recordManualMovement(input: {
 
 export const QUICK_STOCK_REASON = "Ajuste rápido desde la lista de productos";
 
-export type QuickEditField = "price" | "stock";
+/**
+ * price / stock: as before. store_cost: `value` is the US store cost in US
+ * cents, or null to clear it. commission: `value` is the percentage (0, 10, 15).
+ */
+export type QuickEditField = "price" | "stock" | "store_cost" | "commission";
+
+export type StoreCostSnapshot = {
+  storeCostUsdCents: number | null;
+  commissionPercent: number;
+  /** MXN cents, product_variants.cost_cents. */
+  costCents: number;
+};
 
 export type QuickEditResult =
   | {
@@ -692,37 +755,57 @@ export type QuickEditResult =
       productId: string;
       productName: string;
       variantId: string;
-      /** Cents for price, units for stock. */
+      /** Cents for price, units for stock, MXN cost cents for store_cost / commission. */
       previous: number;
       next: number;
       /** Only for stock: the movement actually written (0 when nothing changed). */
       delta: number;
+      /** Only for store_cost / commission: the three columns before and after, and the settings used. */
+      storeCost?: {
+        previous: StoreCostSnapshot;
+        next: StoreCostSnapshot;
+        usdMxnRate: number | null;
+        taxFactor: number;
+      };
     }
   | { ok: false; error: string };
 
 const round3 = (value: number) => Math.round(value * 1000) / 1000;
 
+/** US$1,000,000 — far above any single purchase; stops a stray extra digit block. */
+const MAX_STORE_COST_USD_CENTS = 100_000_000;
+
 /**
- * Business logic behind the inline Stock / Precio inputs. Kept out of the
- * server action (which only checks the session) so it can be exercised with
- * the service key and an explicit admin id.
+ * Business logic behind the inline Stock / Precio / Costo tienda inputs. Kept
+ * out of the server action (which only checks the session) so it can be
+ * exercised with the service key and an explicit admin id.
  *
- *  price  -> `value` is the new price in cents; updates product_variants.price_cents.
- *  stock  -> `value` is the quantity the admin says is on hand. Stock is never
- *            written as a number: the difference against variant_stock, read
- *            here at save time (not whatever the page showed), is appended to
- *            the ledger as a MANUAL_ADJUSTMENT. No difference, no movement.
+ *  price      -> `value` is the new price in cents; updates product_variants.price_cents.
+ *  stock      -> `value` is the quantity the admin says is on hand. Stock is never
+ *                written as a number: the difference against variant_stock, read
+ *                here at save time (not whatever the page showed), is appended to
+ *                the ledger as a MANUAL_ADJUSTMENT. No difference, no movement.
+ *  store_cost -> `value` is the US store cost in US cents. The peso cost is
+ *                calculated HERE, with the exchange rate and tax factor read now
+ *                (never a figure sent by the browser), and written to cost_cents
+ *                together with store_cost_usd_cents / commission_percent.
+ *                `value` null clears the USD cost and leaves cost_cents as it was.
+ *  commission -> `value` is 0, 10 or 15. With a USD cost on file the peso cost is
+ *                recalculated; without one only the percentage is remembered.
  */
 export async function updateVariantQuick(input: {
   variantId: string;
   field: QuickEditField;
-  value: number;
+  value: number | null;
   adminId: string | null;
 }): Promise<QuickEditResult> {
   const { variantId, field, value, adminId } = input;
   if (!variantId) return { ok: false, error: "Variante no encontrada." };
-  if (field !== "price" && field !== "stock") return { ok: false, error: "Campo no válido." };
-  if (!Number.isFinite(value)) {
+  if (field !== "price" && field !== "stock" && field !== "store_cost" && field !== "commission") {
+    return { ok: false, error: "Campo no válido." };
+  }
+  if (field === "store_cost" || field === "commission") return updateVariantStoreCost({ variantId, field, value });
+  if (value === null || !Number.isFinite(value)) {
     return { ok: false, error: field === "price" ? "Escribe un precio válido." : "Escribe una cantidad válida." };
   }
   if (value < 0) {
@@ -787,6 +870,257 @@ export async function updateVariantQuick(input: {
   });
   if (!movement.ok) return movement;
   return { ...base, changed: true, previous: current, next: target, delta };
+}
+
+async function updateVariantStoreCost(input: {
+  variantId: string;
+  field: "store_cost" | "commission";
+  value: number | null;
+}): Promise<QuickEditResult> {
+  const { variantId, field, value } = input;
+
+  if (field === "store_cost" && value !== null) {
+    if (!Number.isFinite(value)) return { ok: false, error: "Escribe un costo en dólares válido." };
+    if (value < 0) return { ok: false, error: "El costo no puede ser negativo." };
+    if (!Number.isInteger(value)) return { ok: false, error: "El costo debe ir en centavos enteros." };
+    if (value > MAX_STORE_COST_USD_CENTS) return { ok: false, error: "Ese costo en dólares es demasiado alto. Revísalo." };
+  }
+  if (field === "commission" && (value === null || !Number.isFinite(value) || !isCommissionOption(value))) {
+    return { ok: false, error: "Elige sin comisión, 10% o 15%." };
+  }
+
+  const db = adminDb();
+  const { data, error } = await db
+    .from("product_variants")
+    .select(
+      "id, product_id, cost_cents, store_cost_usd_cents, commission_percent, is_active, products(name, is_active)",
+    )
+    .eq("id", variantId)
+    .maybeSingle();
+  if (error) {
+    if (isMissingStoreCostColumn(error.message)) return { ok: false, error: STORE_COST_UNAVAILABLE_MESSAGE };
+    return { ok: false, error: describeError(new Error(error.message), "No fue posible leer la variante.") };
+  }
+  if (!data) return { ok: false, error: "Variante no encontrada." };
+
+  const product = (Array.isArray(data.products) ? data.products[0] : data.products) as
+    | { name: string; is_active: boolean }
+    | null;
+  if (!product) return { ok: false, error: "Producto no encontrado." };
+  if (!product.is_active) return { ok: false, error: "El producto está archivado. Restáuralo para editarlo." };
+  if (!data.is_active) return { ok: false, error: "Esta variante está desactivada." };
+
+  const previous: StoreCostSnapshot = {
+    storeCostUsdCents:
+      data.store_cost_usd_cents === null || data.store_cost_usd_cents === undefined ? null : Number(data.store_cost_usd_cents),
+    commissionPercent: Number(data.commission_percent ?? 0),
+    costCents: Number(data.cost_cents ?? 0),
+  };
+
+  const next: StoreCostSnapshot =
+    field === "store_cost"
+      ? { ...previous, storeCostUsdCents: value }
+      : { ...previous, commissionPercent: value as number };
+
+  const settings = await getCostSettings();
+  const base = {
+    ok: true as const,
+    field,
+    productId: data.product_id as string,
+    productName: product.name,
+    variantId,
+    delta: 0,
+  };
+  const unchanged = () => ({
+    ...base,
+    changed: false,
+    previous: previous.costCents,
+    next: previous.costCents,
+    storeCost: { previous, next: previous, usdMxnRate: settings.usdMxnRate, taxFactor: settings.usTaxFactor },
+  });
+
+  if (next.storeCostUsdCents === previous.storeCostUsdCents && next.commissionPercent === previous.commissionPercent) {
+    return unchanged();
+  }
+
+  // Clearing the USD cost only forgets where the peso cost came from:
+  // cost_cents keeps its last value (it is still what the item cost her).
+  if (next.storeCostUsdCents !== null) {
+    if (settings.error) return { ok: false, error: settings.error };
+    if (settings.usdMxnRate === null) return { ok: false, error: MISSING_RATE_MESSAGE };
+    next.costCents = computeStoreCostMxnCents({
+      storeCostUsdCents: next.storeCostUsdCents,
+      taxFactor: settings.usTaxFactor,
+      commissionPercent: next.commissionPercent,
+      usdMxnRate: settings.usdMxnRate,
+    });
+  }
+
+  const { error: updateError } = await db
+    .from("product_variants")
+    .update({
+      store_cost_usd_cents: next.storeCostUsdCents,
+      commission_percent: next.commissionPercent,
+      cost_cents: next.costCents,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", variantId);
+  if (updateError) {
+    if (isMissingStoreCostColumn(updateError.message)) return { ok: false, error: STORE_COST_UNAVAILABLE_MESSAGE };
+    return { ok: false, error: describeError(new Error(updateError.message), "No fue posible guardar el costo.") };
+  }
+
+  return {
+    ...base,
+    changed: true,
+    previous: previous.costCents,
+    next: next.costCents,
+    storeCost: { previous, next, usdMxnRate: settings.usdMxnRate, taxFactor: settings.usTaxFactor },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Cost settings (app_settings): exchange rate and US tax factor
+// ---------------------------------------------------------------------------
+
+export type CostSettings = {
+  /** MXN per USD. null until the owner captures it — never defaulted. */
+  usdMxnRate: number | null;
+  /** 1.083 unless she changed it. */
+  usTaxFactor: number;
+  /** Set when app_settings could not be read; the USD inputs stay disabled. */
+  error: string | null;
+};
+
+/** Never throws: the product lists must render even if this read fails. */
+export async function getCostSettings(): Promise<CostSettings> {
+  try {
+    const { data, error } = await adminDb()
+      .from("app_settings")
+      .select("key, value")
+      .in("key", [USD_MXN_RATE_KEY, US_TAX_FACTOR_KEY]);
+    if (error) {
+      return { usdMxnRate: null, usTaxFactor: DEFAULT_US_TAX_FACTOR, error: `No se pudo leer el tipo de cambio: ${error.message}` };
+    }
+    const values = new Map((data ?? []).map((row) => [row.key as string, row.value as unknown]));
+    return {
+      usdMxnRate: readStoredSetting(USD_MXN_RATE_KEY, values.get(USD_MXN_RATE_KEY)),
+      usTaxFactor: readStoredSetting(US_TAX_FACTOR_KEY, values.get(US_TAX_FACTOR_KEY)) ?? DEFAULT_US_TAX_FACTOR,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      usdMxnRate: null,
+      usTaxFactor: DEFAULT_US_TAX_FACTOR,
+      error: `No se pudo leer el tipo de cambio: ${error instanceof Error ? error.message : "error desconocido"}`,
+    };
+  }
+}
+
+const COST_SETTING_DESCRIPTIONS: Record<CostSettingKey, string> = {
+  usd_mxn_rate:
+    "Tipo de cambio USD→MXN con el que se calcula el costo en pesos de lo comprado en dólares. Lo captura la dueña; cambiarlo no recalcula costos ya guardados.",
+  us_tax_factor: "Factor de impuesto (tax) de las compras en tiendas de EE.UU. que se aplica al costo en dólares",
+};
+
+export type CostSettingResult =
+  | { ok: true; changed: boolean; key: CostSettingKey; previous: number | null; next: number }
+  | { ok: false; error: string };
+
+/**
+ * Saves the exchange rate or the tax factor in app_settings (validated: rate
+ * > 0, tax between 1 and 1.5, up to 4 decimals). Costs already saved are not
+ * recalculated: each one is the cost at the time it was captured.
+ */
+export async function updateCostSetting(input: {
+  key: string;
+  value: unknown;
+  adminId: string | null;
+}): Promise<CostSettingResult> {
+  const { key, value, adminId } = input;
+  if (key !== USD_MXN_RATE_KEY && key !== US_TAX_FACTOR_KEY) return { ok: false, error: "Ajuste no válido." };
+  const parsed = parseCostSetting(key, value);
+  if (!parsed.ok) return parsed;
+
+  const db = adminDb();
+  const { data: current, error: readError } = await db.from("app_settings").select("value").eq("key", key).maybeSingle();
+  if (readError) return { ok: false, error: describeError(new Error(readError.message), "No fue posible leer el ajuste.") };
+  const previous = readStoredSetting(key, current?.value);
+  if (previous === parsed.value) return { ok: true, changed: false, key, previous, next: parsed.value };
+
+  const { error } = await db.from("app_settings").upsert(
+    {
+      key,
+      value: parsed.value,
+      description: COST_SETTING_DESCRIPTIONS[key],
+      updated_by_admin_id: adminId,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "key" },
+  );
+  if (error) return { ok: false, error: describeError(new Error(error.message), "No fue posible guardar el ajuste.") };
+  return { ok: true, changed: true, key, previous, next: parsed.value };
+}
+
+// ---------------------------------------------------------------------------
+// Visible / Oculto from the Catálogo column
+// ---------------------------------------------------------------------------
+
+export const PUBLISH_NEEDS_PRICE_MESSAGE = "Ponle un precio antes de hacerlo visible.";
+
+export type PublicToggleResult =
+  | { ok: true; changed: boolean; productId: string; name: string; previous: boolean; next: boolean }
+  | { ok: false; error: string };
+
+/**
+ * Shows or hides a product in the public catalogue (products.is_public).
+ *  - Archived products cannot be toggled (restore first).
+ *  - A product cannot be made visible while every active variant is at $0 —
+ *    the same rule the store sync follows: publish only when we know what to
+ *    charge. Hiding is always allowed.
+ *  - An "en camino" product may be toggled; the public listings still leave it
+ *    out until it is marked received.
+ * products has no "updated by" column, so the audit row is written by the
+ * server action with the session's admin.
+ */
+export async function setProductPublic(input: { productId: string; isPublic: boolean }): Promise<PublicToggleResult> {
+  const { productId, isPublic } = input;
+  if (!productId) return { ok: false, error: "Producto no encontrado." };
+
+  const db = adminDb();
+  const { data, error } = await db
+    .from("products")
+    .select("id, name, is_public, is_active, product_variants(price_cents, is_active)")
+    .eq("id", productId)
+    .maybeSingle();
+  if (error) return { ok: false, error: describeError(new Error(error.message), "No fue posible leer el producto.") };
+  if (!data) return { ok: false, error: "El producto ya no existe." };
+  if (!data.is_active) return { ok: false, error: "El producto está archivado. Restáuralo para publicarlo." };
+
+  const previous = Boolean(data.is_public);
+  const base = { ok: true as const, productId, name: data.name as string, previous };
+  if (previous === isPublic) return { ...base, changed: false, next: isPublic };
+
+  if (isPublic) {
+    const variants = ((data.product_variants ?? []) as Array<{ price_cents: number; is_active: boolean }>).filter(
+      (variant) => variant.is_active,
+    );
+    if (!variants.some((variant) => Number(variant.price_cents ?? 0) > 0)) {
+      return { ok: false, error: PUBLISH_NEEDS_PRICE_MESSAGE };
+    }
+  }
+
+  const { data: updated, error: updateError } = await db
+    .from("products")
+    .update({ is_public: isPublic, updated_at: new Date().toISOString() })
+    .eq("id", productId)
+    .eq("is_active", true)
+    .select("id");
+  if (updateError) {
+    return { ok: false, error: describeError(new Error(updateError.message), "No fue posible cambiar la visibilidad.") };
+  }
+  if (!updated?.length) return { ok: false, error: "El producto está archivado. Restáuralo para publicarlo." };
+  return { ...base, changed: true, next: isPublic };
 }
 
 /**

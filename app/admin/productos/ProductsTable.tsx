@@ -15,6 +15,9 @@ import {
 } from "./actions";
 import type { ProductListRow, ProductSegment } from "../../../lib/supabase/admin-catalog";
 import { InlineVariantField } from "./InlineVariantField";
+import { InlineStoreCostField } from "./InlineStoreCostField";
+import { PublicToggle } from "./PublicToggle";
+import { MISSING_RATE_MESSAGE, STORE_COST_UNAVAILABLE_MESSAGE } from "../../../lib/supabase/store-cost";
 
 const PencilIcon = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -143,7 +146,59 @@ function PriceCell({ product }: { product: ProductListRow }) {
   );
 }
 
-export function ProductsTable({ products, segment }: { products: ProductListRow[]; segment?: ProductSegment }) {
+/** What the "Costo tienda" cells need to know about the setup (migration 009, exchange rate). */
+export type StoreCostContext = {
+  /** False until migration 009 adds the store-cost columns. */
+  available: boolean;
+  /** True once the owner captured the exchange rate (and app_settings could be read). */
+  hasRate: boolean;
+};
+
+/**
+ * Costo tienda: US store cost + commission for single-variant products, same
+ * rule as Stock / Precio. Disabled (with the reason) until migration 009 runs
+ * and the exchange rate is captured; the server enforces both anyway.
+ */
+function StoreCostCell({ product, context }: { product: ProductListRow; context: StoreCostContext }) {
+  const [variant] = product.variants;
+  if (product.variants.length !== 1) {
+    // Each variant has its own cost: edited in the full form ("Editar variantes" in Precio).
+    return (
+      <span className="admin-inline-readonly admin-cell-muted" title={product.variants.length ? "Cada variante tiene su costo: edítalo en el producto." : undefined}>
+        —
+      </span>
+    );
+  }
+  const reason = !context.available
+    ? STORE_COST_UNAVAILABLE_MESSAGE
+    : !context.hasRate
+      ? MISSING_RATE_MESSAGE
+      : !product.is_active
+        ? "Restaura el producto para editarlo"
+        : undefined;
+  return (
+    <InlineStoreCostField
+      variantId={variant.id}
+      usdCents={variant.store_cost_usd_cents}
+      commissionPercent={variant.commission_percent}
+      costCents={Number(variant.cost_cents ?? 0)}
+      disabled={Boolean(reason)}
+      disabledReason={reason}
+      disabledHint={!context.available ? "Requiere migración 009" : !context.hasRate ? "Define el tipo de cambio" : undefined}
+      label={product.name}
+    />
+  );
+}
+
+export function ProductsTable({
+  products,
+  segment,
+  storeCost = { available: false, hasRate: false },
+}: {
+  products: ProductListRow[];
+  segment?: ProductSegment;
+  storeCost?: StoreCostContext;
+}) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const allSelected = products.length > 0 && products.every((p) => selected.has(p.id));
 
@@ -164,7 +219,7 @@ export function ProductsTable({ products, segment }: { products: ProductListRow[
     <>
       <BulkBar selected={[...selected]} onClear={() => setSelected(new Set())} />
       <div className="admin-table-scroll">
-        <table className="admin-data-table">
+        <table className="admin-data-table admin-products-table">
           <thead>
             <tr>
               <th style={{ width: 32 }}>
@@ -180,6 +235,7 @@ export function ProductsTable({ products, segment }: { products: ProductListRow[
               <th>Tipo</th>
               <th className="numeric admin-col-stock">Stock</th>
               <th className="numeric admin-col-price">Precio</th>
+              <th className="numeric admin-col-cost">Costo tienda</th>
               <th>Catálogo</th>
               <th aria-label="Acciones" />
             </tr>
@@ -224,13 +280,14 @@ export function ProductsTable({ products, segment }: { products: ProductListRow[
                 <td className="numeric admin-col-price">
                   <PriceCell product={product} />
                 </td>
+                <td className="numeric admin-col-cost">
+                  <StoreCostCell product={product} context={storeCost} />
+                </td>
                 <td>
                   {!product.is_active ? (
                     <Badge tone="neutral">Archivado</Badge>
-                  ) : product.is_public ? (
-                    <Badge tone="success">Visible</Badge>
                   ) : (
-                    <Badge tone="warning">Oculto</Badge>
+                    <PublicToggle productId={product.id} productName={product.name} isPublic={product.is_public} />
                   )}
                 </td>
                 <td>
