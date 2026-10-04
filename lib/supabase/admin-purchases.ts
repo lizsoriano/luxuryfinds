@@ -9,10 +9,13 @@ import {
   logActivity,
 } from "./business";
 import {
+  ASSIGNMENT_MIGRATION_FILE,
   MAX_ITEM_QUANTITY,
   MAX_USD_CENTS,
   PURCHASE_MIGRATION_FILE,
   computeOwed,
+  parseAssignQuantity,
+  parseSalePriceToCents,
   computePurchaseConfirmation,
   parseCommission,
   parseExchangeRate,
@@ -1270,4 +1273,420 @@ export async function voidShopperPayment(input: { adminId: string; paymentId: st
     newData: { reason },
   });
   return { ok: true, purchaseId: (payment.purchase_id as string | null) ?? null };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: assigning purchased units to clients (purchase_assignments, the
+// purchase_item_availability view and the assign_purchase_item() /
+// cancel_purchase_assignment() functions of migration 011). Every assignment
+// generates an ordinary pedido + ticket, so the client's balance, payments and
+// Cobranza are the existing ones. Until 011 is applied (and 010 before it)
+// reads report which file is missing and writes answer with a message naming
+// it, instead of throwing.
+// ---------------------------------------------------------------------------
+
+export type AssignmentStatus = "ACTIVE" | "CANCELLED";
+
+export const ASSIGNMENT_STATUS_LABELS: Record<AssignmentStatus, string> = {
+  ACTIVE: "Activa",
+  CANCELLED: "Cancelada",
+};
+
+export const ASSIGNMENTS_UNAVAILABLE_MESSAGE = `Falta aplicar ${ASSIGNMENT_MIGRATION_FILE} en el editor SQL de Supabase (después de la 010).`;
+export const PURCHASES_AND_ASSIGNMENTS_UNAVAILABLE_MESSAGE = `Faltan aplicar ${PURCHASE_MIGRATION_FILE} y después ${ASSIGNMENT_MIGRATION_FILE} en el editor SQL de Supabase.`;
+
+/** Phase 2 schema: ready, or which file is missing. */
+export type AssignmentSchemaState = "ready" | "missing-010" | "missing-011";
+
+export function isMissingAssignmentSchema(message: string | null | undefined) {
+  if (!message) return false;
+  const names = ["purchase_assignments", "purchase_item_availability", "assign_purchase_item", "cancel_purchase_assignment"];
+  if (!names.some((name) => message.includes(name))) return false;
+  return message.includes("does not exist") || message.includes("schema cache") || message.includes("Could not find the");
+}
+
+export function assignmentUnavailableMessage(state: AssignmentSchemaState) {
+  if (state === "missing-010") return PURCHASES_AND_ASSIGNMENTS_UNAVAILABLE_MESSAGE;
+  if (state === "missing-011") return ASSIGNMENTS_UNAVAILABLE_MESSAGE;
+  return null;
+}
+
+/** When a phase 2 object is missing, tells whether 010 itself is missing too. */
+async function missingAssignmentState(): Promise<Exclude<AssignmentSchemaState, "ready">> {
+  const { error } = await adminDb().from("purchases").select("id").limit(1);
+  return error && isMissingPurchaseSchema(error.message) ? "missing-010" : "missing-011";
+}
+
+async function describeAssignmentError(error: unknown, fallback: string): Promise<string> {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  if (isMissingAssignmentSchema(message)) return assignmentUnavailableMessage(await missingAssignmentState()) ?? fallback;
+  if (isMissingPurchaseSchema(message)) return PURCHASES_AND_ASSIGNMENTS_UNAVAILABLE_MESSAGE;
+  return describeError(error instanceof Error ? error : new Error(message || fallback), fallback);
+}
+
+export type ItemAvailability = {
+  purchased: number;
+  /** Units in ACTIVE assignments. */
+  assigned: number;
+  available: number;
+  /** Σ frozen cost of the ACTIVE assignments (needed to preview the next one's cost). */
+  assignedCostMxnCents: number;
+};
+
+export type AssignmentRow = {
+  id: string;
+  purchase_item_id: string;
+  client_id: string;
+  clientName: string;
+  clientPhone: string | null;
+  quantity: number;
+  unit_price_cents: number;
+  totalCents: number;
+  cost_mxn_cents: number;
+  status: AssignmentStatus;
+  order_id: string;
+  ticket_id: string;
+  ticketNumber: string | null;
+  ticketFinancialStatus: string | null;
+  ticketLogisticsStatus: string | null;
+  ticketPaidCents: number;
+  created_at: string;
+  cancelled_at: string | null;
+  cancellation_reason: string | null;
+};
+
+type ClientRef = { first_name: string; last_name: string; phone: string | null };
+type TicketRef = { ticket_number: string; financial_status: string; logistics_status: string; paid_principal_cents: number };
+
+function clientName(client: ClientRef | null) {
+  return client ? `${client.first_name} ${client.last_name}`.trim() : "Clienta eliminada";
+}
+
+/**
+ * Availability (from the view, one query) and every assignment of one purchase
+ * (one query, client and ticket embedded). Never throws for a missing 011.
+ */
+export async function getPurchaseAssignments(purchaseId: string): Promise<{
+  state: AssignmentSchemaState;
+  availability: Map<string, ItemAvailability>;
+  assignments: AssignmentRow[];
+}> {
+  const db = adminDb();
+  const [availabilityResult, assignmentsResult] = await Promise.all([
+    db
+      .from("purchase_item_availability")
+      .select("purchase_item_id, purchased_quantity, assigned_quantity, available_quantity, assigned_cost_mxn_cents")
+      .eq("purchase_id", purchaseId),
+    db
+      .from("purchase_assignments")
+      .select(
+        "id, purchase_item_id, client_id, quantity, unit_price_cents, cost_mxn_cents, status, order_id, ticket_id, created_at, cancelled_at, cancellation_reason, clients(first_name, last_name, phone), tickets(ticket_number, financial_status, logistics_status, paid_principal_cents)",
+      )
+      .eq("purchase_id", purchaseId)
+      .order("created_at", { ascending: true }),
+  ]);
+  for (const result of [availabilityResult, assignmentsResult]) {
+    if (result.error) {
+      if (isMissingAssignmentSchema(result.error.message) || isMissingPurchaseSchema(result.error.message)) {
+        return { state: await missingAssignmentState(), availability: new Map(), assignments: [] };
+      }
+      throw new Error(result.error.message);
+    }
+  }
+
+  const availability = new Map<string, ItemAvailability>();
+  for (const row of availabilityResult.data ?? []) {
+    availability.set(row.purchase_item_id as string, {
+      purchased: num(row.purchased_quantity),
+      assigned: num(row.assigned_quantity),
+      available: num(row.available_quantity),
+      assignedCostMxnCents: num(row.assigned_cost_mxn_cents),
+    });
+  }
+  const assignments: AssignmentRow[] = (assignmentsResult.data ?? []).map((row) => {
+    const client = relation(row.clients as unknown as ClientRef[]);
+    const ticket = relation(row.tickets as unknown as TicketRef[]);
+    return {
+      id: row.id as string,
+      purchase_item_id: row.purchase_item_id as string,
+      client_id: row.client_id as string,
+      clientName: clientName(client),
+      clientPhone: client?.phone ?? null,
+      quantity: num(row.quantity),
+      unit_price_cents: num(row.unit_price_cents),
+      totalCents: num(row.quantity) * num(row.unit_price_cents),
+      cost_mxn_cents: num(row.cost_mxn_cents),
+      status: row.status as AssignmentStatus,
+      order_id: row.order_id as string,
+      ticket_id: row.ticket_id as string,
+      ticketNumber: ticket?.ticket_number ?? null,
+      ticketFinancialStatus: ticket?.financial_status ?? null,
+      ticketLogisticsStatus: ticket?.logistics_status ?? null,
+      ticketPaidCents: num(ticket?.paid_principal_cents),
+      created_at: row.created_at as string,
+      cancelled_at: (row.cancelled_at as string | null) ?? null,
+      cancellation_reason: (row.cancellation_reason as string | null) ?? null,
+    };
+  });
+  return { state: "ready", availability, assignments };
+}
+
+export type PendingItemRow = {
+  id: string;
+  purchase_id: string;
+  purchase_number: string;
+  purchase_date: string;
+  supplierName: string;
+  store_name: string;
+  name: string;
+  variant_label: string | null;
+  photoUrl: string | null;
+  purchased: number;
+  assigned: number;
+  available: number;
+  unit_cost_mxn_cents: number | null;
+  line_cost_mxn_cents: number | null;
+};
+
+export type PendingItemsQuery = {
+  search?: string;
+  purchaseId?: string;
+  supplierId?: string;
+  /** "available": with units left · "assigned": fully assigned · anything else: all. */
+  stock?: string;
+  page?: number;
+};
+
+export type PendingItemsResult = {
+  items: PendingItemRow[];
+  page: number;
+  pageSize: number;
+  total: number;
+  hasNextPage: boolean;
+  state: AssignmentSchemaState;
+};
+
+/**
+ * "Comprados pendientes de envío": every PURCHASED line of every CONFIRMED
+ * purchase with purchased / assigned / available, filtered and paginated in the
+ * database (one query on the view). Phase 3 picks what to ship from here.
+ */
+export async function listPendingPurchaseItems(query: PendingItemsQuery = {}): Promise<PendingItemsResult> {
+  const page = Math.max(1, query.page ?? 1);
+  const from = (page - 1) * PAGE_SIZE;
+  const empty = { items: [] as PendingItemRow[], page, pageSize: PAGE_SIZE, total: 0, hasNextPage: false };
+
+  let builder = adminDb()
+    .from("purchase_item_availability")
+    .select(
+      "purchase_item_id, purchase_id, purchase_number, purchase_date, supplier_name, store_name, name, variant_label, photo_storage_key, purchased_quantity, assigned_quantity, available_quantity, unit_cost_mxn_cents, line_cost_mxn_cents",
+      { count: "exact" },
+    )
+    .eq("business_id", DEFAULT_BUSINESS_ID)
+    .eq("purchase_status", "CONFIRMED")
+    .eq("item_status", "PURCHASED");
+  const term = text(query.search).replace(/[%_\\]/g, " ").replace(/\s+/g, " ").trim();
+  if (term) builder = builder.ilike("name", `%${term}%`);
+  if (query.purchaseId) builder = builder.eq("purchase_id", query.purchaseId);
+  if (query.supplierId) builder = builder.eq("supplier_id", query.supplierId);
+  if (query.stock === "available") builder = builder.gt("available_quantity", 0);
+  if (query.stock === "assigned") builder = builder.eq("available_quantity", 0);
+
+  const { data, error, count } = await builder
+    .order("purchase_date", { ascending: false })
+    .order("purchase_number", { ascending: false })
+    .order("item_created_at", { ascending: true })
+    .range(from, from + PAGE_SIZE - 1);
+  if (error) {
+    if (isMissingAssignmentSchema(error.message) || isMissingPurchaseSchema(error.message)) {
+      return { ...empty, state: await missingAssignmentState() };
+    }
+    throw new Error(error.message);
+  }
+
+  const items: PendingItemRow[] = (data ?? []).map((row) => ({
+    id: row.purchase_item_id as string,
+    purchase_id: row.purchase_id as string,
+    purchase_number: row.purchase_number as string,
+    purchase_date: row.purchase_date as string,
+    supplierName: (row.supplier_name as string | null) ?? "Shopper eliminado",
+    store_name: row.store_name as string,
+    name: row.name as string,
+    variant_label: (row.variant_label as string | null) ?? null,
+    photoUrl: itemPhotoUrl((row.photo_storage_key as string | null) ?? null),
+    purchased: num(row.purchased_quantity),
+    assigned: num(row.assigned_quantity),
+    available: num(row.available_quantity),
+    unit_cost_mxn_cents: numOrNull(row.unit_cost_mxn_cents),
+    line_cost_mxn_cents: numOrNull(row.line_cost_mxn_cents),
+  }));
+  return {
+    items,
+    page,
+    pageSize: PAGE_SIZE,
+    total: count ?? items.length,
+    hasNextPage: (count ?? 0) > from + PAGE_SIZE,
+    state: "ready",
+  };
+}
+
+/** Confirmed purchases for the Pendientes filter (most recent first). */
+export async function listConfirmedPurchaseOptions(limit = 200): Promise<Array<{ id: string; label: string }>> {
+  const { data, error } = await adminDb()
+    .from("purchases")
+    .select("id, purchase_number, purchase_date, created_at, suppliers(name)")
+    .eq("business_id", DEFAULT_BUSINESS_ID)
+    .eq("status", "CONFIRMED")
+    .order("purchase_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) return [];
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    label: `${row.purchase_number as string} · ${relation(row.suppliers as unknown as Array<{ name: string }>)?.name ?? "Shopper eliminado"}`,
+  }));
+}
+
+export type TicketPurchaseLink = { assignmentId: string; purchaseId: string; purchaseNumber: string; status: AssignmentStatus };
+
+/**
+ * Which tickets came from a shopper purchase (for the pedido screen). Empty when
+ * 010/011 are not applied: that screen must keep working without them.
+ */
+export async function getPurchaseLinksForTickets(ticketIds: string[]): Promise<Map<string, TicketPurchaseLink>> {
+  const links = new Map<string, TicketPurchaseLink>();
+  if (!ticketIds.length) return links;
+  try {
+    const db = adminDb();
+    const { data, error } = await db.from("purchase_assignments").select("id, ticket_id, purchase_id, status").in("ticket_id", ticketIds);
+    if (error || !data?.length) return links;
+    const purchaseIds = [...new Set(data.map((row) => row.purchase_id as string))];
+    const { data: purchases } = await db.from("purchases").select("id, purchase_number").in("id", purchaseIds);
+    const numbers = new Map((purchases ?? []).map((row) => [row.id as string, row.purchase_number as string]));
+    for (const row of data) {
+      links.set(row.ticket_id as string, {
+        assignmentId: row.id as string,
+        purchaseId: row.purchase_id as string,
+        purchaseNumber: numbers.get(row.purchase_id as string) ?? "compra con shopper",
+        status: row.status as AssignmentStatus,
+      });
+    }
+  } catch {
+    // Informational only: the pedido renders the same without it.
+  }
+  return links;
+}
+
+export type AssignResult = {
+  assignmentId: string;
+  purchaseId: string;
+  orderId: string;
+  ticketId: string;
+  ticketNumber: string;
+  costMxnCents: number;
+  availableAfter: number;
+};
+
+/**
+ * "Asignar": `quantity` units of a purchased line to a client at the sale price
+ * she typed (pesos). Validation here is only for friendly messages; the
+ * database function re-checks everything with the line locked and writes the
+ * order, its item, the ticket and the assignment in one transaction.
+ */
+export async function assignPurchaseItem(input: {
+  adminId: string;
+  purchaseItemId: unknown;
+  clientId: unknown;
+  quantity: unknown;
+  unitPrice: unknown;
+}): Promise<Result<AssignResult>> {
+  const itemId = text(input.purchaseItemId);
+  if (!itemId) return fail("Artículo no encontrado.");
+  const clientId = text(input.clientId);
+  if (!clientId) return fail("Elige a la clienta.");
+  const quantity = parseAssignQuantity(input.quantity, MAX_ITEM_QUANTITY);
+  if (!quantity.ok) return fail(quantity.error);
+  const price = parseSalePriceToCents(input.unitPrice);
+  if (!price.ok) return fail(price.error);
+
+  const { data, error } = await adminDb().rpc("assign_purchase_item", {
+    p_purchase_item_id: itemId,
+    p_client_id: clientId,
+    p_quantity: quantity.value,
+    p_unit_price_cents: price.value,
+    p_admin_id: input.adminId,
+  });
+  if (error) return fail(await describeAssignmentError(new Error(error.message), "No fue posible asignar el artículo."));
+  const row = (data ?? {}) as Record<string, unknown>;
+  const result: AssignResult = {
+    assignmentId: String(row.assignment_id ?? ""),
+    purchaseId: String(row.purchase_id ?? ""),
+    orderId: String(row.order_id ?? ""),
+    ticketId: String(row.ticket_id ?? ""),
+    ticketNumber: String(row.ticket_number ?? ""),
+    costMxnCents: num(row.cost_mxn_cents),
+    availableAfter: num(row.available_after),
+  };
+
+  await logActivity({
+    adminUserId: input.adminId,
+    action: "PURCHASE_ASSIGNED",
+    entityType: "purchase_assignments",
+    entityId: result.assignmentId,
+    newData: {
+      purchaseId: result.purchaseId,
+      purchaseNumber: row.purchase_number ?? null,
+      purchaseItemId: itemId,
+      clientId,
+      quantity: quantity.value,
+      unit_price_cents: price.value,
+      cost_mxn_cents: result.costMxnCents,
+      orderId: result.orderId,
+      ticketId: result.ticketId,
+      ticketNumber: result.ticketNumber,
+    },
+  });
+  return { ok: true, ...result };
+}
+
+/** "Cancelar asignación": only while the ticket is ORDERED and the client has paid nothing (see 011). */
+export async function cancelPurchaseAssignment(input: {
+  adminId: string;
+  assignmentId: unknown;
+  reason: unknown;
+}): Promise<Result<{ purchaseId: string; orderId: string; ticketNumber: string }>> {
+  const assignmentId = text(input.assignmentId);
+  if (!assignmentId) return fail("Asignación no encontrada.");
+  const reason = text(input.reason).slice(0, 500);
+  if (!reason) return fail("Escribe el motivo para cancelar la asignación.");
+
+  const { data, error } = await adminDb().rpc("cancel_purchase_assignment", {
+    p_assignment_id: assignmentId,
+    p_admin_id: input.adminId,
+    p_reason: reason,
+  });
+  if (error) return fail(await describeAssignmentError(new Error(error.message), "No fue posible cancelar la asignación."));
+  const row = (data ?? {}) as Record<string, unknown>;
+
+  await logActivity({
+    adminUserId: input.adminId,
+    action: "PURCHASE_ASSIGNMENT_CANCELLED",
+    entityType: "purchase_assignments",
+    entityId: assignmentId,
+    newData: {
+      reason,
+      purchaseId: row.purchase_id ?? null,
+      purchaseItemId: row.purchase_item_id ?? null,
+      orderId: row.order_id ?? null,
+      ticketId: row.ticket_id ?? null,
+      ticketNumber: row.ticket_number ?? null,
+      orderCancelled: row.order_cancelled ?? null,
+    },
+  });
+  return {
+    ok: true,
+    purchaseId: String(row.purchase_id ?? ""),
+    orderId: String(row.order_id ?? ""),
+    ticketNumber: String(row.ticket_number ?? ""),
+  };
 }
