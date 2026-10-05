@@ -8,6 +8,8 @@ import { confirmStaffDelivery } from "../../lib/supabase/staff-deliveries";
 import {
   addStaffProductPhoto,
   createStaffProduct,
+  editStaffProduct,
+  editStaffVariant,
   recordStaffEntry,
   updateStaffVariantPrice,
 } from "../../lib/supabase/staff-inventory";
@@ -55,6 +57,27 @@ export async function createStaffProductAction(_state: StaffActionState, formDat
   } catch (error) {
     return failure(describeError(error, "No fue posible crear el producto."));
   }
+}
+
+export async function editStaffProductAction(_state: StaffActionState, data: FormData): Promise<StaffActionState> {
+  try {
+    const actor = await requireStaffActor();
+    const result = await editStaffProduct({ adminId: actor.id, productId: String(data.get("productId") ?? ""), name: String(data.get("name") ?? ""), categoryId: String(data.get("categoryId") ?? "").trim() || null });
+    if (!result.ok) return failure(result.error);
+    revalidateInventory(result.productId);
+    return { error: null, success: result.message, productId: result.productId };
+  } catch (error) { return failure(describeError(error, "No se pudieron guardar los datos.")); }
+}
+
+export async function editStaffVariantAction(_state: StaffActionState, data: FormData): Promise<StaffActionState> {
+  try {
+    const actor = await requireStaffActor();
+    const rawQuantity = String(data.get("quantity") ?? "").trim();
+    const result = await editStaffVariant({ adminId: actor.id, variantId: String(data.get("variantId") ?? ""), name: String(data.get("name") ?? ""), priceCents: parseMoneyToCents(data.get("price")) ?? Number.NaN, quantity: rawQuantity ? Number(rawQuantity) : Number.NaN });
+    if (!result.ok) return failure(result.error);
+    revalidateInventory(result.productId);
+    return { error: null, success: result.message, productId: result.productId };
+  } catch (error) { return failure(describeError(error, "No se pudo guardar la variante.")); }
 }
 
 export async function recordStaffEntryAction(_state: StaffActionState, formData: FormData): Promise<StaffActionState> {

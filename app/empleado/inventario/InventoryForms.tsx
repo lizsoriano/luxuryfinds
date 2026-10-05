@@ -7,6 +7,8 @@ import { FormMessage, PhotoField, useActionForm, usePhoto } from "../../admin/co
 import {
   addStaffPhotoAction,
   createStaffProductAction,
+  editStaffProductAction,
+  editStaffVariantAction,
   recordStaffEntryAction,
   updateStaffPriceAction,
   type StaffActionState,
@@ -17,6 +19,30 @@ import {
 // server action body is capped at 1 MB. Only SALE prices are ever typed here.
 
 type VariantDraft = { key: number; name: string; price: string; quantity: string };
+
+export function EditProductForm({ productId, name, categoryId, categories }: { productId: string; name: string; categoryId: string | null; categories: Array<{ id: string; name: string }> }) {
+  const { state, pending, onSubmit } = useActionForm<StaffActionState>(editStaffProductAction);
+  return <form className="staff-form" onSubmit={onSubmit}>
+    <input type="hidden" name="productId" value={productId} />
+    <label className="field"><span>Nombre del producto *</span><input className="input" name="name" required maxLength={140} defaultValue={name} /></label>
+    <label className="field"><span>Categoría</span><select className="input" name="categoryId" defaultValue={categoryId ?? ""}><option value="">Sin categoría</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
+    <FormMessage state={state} /><button className="button button-primary" disabled={pending}>{pending ? "Guardando…" : "Guardar datos"}</button>
+  </form>;
+}
+
+export function EditVariantForm({ variant, allowsDecimal }: { variant: { id: string; name: string; priceCents: number; stock: number }; allowsDecimal: boolean }) {
+  const { state, pending, onSubmit } = useActionForm<StaffActionState>(editStaffVariantAction);
+  return <form className="staff-form staff-edit-variant" onSubmit={onSubmit}>
+    <input type="hidden" name="variantId" value={variant.id} />
+    <label className="field"><span>Variante *</span><input className="input" name="name" required maxLength={100} defaultValue={variant.name} /></label>
+    <div className="staff-photo-numbers">
+      <label className="field"><span>Precio de venta *</span><input className="input" name="price" type="number" min="0.01" step="0.01" required defaultValue={centsToInput(variant.priceCents)} /></label>
+      <label className="field"><span>Existencia actual *</span><input className="input" name="quantity" type="number" min="0" step={allowsDecimal ? "0.001" : "1"} required defaultValue={variant.stock} /></label>
+    </div>
+    <p className="staff-hint">La cantidad es la existencia disponible total. El cambio queda registrado en el historial.</p>
+    <FormMessage state={state} /><button className="button button-primary" disabled={pending}>{pending ? "Guardando…" : "Guardar variante"}</button>
+  </form>;
+}
 
 export function NewProductForm({ categories }: { categories: Array<{ id: string; name: string }> }) {
   const router = useRouter();

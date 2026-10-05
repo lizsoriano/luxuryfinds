@@ -2,12 +2,15 @@ import Link from "next/link";
 import { formatMoney, formatQuantity } from "../../../lib/format";
 import { listLaPazProducts, listStaffCategories } from "../../../lib/supabase/staff-inventory";
 import { PhotoProducts } from "./PhotoProducts";
+import { requireStaffActor } from "../../../lib/supabase/business";
+import { EditProductForm, EditVariantForm } from "./InventoryForms";
 
 export const dynamic = "force-dynamic";
 
 type SearchParams = { q?: string; pagina?: string };
 
 export default async function StaffInventoryPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
+  const actor = await requireStaffActor();
   const sp = await searchParams;
   const search = (sp.q ?? "").trim();
   const page = Math.max(1, Number(sp.pagina) || 1);
@@ -60,6 +63,7 @@ export default async function StaffInventoryPage({ searchParams }: { searchParam
         </button>
       </form>
 
+      <h2 id="staff-saved-products" className="staff-saved-title">Productos guardados</h2>
       <p className="staff-count">
         {result.total} producto(s){search ? ` con “${search}”` : ""}. Toca uno para registrar una entrada.
       </p>
@@ -95,6 +99,14 @@ export default async function StaffInventoryPage({ searchParams }: { searchParam
                   </span>
                 </span>
               </Link>
+              {product.createdByAdminId === actor.id && !product.isPublic && <details className="staff-saved-edit">
+                <summary>Editar producto</summary>
+                <div className="staff-details-body">
+                  <EditProductForm key={`${product.id}-${product.name}-${product.categoryId}`} productId={product.id} name={product.name} categoryId={product.categoryId} categories={categories} />
+                  {product.variants.map((variant) => <EditVariantForm key={`${variant.id}-${variant.name}-${variant.priceCents}-${variant.stock}`} variant={variant} allowsDecimal={product.allowsDecimal} />)}
+                  <Link className="staff-link-button" href={`/empleado/inventario/${product.id}`}>Ver fotos e historial →</Link>
+                </div>
+              </details>}
             </li>
           ))}
         </ul>
