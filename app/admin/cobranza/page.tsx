@@ -74,14 +74,21 @@ export default async function CobranzaPage() {
                       <span className="admin-cell-sub">{proof.clientPhone}</span>
                     </td>
                     <td className="numeric">{formatMoney(proof.reported_amount_cents)}</td>
-                    <td className="admin-cell-muted admin-cell-nowrap">{PAYMENT_METHOD_LABELS[proof.payment_method] ?? proof.payment_method}</td>
+                    <td className="admin-cell-muted admin-cell-nowrap">
+                      {PAYMENT_METHOD_LABELS[proof.payment_method] ?? proof.payment_method}
+                      {proof.reportedBy ? (
+                        <span className="admin-cell-sub">
+                          Reportada por {proof.reportedBy} al entregar{proof.reference ? ` · Ref. ${proof.reference}` : ""}
+                        </span>
+                      ) : null}
+                    </td>
                     <td className="admin-cell-nowrap">
                       {proof.signedUrl ? (
                         <a href={proof.signedUrl} target="_blank" rel="noreferrer" style={{ color: "var(--terracotta)", fontWeight: 700 }}>
                           Ver archivo
                         </a>
                       ) : (
-                        <span className="admin-hint">No disponible</span>
+                        <span className="admin-hint">{proof.storage_key ? "No disponible" : "Sin foto"}</span>
                       )}
                     </td>
                     <td>

@@ -2,7 +2,9 @@
 
 import { redirect } from "next/navigation";
 import { createAdminSupabaseClient } from "../../../lib/supabase/admin";
+import { isActiveEmployeeAccount } from "../../../lib/supabase/auth";
 import { createServerSupabaseClient } from "../../../lib/supabase/server";
+import { staffLandingPath } from "../../../lib/supabase/staff-roles";
 
 export type LoginState = { error: string | null };
 export type PhoneLoginState = { error: string | null };
@@ -26,17 +28,22 @@ export async function loginAction(
   const password = String(formData.get("password") ?? "");
   if (!identifier || !password) return { error: "Completa todos los campos." };
 
+  let employee = false;
   try {
     const supabase = await createServerSupabaseClient();
     const credentials = identifier.includes("@")
       ? { email: identifier, password }
       : { phone: identifier.replace(/[\s()-]/g, ""), password };
-    const { error } = await supabase.auth.signInWithPassword(credentials);
+    const { data, error } = await supabase.auth.signInWithPassword(credentials);
     if (error) return { error: "Los datos de acceso no son correctos." };
+    // Staff land on their own panel; the owner and clientas keep the usual
+    // destination. (/admin refuses an employee on its own anyway.)
+    if (data.user) employee = await isActiveEmployeeAccount(data.user);
   } catch {
     return { error: "No fue posible iniciar sesión. Intenta de nuevo." };
   }
 
+  if (employee) redirect(staffLandingPath(formData.get("next")));
   redirect(safeReturnPath(formData.get("next")));
 }
 

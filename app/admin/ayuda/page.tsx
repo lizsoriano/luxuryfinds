@@ -13,11 +13,12 @@ const READY = [
   { title: "Categorías", href: "/admin/categorias", text: "Organiza el inventario y el catálogo público. Se archivan, no se borran." },
   { title: "Clientes", href: "/admin/clientes", text: "Fichas con historial de compras (tickets y ventas directas) y total comprado." },
   { title: "Proveedores", href: "/admin/proveedores", text: "A quién le compras y cuánto has gastado con cada uno." },
+  { title: "Empleados", href: "/admin/empleados", text: "Accesos de tu personal a su propio panel (/empleado): inventario en La Paz y entregas, con su caja del día." },
 ];
 
 const PENDING = [
   { title: "Pedidos, Por ordenar, En camino, Agenda, Cobranza, Devoluciones", phase: "Fase 2" },
-  { title: "Cotizaciones y Empleados", phase: "Fase 2" },
+  { title: "Cotizaciones", phase: "Fase 2" },
   { title: "Estadísticas y Reportes descargables", phase: "Fase 3" },
   { title: "Facturación electrónica y edición del sitio web", phase: "Fase 4" },
 ];

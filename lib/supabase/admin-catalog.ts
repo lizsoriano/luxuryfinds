@@ -2,6 +2,7 @@ import { describeError } from "../actions";
 import { adminDb, PRODUCT_IMAGE_BUCKET } from "./business";
 import { createAdminSupabaseClient } from "./admin";
 import { IN_TRANSIT_UNAVAILABLE_MESSAGE, isMissingInTransitColumn, withInTransitFallback } from "./in-transit";
+import { isMissingStaffDeliverySchema } from "./staff-schema";
 import {
   DEFAULT_US_TAX_FACTOR,
   MISSING_RATE_MESSAGE,
@@ -682,13 +683,23 @@ export async function ensureUniqueSlug(table: "categories" | "products", base: s
 export const MANUAL_MOVEMENT_TYPES = ["RECEIPT", "MANUAL_ADJUSTMENT"] as const;
 export type ManualMovementType = (typeof MANUAL_MOVEMENT_TYPES)[number];
 
-export type MovementResult = { ok: true } | { ok: false; error: string };
+export type MovementResult =
+  | {
+      ok: true;
+      /** id of the inventory_movements row written. */
+      movementId: string | null;
+      /** Only when evidenceStorageKey was given: false if migration 013 is missing and the photo was not linked. */
+      evidenceSaved?: boolean;
+    }
+  | { ok: false; error: string };
 
 /**
- * Shared by the Inventario movement dialog and the quick stock edit in the
- * Productos lists. Refuses to leave stock negative and respects the table's
- * CHECK (RECEIPT > 0, MANUAL_ADJUSTMENT <> 0). `currentStock` may be passed when
- * the caller has just read it, to skip a second read.
+ * Shared by the Inventario movement dialog, the quick stock edit in the
+ * Productos lists and the staff panel's "Registrar entrada". Refuses to leave
+ * stock negative and respects the table's CHECK (RECEIPT > 0,
+ * MANUAL_ADJUSTMENT <> 0). `currentStock` may be passed when the caller has
+ * just read it, to skip a second read. `evidenceStorageKey` (optional photo of
+ * the entry) needs migration 013; without it the movement is still written.
  */
 export async function recordManualMovement(input: {
   variantId: string;
@@ -697,6 +708,7 @@ export async function recordManualMovement(input: {
   reason: string;
   adminId: string | null;
   currentStock?: number;
+  evidenceStorageKey?: string | null;
 }): Promise<MovementResult> {
   const { variantId, movementType, quantityDelta, reason, adminId } = input;
   if (!MANUAL_MOVEMENT_TYPES.includes(movementType)) return { ok: false, error: "Tipo de movimiento no válido." };
@@ -717,15 +729,29 @@ export async function recordManualMovement(input: {
     }
   }
 
-  const { error } = await adminDb().from("inventory_movements").insert({
+  const row = {
     variant_id: variantId,
     movement_type: movementType,
     quantity_delta: quantityDelta,
     reason,
     created_by_admin_id: adminId,
-  });
-  if (error) return { ok: false, error: describeError(new Error(error.message), "No fue posible registrar el movimiento.") };
-  return { ok: true };
+  };
+  const evidence = input.evidenceStorageKey ? { evidence_storage_key: input.evidenceStorageKey } : null;
+  let result = await adminDb()
+    .from("inventory_movements")
+    .insert(evidence ? { ...row, ...evidence } : row)
+    .select("id")
+    .single();
+  let evidenceSaved = evidence ? true : undefined;
+  if (result.error && evidence && isMissingStaffDeliverySchema(result.error.message)) {
+    // Migration 013 not applied: keep the movement, drop only the photo link.
+    result = await adminDb().from("inventory_movements").insert(row).select("id").single();
+    evidenceSaved = false;
+  }
+  if (result.error) {
+    return { ok: false, error: describeError(new Error(result.error.message), "No fue posible registrar el movimiento.") };
+  }
+  return { ok: true, movementId: (result.data?.id as string | undefined) ?? null, evidenceSaved };
 }
 
 // ---------------------------------------------------------------------------
