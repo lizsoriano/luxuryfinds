@@ -1,5 +1,5 @@
 import { createAdminSupabaseClient } from "./admin";
-import { withInTransitFallback } from "./in-transit";
+import { isMissingInTransitColumn, withInTransitFallback } from "./in-transit";
 
 export type CatalogType = "ON_DEMAND" | "IMMEDIATE";
 export type CatalogSort =
@@ -128,6 +128,30 @@ async function rankByBestsellers(limit = 200): Promise<string[]> {
 }
 
 const PAGE_SIZE = 24;
+
+/** Preview-only merchandise; never fall back to unrelated catalogue products. */
+export async function getIncomingProducts(page = 1) {
+  const supabase = createAdminSupabaseClient();
+  const { data, error, count } = await supabase.schema("luxury_finds")
+    .from("products")
+    .select(PRODUCT_SELECT, { count: "exact" })
+    .eq("is_public", true)
+    .eq("is_active", true)
+    .eq("catalog_type", "IMMEDIATE")
+    .eq("in_transit", true)
+    .eq("product_variants.is_active", true)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: true })
+    .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
+  if (error && !isMissingInTransitColumn(error.message)) {
+    throw new Error(`No fue posible cargar las próximas llegadas: ${error.message}`);
+  }
+  const products = ((data ?? []) as unknown as ProductRow[]).flatMap((row, index) => {
+    const product = mapProductRow(row, index, supabase);
+    return product ? [product] : [];
+  });
+  return { products, totalPages: Math.max(1, Math.ceil((count ?? 0) / PAGE_SIZE)) };
+}
 
 export async function getCatalogCategories() {
   const supabase = createAdminSupabaseClient();

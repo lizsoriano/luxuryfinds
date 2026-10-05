@@ -1,226 +1,121 @@
-# Luxury Finds — Estado del proyecto y pendientes
+# Luxury Finds — Estado del proyecto y traspaso (actualizado 2026-10-04)
 
-Proyecto: `C:\Users\rutil\Desktop\appluxury2` (repo `lizsoriano/luxuryfinds`, rama `main`).
-App Next-like sobre `vinext`/`vite` + React Server Components, backend Supabase (schema `luxury_finds`), sin Tailwind (CSS plano en `app/globals.css`).
+Documento pensado para que **otra IA o persona retome el proyecto sin releer todo**. Léelo completo antes de tocar código. Todo lo marcado "verificado" se comprobó contra la base real o producción en la fecha indicada.
 
-Este documento resume lo que ya está construido y, sobre todo, **lo que falta para que funcione con datos reales**. Está escrito para que otra IA (o tú) pueda retomarlo sin tener que releer todo el proyecto desde cero.
-
----
-
-## ✅ Ya resuelto (verificado contra Supabase real y en producción)
-
-- Las 4 migraciones corrieron y se confirmaron una por una contra la base real: `000_fix_clients_service_role_grant.sql`, `001_telegram_linking.sql`, `002_business_management.sql`, `003_product_sources_sync.sql`, `004_weekly_plan_checkout.sql`. `businesses`, `suppliers`, `cash_sessions`, `sales`, `sale_items`, `expenses`, `variant_stock`, `product_sources`, `sync_runs`, `price_change_log`, `product_match_reviews`, `products.weekly_plan_eligible`, `orders.requested_payment_mode`, `product_variants.barcode`, `clients.telegram_chat_id` — las 14 tablas/columnas nuevas responden correctamente.
-  - *(Nota: `002` tuvo que corregirse una vez — tenía un `ALTER COLUMN` antes del `DROP VIEW` que lo necesitaba, orden inválido en Postgres. Ya está arreglado en el archivo; si vuelves a correrlo desde cero no debería fallar.)*
-- `REFUND_ENCRYPTION_KEY` ya está generada y en `.env` local (64 caracteres hex). Devoluciones ya puede cifrar/descifrar CLABEs.
-- **`main` está al día y desplegado en producción.** El trabajo vivía en la rama `feature/appluxury2` (PR #3, "Pedidos, plan semanal, Cobranza/Agenda/Devoluciones y limpieza de admin") y `main` se había quedado 5 commits atrás — por eso `https://luxuryfinds.vercel.app` mostraba una versión vieja. Se corrigieron dos bugs de deploy que tumbaban el build en Vercel (`vercel.json`: el cron cada 15 min no es válido en plan Hobby, y el bloque `functions` con un patrón que Vercel no reconocía porque el proyecto usa `nitro`/`vinext`, no el adaptador nativo de Next.js) y se fusionó el PR. El sitio en `https://luxuryfinds.vercel.app` ya sirve la versión actual.
-- **Ya existe una cuenta de administradora real y se probó en producción de punta a punta**: login → `/admin` → dashboard con datos reales, sidebar con las secciones nuevas, todo cargando bien. Correo: `rutilia2511@gmail.com` (la contraseña no se guardó en ningún archivo del proyecto — la tienes tú). Si necesitas otra cuenta de admin, es: crear el usuario en Supabase Auth (dashboard → Authentication, o `/crear-cuenta` en el sitio) y luego insertar una fila en `luxury_finds.admin_users` con ese mismo `id`, un `username` único y `status = 'ACTIVE'`.
-- Como consecuencia de lo anterior: **las variables de Supabase (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`) ya están confirmadas funcionando en Vercel** — si no lo estuvieran, el login y el dashboard del admin no habrían cargado datos reales. Lo que **sigue sin confirmarse en Vercel** son las otras 5: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET`, `SYNC_CRON_SECRET`, `REFUND_ENCRYPTION_KEY` — revísalas en Settings → Environment Variables antes de dar por hecho que Telegram/sincronización/devoluciones funcionan en producción.
-  - ⚠️ **Lección real de esta ronda**: Vercel permite que una misma variable tenga varias filas, cada una con un solo ambiente marcado (Production/Preview/Development), en vez de una fila con las tres casillas. `SUPABASE_SECRET_KEY` tenía fila para Production y otra para Development, pero **ninguna para Preview** — eso rompió `/catalogo` en cualquier deploy de rama/PR (con `500`/página vacía) aunque producción funcionara perfecto. Si algo funciona en producción pero no en un preview de Vercel, **revisa esto primero** antes de sospechar del código: Settings → Environment Variables → ábrela → confirma que las tres casillas estén marcadas (o que exista una fila por cada ambiente que uses).
-- Migraciones nuevas de esta ronda:
-  - `005_product_images_index.sql` — arregla que `/admin/productos` (y el catálogo público) tardara ~4s por página: faltaba el índice en `product_images.product_id`. **Confirmada corrida** (verificado 2026-09-11 contra Supabase real).
-  - `006_favorites.sql` — tabla nueva para la lista de deseos (ver abajo). **Confirmada corrida** (verificado 2026-09-11 contra Supabase real).
-- **Confirmado 2026-09-11 contra producción real**: las 8 variables de entorno SÍ están funcionando en Vercel (hay corridas reales de sincronización recientes, lo que solo pasa si `SYNC_CRON_SECRET` está bien puesto) y **el webhook de Telegram ya está registrado** apuntando a `https://www.luxuryfinds.com.mx/api/telegram/webhook` con 0 errores pendientes — los pasos 1 y 2 de la sección de abajo ya están hechos, quedaron desactualizados en este documento.
-- **WhatsApp reemplazado por Telegram** en todo el sitio público (Contacto, ayuda de login/registro, confirmación de checkout) — ya en producción, no requiere nada más.
-- **Header público rediseñado** con dos grupos de atajos: izquierda (Todo/Marcas/Nuevo/Más vendidos), derecha (Mi cuenta/Favoritos/Dudas). "Entrega inmediata" y "Por pedido" se movieron al pie de página (ya no estaban en la referencia visual que se pidió imitar).
-- **Favoritos (lista de deseos) — nuevo, funcional en código, pendiente de `006`**: corazón en cada `ProductCard`, página `/favoritos` (requiere sesión, igual que `/checkout`), `app/api/favorites` (GET lista los favoritos del cliente, POST agrega/quita). Es server-side por cliente (no `localStorage` como el carrito) para que se vea igual en cualquier dispositivo. Probado en vivo: con la tabla `favorites` aplicada debería andar sin tocar código — el único error visto fue justamente "no existe la tabla", exactamente lo esperado antes de correr `006`.
-- **"Más vendidos" — nuevo sort real en el catálogo**, no un filtro decorativo: suma cantidades vendidas de `order_items` + `sale_items` y ordena por eso. Como todavía no hay ventas reales registradas, hoy muestra "No encontramos productos" en ese filtro — es el comportamiento correcto (honesto) hasta que haya datos, no un bug.
-
-## 🔴 ACCIÓN INMEDIATA — lo único que falta para producción
-
-### 0. Habilitar el proveedor "Phone" en Supabase Auth (nuevo — login solo con celular)
-
-Se agregó un modo de acceso "Solo mi celular" en `/login` (pestaña junto a "Correo y contraseña"): la clienta solo escribe su celular, sin contraseña ni código — pensado para que cualquier clienta que la admin registre en `/admin/clientes` (donde ya solo nombre, apellido y celular son obligatorios) pueda entrar de inmediato. El código (`app/(public)/login/actions.ts` → `phoneLoginAction`) ya está escrito, ya pasó `typecheck` y ya se probó de punta a punta contra Supabase real (creando y borrando una clienta de prueba) — **pero falló con el error `Phone logins are disabled`**: el proyecto de Supabase tiene el proveedor de teléfono apagado a nivel de Auth, así que ningún inicio de sesión por celular funciona todavía (ni el nuevo, ni el que ya existía por celular+contraseña en la otra pestaña).
-
-**Para desbloquearlo:** entra al dashboard de Supabase → tu proyecto → **Authentication → Sign In / Providers → Phone** → actívalo. No se envía ningún SMS real (las cuentas se crean con `phone_confirm: true` desde el panel admin, y el login pasa por un password temporal generado en el servidor, invisible para la clienta), así que no debería requerir configurar un proveedor de SMS de verdad para que esto funcione — pero si el dashboard de Supabase no te deja guardar el toggle sin elegir un proveedor de SMS (Twilio, etc.), avísame y lo resolvemos juntos (hay opciones gratuitas). Una vez activado, pruebo de nuevo con una clienta real y confirmo que quede funcionando.
-
-**Nota de seguridad, para que la decisión sea informada:** este modo es intencionalmente débil — quien conozca el celular de una clienta puede entrar a su cuenta (ver su historial de pedidos, dirección, etc.), sin ninguna otra verificación. Se implementó así porque fue lo que pediste explícitamente ("con poner su celular basta, sin factor de autenticación"); la pestaña de correo+contraseña sigue disponible para quien prefiera más seguridad. Las cuentas de administradoras (`admin_users`) están excluidas de este modo aunque compartan la misma tabla de autenticación — ese acceso siempre exige correo+contraseña.
-
-### 0.5. Correr la migración `007_quotes.sql` (nuevo — módulo de Cotizaciones)
-
-El módulo de Cotizaciones (crear cotización → enviarla por Telegram → convertirla en pedido o venta) ya está construido y en producción, pero necesita las tablas `quotes`/`quote_items` que trae `database/migrations/007_quotes.sql`. Hasta que la corras a mano en el editor SQL de Supabase (igual que las anteriores), `/admin/cotizaciones` muestra un aviso claro pidiendo esa migración en vez de fallar feo. Se probó la migración de punta a punta contra un motor Postgres real fuera de Supabase (no contra producción, ya que la tabla no existe ahí todavía) — el archivo está listo para correrse tal cual.
-
-### 1. Copiar las variables de entorno a Vercel — **ya confirmado hecho, ver arriba**
-
-Las 3 de Supabase ya están funcionando en producción — se comprobó al loguearse en `/admin` y ver datos reales. **Faltan confirmar las otras 5** (Telegram, sync, cifrado de devoluciones). Todas ya tienen valor real en tu `.env` local — **Vercel no las lee de ahí, hay que copiarlas a mano** (o por CLI) en el proyecto de Vercel:
-
-```
-NEXT_PUBLIC_SUPABASE_URL
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-SUPABASE_SECRET_KEY
-TELEGRAM_BOT_TOKEN
-TELEGRAM_BOT_USERNAME
-TELEGRAM_WEBHOOK_SECRET
-SYNC_CRON_SECRET
-REFUND_ENCRYPTION_KEY
-```
-
-**Cuáles marcar como "Sensitive" (el checkbox de Vercel, no existe un tipo "secret" separado):**
-
-| Variable | ¿Sensitive? | Por qué |
-|---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | No | `NEXT_PUBLIC_*` se inyecta en el JS del navegador al compilar — ya es pública por diseño, marcarla Sensitive no la oculta. |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | No | Mismo caso — es la llave anon de Supabase, protegida por RLS en la base, no por estar oculta. |
-| `TELEGRAM_BOT_USERNAME` | No | Es público — es el `@LuxuryFindsMx_bot` que cualquiera busca en Telegram. |
-| `SUPABASE_SECRET_KEY` | **Sí** | Salta RLS por completo, acceso total a la base. |
-| `TELEGRAM_BOT_TOKEN` | **Sí** | Controla el bot por completo. |
-| `TELEGRAM_WEBHOOK_SECRET` | **Sí** | Verifica que los mensajes al webhook vengan de Telegram. |
-| `SYNC_CRON_SECRET` | **Sí** | Protege el endpoint de sincronización. |
-| `REFUND_ENCRYPTION_KEY` | **Sí** | Descifra CLABEs bancarias reales de clientas — la más delicada. |
-
-Marcarla Sensitive solo oculta el valor en el dashboard después de guardarlo (ya no se puede volver a ver, solo sobrescribir); el código del servidor la sigue leyendo igual vía `process.env`.
-
-**Cómo agregarlas (dashboard, la forma más simple):**
-1. Entra a [vercel.com](https://vercel.com) → tu proyecto (Luxury Finds / appluxury2).
-2. **Settings → Environment Variables**.
-3. Por cada variable de la lista: pega el **Name** (ej. `TELEGRAM_BOT_TOKEN`) y el **Value** (cópialo tal cual de tu `.env` local, sin comillas), marca los 3 entornos (**Production**, **Preview**, **Development**) salvo que quieras separarlos, y dale **Save**.
-4. Repite para las 8. Puedes pegar varias a la vez si usas el botón "Import .env" / "Paste .env" que Vercel ofrece en esa misma pantalla — subes tu archivo `.env` completo y las crea todas de un jalón (revisa que no se cuele nada que no deba ir ahí).
-5. Cuando termines, hace falta un **nuevo deploy** (push a la rama, o "Redeploy" desde el dashboard) para que la app tome las variables — cambiarlas no reinicia un deploy ya corriendo.
-
-**Alternativa por terminal (Vercel CLI), si ya tienes el proyecto vinculado:**
-```bash
-vercel env add TELEGRAM_BOT_TOKEN production
-```
-Te pide el valor por prompt; repite por cada variable y por cada entorno donde la necesites (`production`, `preview`, `development`).
-
-⚠️ Sin este paso, el bot de Telegram, la sincronización de catálogo y Devoluciones van a fallar en producción aunque en tu máquina funcionen — el código lee `process.env`, y en Vercel ese `process.env` es el que configures en el dashboard, no tu archivo local.
-
-### 2. Registrar el webhook de Telegram (solo funciona con el sitio ya desplegado, no en localhost)
-
-```bash
-curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<tu-dominio>/api/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>"
-```
-
-El bot ya existe: `@LuxuryFindsMx_bot`. Hasta que no se registre el webhook, los clientes pueden vincular su Telegram (`/start <id>`) pero el bot no recibirá esos mensajes.
-
-### 3. Cron de sincronización — hoy corre 1 vez al día, no cada 15 min
-
-`vercel.json` quedó así (el `functions` y el `*/15 * * * *` originales tumbaban el deploy, ver arriba):
-```json
-{
-  "crons": [{ "path": "/api/sync/run?type=INCREMENTAL&source=all", "schedule": "0 9 * * *" }]
-}
-```
-
-**El plan gratuito (Hobby) de Vercel solo ejecuta cron jobs una vez al día** — Vercel directamente rechaza el deploy si declaras algo más frecuente, no lo ignora en silencio. Para los 15 minutos reales que pedía el diseño original necesitas:
-- Plan **Pro** de Vercel, o
-- Un programador externo (cron-job.org, GitHub Actions con `schedule`, Supabase `pg_cron` con `net.http_post`, etc.) golpeando `POST /api/sync/run?type=INCREMENTAL&source=all` con el header `x-sync-secret: <SYNC_CRON_SECRET>` cada 15 min.
-
-El endpoint ya está protegido y probado (401 si falta/está mal el secreto, con GET y POST). Nota aparte: como se quitó el bloque `functions`, la duración máxima de esa función usa el default de Vercel en vez de los 60s que se habían pedido — si una corrida completa de sincronización tarda más que eso y se corta, hay que resolverlo por el lado de la configuración de `nitro` (su propio preset de Vercel), no repitiendo el bloque `functions` en `vercel.json`.
+- Repo: `lizsoriano/luxuryfinds` (rama de trabajo habitual `feature/appluxury2`; `main` = producción).
+- Producción: https://luxuryfinds.vercel.app (dominio propio https://www.luxuryfinds.com.mx).
+- Stack: app Next-like sobre **`vinext` + `vite` + React Server Components** (NO es Next.js estándar), deploy en Vercel con `nitro`; **sin Tailwind**, CSS plano en `app/globals.css`; backend **Supabase** (proyecto `vjkmnobsodrcwcsotbry`, schema `luxury_finds`).
+- La dueña: Ruth Elizabeth Soriano (boutique de belleza en La Paz, BCS; compra en EE.UU. con "shopper" y vende por pedido y entrega inmediata). Habla español; responde siempre en español.
 
 ---
 
-## ✅ Lo que ya está construido y funcionando
+## 1. Reglas de oro (aprendidas a golpes — respétalas)
 
-### 1. Rediseño del panel de administración (estilo Tiendanube)
-- Sidebar blanco ~300px con navegación agrupada, estado activo real por ruta, drawer mobile funcional.
-- Topbar rediseñada: buscador que **sí busca de verdad** (navega a `?q=` en clientas/productos/inventario/proveedores), "Ayuda" enlaza a `/admin/ayuda`, "Notificaciones" abre un diálogo honesto que dice que aún no existe (no es un botón decorativo mudo).
-- Paleta terracota `#9C5651` + variables `--terracotta*`/`--admin-*` en `app/globals.css`.
-- Archivos clave: `app/admin/layout.tsx`, `components/navigation/AdminSidebar.tsx`, `components/navigation/AdminTopbar.tsx`.
+1. **Nadie puede ejecutar SQL desde el código ni desde un agente.** No hay runner de migraciones, ni `DATABASE_URL`, ni `psql`. La app solo tiene la service key de PostgREST (no hace DDL). **Las migraciones las corre la dueña a mano** en el editor SQL de Supabase. Un agente solo escribe el archivo en `database/migrations/NNN_*.sql` y le pasa el SQL.
+2. **Todo código que dependa de una migración nueva debe degradar con gracia mientras no exista** (avisos que nombran el archivo, el resto del sitio idéntico). Patrón en `lib/supabase/admin-quotes.ts`, `admin-catalog.ts` (008/009), `admin-purchases.ts` (010). Cuando ella corre la migración todo se activa **sin redeploy**.
+3. **Verifica contra datos reales, no solo "compila".** Scripts Node desechables con `SUPABASE_SECRET_KEY` (parsea `.env` a mano, no hay dotenv). Datos de prueba con prefijo `TEMP-` y **bórralos siempre** (orden FK-seguro: movimientos → imágenes → variantes → productos). Para lógica que necesita tablas que aún no existen en la base real, usa **PGlite** (Postgres en WASM) instalado en un scratchpad, **nunca** en `package.json`.
+4. **Nunca escribas contraseñas en formularios** (ni siquiera la de la dueña). Para ver el panel admin usa un **harness HTML estático temporal** en `public/` con el markup real + copia de `app/globals.css`, y bórralo al terminar. `git status --short` limpio al final.
+5. **No toques datos reales** al probar: ~4,580 productos, 402 de Bath & Body Works (`internal_code` `BBW-…`, ocultos, a $0 esperando precio), clientas reales, `app_settings`.
+6. **Flujo de git por cambio:** commit → push → `gh pr create --base main` → `gh pr checks <N>` hasta que Vercel pase → `gh pr merge <N> --merge` → confirmar `gh api repos/lizsoriano/luxuryfinds/commits/<sha>/status --jq '.state'` = `success`. Nunca fusionar con build fallido. Antes de editar: `git fetch && git pull`.
+7. **Trabajo en paralelo:** si dos agentes/IAs trabajan a la vez, **cada uno en su propio `git worktree` y su propia rama** (`git worktree add -b feature/x ../dir origin/main`; hay que `npm ci` y copiar `.env`). `app/globals.css` son reglas minificadas, **una por línea**: agrega lo tuyo **al final** y resuelve conflictos línea por línea. Reserva un rango de números de migración por quien trabaje.
+8. Dinero siempre en **centavos enteros** (`bigint`); aritmética con enteros/BigInt, redondeo **una sola vez al final** (ver `lib/supabase/store-cost.ts`, `purchase-math.ts`).
+9. Avisar antes de acciones destructivas o visibles para otros (el merge a `main` dentro del flujo normal está permitido; borrar datos reales, no).
 
-### 2. Carrito de compra público + registro + checkout + Telegram
-- Carrito 100% client-side (`localStorage`, `lib/cart/CartContext.tsx`), **no requiere cuenta para acumular productos**.
-- Ícono de carrito con badge en `components/navigation/PublicHeader.tsx`, página `/carrito`.
-- "Añadir al carrito" en catálogo (`components/ui/ProductCard.tsx`) y en detalle de producto (`app/(public)/catalogo/[slug]/AddToCartForm.tsx`).
-- Registro de cuenta nuevo: `app/(public)/crear-cuenta/` (nombre, apellido, teléfono, correo, contraseña) — crea usuario de Supabase Auth + fila en `clients` vía service role, inicia sesión automáticamente.
-- Checkout gateado por sesión (`app/(public)/checkout/`): si no hay sesión, redirige a `/login?next=/checkout` (con link a "Crea una cuenta"). Al confirmar, **revalida precios reales en el servidor** (nunca confía en lo que mande el navegador) y crea `orders`/`order_items` reales en Supabase.
-- **Plan de pago semanal en el checkout** (requiere migración `004`, ver arriba): si **todos** los productos del carrito tienen el flag "Admite plan de pago semanal" activado en Productos, aparece un selector "Pago completo" / "Plan semanal" con número de semanas (4 a 16). La elegibilidad se revalida siempre en el servidor (`lib/supabase/orders.ts` → `checkWeeklyPlanEligibility`), nunca se confía en lo que mande el navegador. Si el carrito mezcla productos elegibles y no elegibles, solo se ofrece pago completo (no se parte el pedido en dos).
-- Confirmación por Telegram al cliente: `lib/telegram/send.ts` + webhook `app/api/telegram/webhook/route.ts` que vincula el `chat_id` cuando el cliente hace `/start <id>` en el bot. Card de vinculación visible en `/cuenta` y tras confirmar un pedido.
+## 2. Lecciones técnicas específicas
 
-### 3. Sistema administrativo completo — Fase 1 (de 4 fases planeadas)
-Construido y probado (`typecheck`/`lint`/`build` limpios):
-- **Categorías** (`/admin/categorias`) — CRUD completo sobre `categories`.
-- **Productos** (`/admin/productos`) — 3 tipos (básico/variantes/medidas), imágenes, categoría inline, switch de catálogo público, switch "Admite plan de pago semanal" (requiere migración `004`; si no está aplicada, el producto se guarda igual y solo ese campo se ignora con un aviso), validaciones.
-- **Inventario** (`/admin/inventario`) — KPIs, buscador, filtros, paginación real, acciones con confirmación.
-- **Clientes** (`/admin/clientes`) — reutiliza `clients` existente (no duplica), historial de compras derivado.
-- **Proveedores** (`/admin/proveedores`) — tabla nueva `suppliers`, CRUD.
-- **Vender** (`/admin/vender`, `SellTerminal.tsx`) — punto de venta completo: buscador, código de barras/SKU, carrito con cantidades, "Nueva venta libre", "Nuevo gasto", **apertura/cierre de caja real** (no placeholder), descuenta stock vía `inventory_movements` con rollback si algo falla. **Cancelar venta**: desde `/admin/balance`, un botón "Cancelar" por cada venta libera el inventario que había descontado (`sales.status`/`cancelled_at` existían en el schema sin usarse).
+- **Para saber si una tabla/migración existe, haz un GET crudo** (`/rest/v1/<tabla>?select=*&limit=1` con `Accept-Profile: luxury_finds`; una tabla ausente da 404 `PGRST205`). **NO uses `select(..., {head:true})` de supabase-js: puede devolver "ok" para tablas que no existen** (nos dio un falso "aplicada" para 010/011/013).
 
-**Fase 2 — construida en esta ronda (además de lo de la ronda anterior):**
-- **Pedidos** (`/admin/pedidos`) — lista los pedidos reales creados desde el carrito público o desde el panel. Cada pedido se puede **confirmar** (genera un `ticket` por artículo — `FULL` o `WEEKLY_PLAN` — valida existencia vía `variant_stock` y descuenta inventario) o **cancelar** (libera inventario y cancela su `payment_plan` si tenía uno).
-  - **`/admin/pedidos/nuevo`**: crear un pedido manual (WhatsApp/teléfono/en persona) eligiendo clienta, productos y modalidad de pago — el equivalente del checkout público pero desde el panel (`origin = ADMIN_MANUAL`).
-  - **Plan semanal** (requiere migración `004`): confirmar un pedido con plan semanal genera el `payment_plan` (4-16 semanas) y sus `installments`.
-- **Cobranza** (`/admin/cobranza`) — ya no es un placeholder. Las clientas ya podían subir comprobantes de pago desde `/cuenta` (`app/cuenta/payment-proof-actions.ts`, construido en una sesión anterior a esta) pero nada del lado admin revisaba esos comprobantes hasta ahora. Aquí se **aprueban o rechazan**: aprobar registra un `payment`, reparte el monto entre las cuotas más antiguas del `payment_plan` (o marca pagado directo si el ticket es `FULL`), y si sobra dinero después de pagar todas las cuotas, el excedente se guarda como saldo a favor en `clients.credit_balance_cents`. Ambas acciones avisan a la clienta por Telegram y en su campanita de notificaciones (`notifications`, ya usada por `/cuenta`).
-- **Por ordenar** (`/admin/por-ordenar`) y **En camino** (`/admin/en-camino`) — bandejas de tickets por `logistics_status` (`WAITING_TO_ORDER`/`READY_TO_ORDER` y `ORDERED`/`IN_TRANSIT`/`RECEIVED_LA_PAZ`). Un botón "Actualizar estado" avanza el ticket y notifica a la clienta; puedes anotar tienda/folio de compra (se guarda en `order_items.notes`, que no tenía otro uso).
-- **Agenda de entregas** (`/admin/agenda`) — publica una disponibilidad por ubicación y fecha/hora, y **genera automáticamente los horarios de 10 minutos** que exige el schema (`delivery_slots`). Puedes reservar un ticket `READY_FOR_DELIVERY` en un horario, marcar la entrega completada (el ticket pasa a `DELIVERED`) o cancelarla (el ticket vuelve a `READY_FOR_DELIVERY` para reagendar). Las clientas todavía no tienen una pantalla propia para autoagendar — hoy todo lo agenda la admin a mano, igual que un pedido manual.
-- **Devoluciones** (`/admin/devoluciones`) — las clientas piden un reembolso desde `/cuenta` (nuevo formulario: banco, titular, CLABE, motivo — la CLABE se cifra antes de guardarse, ver `REFUND_ENCRYPTION_KEY` arriba). Desde el panel se marca "en proceso", se **completa** (registra el `refund` con monto/método/referencia una vez que ya hiciste la transferencia real desde tu banco, y marca el ticket `REFUNDED`) o se **rechaza**. ⚠️ **Esta pieza específica no se probó contra una base de datos real** (no tengo credenciales de admin ni acceso a Supabase) — el formato `bytea`/hex que usa Postgres para `clabe_encrypted` está implementado según la documentación de PostgREST, pero antes de confiarle CLABEs reales de clientas, haz una prueba de extremo a extremo: pide un reembolso de prueba, ve a `/admin/devoluciones` y confirma que la CLABE se vea correcta y completa.
+- **vinext/Vercel:** el plan Hobby solo admite cron **1 vez al día**; el bloque `functions` en `vercel.json` rompe el build (nitro lo gestiona). Duración de función ~60 s.
+- **Variables de entorno en Vercel por ambiente:** una variable puede tener filas separadas por ambiente (Production/Preview/Development); si algo funciona en producción pero no en un preview, revisa que la fila exista para **Preview**.
+- **PostgREST:** `.in()` con cientos de UUID genera URLs enormes (400) → procesa por lotes (150). `.or()` con `id.in.(…)` intenta castear todo a uuid (error 22P02): separa por forma del valor. Un `select()` sin paginar corta en **1,000 filas**. Falta de índice en `product_images.product_id` hacía lenta la lista (migración 005).
+- **Búsquedas/formularios:** usar rutas absolutas (`action="/catalogo"`), nunca `"."` (resuelve a la raíz).
+- **Telegram:** webhook con `secret_token`; ya registrado en `https://www.luxuryfinds.com.mx/api/telegram/webhook` (verificado). Bot `@LuxuryFindsMx_bot`.
+- **Servidor rechaza cuerpos > 1 MB** en server actions (visto en la Fase 1 de compras): las fotos de celular se **comprimen en el cliente** (`app/admin/compras/compress-photo.ts`, JPEG ~1600 px ≤ ~850 KB). El formulario de Productos acepta "hasta 5 MB" pero probablemente falla > 1 MB: **pendiente de verificar/arreglar** (config de tamaño de body o compresión en cliente).
+- Error de dev server `Cannot read properties of undefined (reading 'import')` (vite-rsc): preexistente, no aparece en el build de producción.
+- `npm test` (`tests/rendered-html.test.mjs`) está roto de antes (busca un texto viejo de `/catalogo`). No bloquea el deploy.
+- Imágenes de catálogo: bucket público `oskinmx-catalog` (clave `<productId>/<uuid>.<ext>`); recibos y fotos de tickets de compra: bucket **privado** `expense-receipts` (URL firmada corta).
 
-**Placeholders honestos** ("Próximamente", no botones muertos) que siguen pendientes:
-- Fase 2: Cotizaciones, Empleados.
-- Fase 3: Estadísticas, Reportes.
-- Fase 4: Facturación, Facturación global, Reportería (facturación electrónica — fuera de alcance deliberadamente, necesita un PAC certificado por el SAT).
-- Multi-negocio: la base de datos ya guarda `business_id` en todo, pero "Agregar otro negocio" abre un diálogo honesto; falta la pantalla real de crear/cambiar de negocio.
+## 3. Variables de entorno (8) — todas confirmadas funcionando en Vercel
 
-**⚠️ Decisión de alcance (2026-09-11):** de esta lista, solo se van a construir **Cotizaciones**, **Estadísticas** y **Sitio Web**. Todo lo demás (Empleados, Reportes, las 3 pantallas de Facturación, Multi-negocio) queda deliberadamente congelado — se deja el placeholder "Próximamente" tal cual, sin trabajarlo, por si más adelante se retoma. No es deuda técnica ni un olvido: es alcance definido por la dueña del negocio. No propongas construir esas piezas a menos que ella lo pida explícitamente otra vez.
+`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET`, `SYNC_CRON_SECRET`, `REFUND_ENCRYPTION_KEY` (la última no se ha ejercitado con datos reales: Devoluciones sin probar). Marcadas "Sensitive" las secretas. El `.env` local nunca se commitea.
 
-### 4. Sincronización de catálogo — Maw Maw Beauty + Oskin → Luxury Finds
-Código completo, **probado con una corrida real en modo simulado (dry-run) contra el catálogo real de Supabase** (sin escribir nada porque faltan las migraciones 002/003):
+## 4. Cuentas
 
-| | Maw Maw | Oskin |
-|---|---|---|
-| Productos detectados | 2,167 | 3,506 |
-| Ya coincidían con Luxury Finds | 448 | 3,413 |
-| Nuevos que se crearían | 1,533 | 88 |
-| Precios que subirían | 466 | 63 |
-| En cola de revisión (coincidencia dudosa) | 186 | 5 |
-| Errores | 0 | 0 |
+- Administradora (OWNER) real: usuario `ruth`, correo `rutilia2511@gmail.com` (la contraseña la tiene ella).
+- Clientas reales hoy: 2 (Ruth Elizabeth Soriano —también admin— y Marcela Guerra).
+- Acceso "Solo mi celular" (`/login`, pestaña): pensado para clientas, **bloquea cuentas de `admin_users`**; requiere habilitar **Phone** en Supabase Auth (Authentication → Providers → Phone). **Pendiente confirmar que la dueña lo activó** (la última comprobación seguía con `Phone logins are disabled`).
 
-- **Limpieza puntual de datos (ya aplicada, no requiere acción)**: 1,687 filas (`products.name`/`description`/`relevant_information`, `product_variants.name`, `brands.name`) tenían entidades HTML sin decodificar (`&amp;`, `&#8211;`, etc.) — venían de una carga de catálogo anterior a este pipeline de sync, que ya decodifica entidades correctamente (`lib/sync/normalize.ts` → `decodeEntities`/`cleanProductName`/`stripHtml`). Se corrigieron directamente en Supabase con un script puntual (no versionado, ya no existe) que solo decodificó texto — ninguna otra columna se tocó. No hace falta volver a correrlo.
-- Ninguna tienda necesitó Playwright: Oskin (WooCommerce) expone su Store API pública (`/wp-json/wc/store/v1/products`); Maw Maw (Tiendanube) imprime las variantes completas en el HTML del listado.
-- `fetch` nativo de Node no puede hablar con `oskinmx.com` (rechaza la renegociación TLS) — `lib/sync/http.ts` usa `node:https` como respaldo automático.
-- Regla de precio verificada en ambas direcciones con ejemplos reales: sube cuando una fuente tiene precio mayor, **nunca baja** aunque el competidor/aliado baje el suyo. Precio máximo aplicado **por variante**, no por producto genérico.
-- Panel admin: `/admin/inventario/sincronizacion` — estado de cada fuente, botón "Sincronizar ahora", resumen de última corrida, comparador de precio por producto, cola de "Revisar coincidencias".
-- Endpoint protegido: `app/api/sync/run/route.ts` (header `x-sync-secret`).
+## 5. Migraciones (`database/migrations/`)
 
----
+| N.º | Archivo | Qué hace | Estado en la base real (verificado 2026-10-04) |
+|---|---|---|---|
+| 000–006 | grants, telegram, negocio/POS (002), sync (003), plan semanal (004), índice imágenes (005), favoritos (006) | base del admin/POS/sync | aplicadas |
+| 007 | `quotes` | Cotizaciones | aplicada |
+| 008 | `products.in_transit` | "Productos en camino" | aplicada |
+| 009 | `product_variants.store_cost_usd_cents`, `commission_percent` + `app_settings.us_tax_factor` | costo tienda USD → costo MXN | aplicada |
+| 010 | `purchases`, `purchase_tickets`, `purchase_items`, `shopper_payments`, triggers, `confirm_shopper_purchase()` | Compras con shopper, Fase 1 | **NO aplicada** (código ya en producción, degrada con aviso) |
+| 011 | `purchase_assignments` + funciones de asignar/cancelar | Compras con shopper, Fase 2 | **NO aplicada** (necesita la 010 antes; código ya en producción, PR #44) |
+| 012 | `admin_users.role` ('OWNER'/'EMPLOYEE') | roles para el panel de empleado | **NO aplicada** (código ya en producción, PR #45) |
+| 013 | `delivery_confirmations` y puente a tickets | confirmar entregas del empleado | **NO aplicada** (incluye un GRANT sobre payments; código ya en producción, PR #45) |
 
-## ⚠️ Cosas a tener en cuenta / deuda conocida
+**Orden obligatorio para correrlas: 010 → 011 → 012 → 013** (la 011 se detiene sola si falta la 010). Numeración: 011 = compras Fase 2; 012–013 = panel de empleado; **014 = embarques (Fase 3, en curso)**; **015+ libres** (Fase 3/4 de compras, Sitio Web si necesita tablas, etc.). Si una migración trae SQL en un PR no fusionado, **no la renumeres**: coordina.
 
-1. **Login y dashboard del admin ya se probaron con sesión real en producción** (ver arriba), pero eso solo confirma que el panel carga — **los flujos operativos de verdad siguen sin probarse**: crear venta, cerrar caja, sincronizar catálogo, confirmar/cancelar un pedido, plan semanal de punta a punta, aprobar un comprobante en Cobranza, agendar una entrega, procesar una devolución. Sigue siendo la deuda más grande — ahora que ya puedes entrar a `/admin`, es el siguiente paso lógico (ver "Orden sugerido" abajo).
-2. **Error de dev-server intermitente y preexistente** (no relacionado con este trabajo): a veces aparece un overlay rojo `"Cannot read properties of undefined (reading 'import')"` desde `@vitejs/plugin-rsc` al correr `npm run dev`. Es un bug conocido del stack `vinext`/`vite-rsc` en beta; normalmente se resuelve recargando la página y no aparece en `npm run build` de producción. En esta sesión llegó a quedarse pegado incluso recargando — si te pasa, cierra el proceso de `npm run dev` (o la terminal donde corre) y vuelve a arrancarlo.
-3. **Imágenes copiadas de Maw Maw/Oskin**: aunque ambas tiendas son tuyas/aliadas, revisa que tengas derecho a usar esas imágenes en Luxury Finds antes de publicarlas masivamente (mismo criterio que ya aplicó el pipeline previo de Oskin en `C:\Users\rutil\Desktop\oskin_luxury_finds_pipeline\`).
-4. **Empleados** hoy no tiene perfiles propios ni permisos — cada venta/gasto se registra a nombre del usuario de `admin_users` que la captura. Sigue en Fase 2, no se construyó esta ronda (decidiste priorizar Cobranza/Agenda/Devoluciones). Cuando lo retomes: la idea acordada es que un empleado normal solo pueda usar Vender y ver Inventario, sin acceso a Balance ni Configuración — habría que agregar un rol/permiso a `admin_users` (hoy todos los admins tienen el mismo acceso completo).
-5. **Devoluciones no probada contra Supabase real** — ver el punto en la sección de arriba sobre `REFUND_ENCRYPTION_KEY`. El cifrado en sí (`lib/crypto.ts`, AES-256-GCM con Node `crypto`) es estándar y confiable; lo que no pude verificar es el formato exacto en que PostgREST espera/devuelve una columna `bytea` en JSON. Prueba de punta a punta antes de usarla con datos bancarios reales.
-6. **Agenda no tiene autoagendado para clientas** — hoy toda cita se crea desde el panel (`/admin/agenda`), a mano. Las tablas (`delivery_locations`, `delivery_slots`, RLS de solo lectura para clientes autenticados) ya están listas para que en el futuro una clienta reserve su propio horario desde `/cuenta`, pero esa pantalla no existe todavía.
-7. ~~4 errores de lint preexistentes~~ — corregidos en una sesión anterior (`no-html-link-for-pages` en catálogo, `no-autofocus` en `PublicHeader`). `npm run lint` sigue en 0 errores (solo 12 warnings de `<img>` sin optimizar, fuera de alcance).
-8. Recurso de referencia si necesitas re-scrapear Oskin manualmente: `C:\Users\rutil\Desktop\oskin_luxury_finds_pipeline\` (pipeline Playwright independiente, con su propio `README.md`).
+## 6. Módulos — estado
 
----
+**Sitio público (`app/(public)`)**: home, catálogo (búsqueda, pestañas Todo / Entrega inmediata / Por pedido / Sephora Favorites / Perfumes / Blushes / Labiales / Bases / Correctores, paginación numerada), detalle de producto, carrito sin sesión (localStorage) + checkout que exige cuenta, crear cuenta, login (correo+contraseña o solo celular), favoritos (server-side, migración 006), cuenta de la clienta, Telegram para confirmaciones. Header: Catálogo · New In · Entrega inmediata (+ Mi cuenta / Favoritos / Dudas).
 
-## Resumen de rutas nuevas en `/admin`
+**Panel admin `/admin` (OWNER)** — completos y desplegados:
+- Vender (POS + caja), Balance, Inventario (stock, ajustes), **Productos en 3 listas** (Productos = pedidos online/`ON_DEMAND`; Entrega inmediata; En camino) con **edición en línea** de precio y stock, **costo tienda USD** con comisión (Sin/10 %/15 %) y costo MXN calculado, chip **Visible/Oculto** clicable (no deja publicar a $0), Categorías, Sincronización de catálogo (Maw Maw + Oskin), Clientes, Proveedores, Pedidos, Por ordenar, En camino (tickets de clientas), Agenda, Cobranza, Devoluciones, Cotizaciones (007), **Estadísticas** (ventas por periodo con comparativo, más vendidos, margen, clientas top), Configuración (solo lectura), Ayuda.
+- **Compras con shopper — Fase 1 (010)**: `/admin/compras` — shopper = un Proveedor; compra con tipo de cambio y comisión 10/15 %; tickets de tienda con tax por ticket; artículos con foto opcional (subida manual); cuadre contra el total real con tax; al confirmar congela `owed_usd = total_real + comisión`, `owed_mxn`, costo por línea/unidad; abonos al shopper y saldos por compra y por shopper.
+- **Placeholders honestos ("Próximamente")** que siguen: Reportes, Facturación (+ global, reportería), Sitio Web. Multi-negocio: la BD guarda `business_id` pero el selector solo muestra un aviso.
 
-```
-/admin/vender                      ← Punto de venta (completo) + cancelar venta desde Balance
-/admin/balance                     ← Balance, transacciones (con "Cancelar" por venta), cierres de caja (completo)
-/admin/inventario                  ← Listado + KPIs + "Ajustar stock" (entradas/ajustes manuales) (completo)
-/admin/inventario/sincronizacion   ← Sincronización Maw Maw/Oskin (completo, dry-run hasta migrar)
-/admin/productos                   ← CRUD productos + switch de plan semanal (completo)
-/admin/categorias                  ← CRUD categorías (completo)
-/admin/clientes                    ← CRUD clientes (completo)
-/admin/proveedores                 ← CRUD proveedores (completo)
-/admin/pedidos                     ← Lista, confirma, cancela (completo)
-/admin/pedidos/nuevo               ← Pedido manual desde el panel (completo)
-/admin/cobranza                    ← Aprobar/rechazar comprobantes de pago (completo)
-/admin/por-ordenar                 ← Tickets WAITING_TO_ORDER/READY_TO_ORDER (completo)
-/admin/en-camino                   ← Tickets ORDERED/IN_TRANSIT/RECEIVED_LA_PAZ (completo)
-/admin/agenda                      ← Disponibilidad, horarios de 10 min, reservar/completar/cancelar entregas (completo)
-/admin/devoluciones                ← Revisar y procesar solicitudes de reembolso (completo, sin probar en vivo — ver deuda conocida)
-/admin/configuracion                ← (completo, solo lectura por diseño)
-/admin/ayuda                        ← (completo)
-/admin/{cotizaciones,empleados,estadisticas,reportes,facturacion,
-        facturacion/global,facturacion/reporteria,sitio-web}  ← Placeholders "Próximamente"
-```
+### Fusionado y en curso (no dupliques)
+- **En curso: Compras con shopper, Fase 3** (embarques + recepción en La Paz con correctas/dañadas/faltantes, migración 014; opcional: conectar costo de asignaciones al margen de Estadísticas y arreglar un fallo silencioso de auditoría en Agenda para tickets sin variante).
+- Una IA externa publicó `/productos-en-camino` (PR #43): página pública con productos `IMMEDIATE` + `in_transit` + visibles.
+- (YA FUSIONADO, PR #44) **Compras con shopper, Fase 2** — asignar unidades compradas a clientas con su precio de venta (genera orden + ticket reutilizando el sistema de pedidos/tickets, `logistics_status='ORDERED'`, sin exigir inventario), cancelar asignación (solo si no hay pagos y sigue `ORDERED`), pantalla `/admin/compras/pendientes`. Trabaja en el directorio principal, rama `feature/appluxury2`, migración 011.
+- (YA FUSIONADO, PR #45) **Panel de empleado `/empleado` (Etapa 1)** — roles (012), alta de empleados en `/admin/empleados`, blindaje de `getAdminSession`/`requireAdminActor` para que un EMPLOYEE **nunca** entre a `/admin`, Inventario en La Paz, Entregas programadas, Confirmar entrega (cobro efectivo/transferencia "reportada", quién recibe, saldo), caja del empleado, migración 013. Trabaja en un worktree aparte, rama `feature/panel-empleado`.
 
----
+### Por construir
+1. **Compras con shopper — Fase 3:** embarques (guía, costo de paquetería, llegada estimada, selección de artículos de varias tiendas), al confirmar salida los tickets pasan `ORDERED → IN_TRANSIT`; **recepción en La Paz** con cantidades **correctas / dañadas / faltantes**, fotos y observaciones (solo las buenas pasan a "listas para entrega" o a Productos en La Paz; lo faltante sigue pendiente en el embarque); prorrateo de la paquetería al costo. Debe ampliar el CHECK de `purchase_items.status` con su propia migración (014+).
+2. **Compras con shopper — Fase 4:** publicar unidades disponibles como **"Próximamente"** en el catálogo público (foto, precio de venta, llegada estimada); cada apartado reduce lo disponible. `purchase_items.product_id/variant_id` ya existen para enlazar con `products`.
+3. **Panel de empleado — Etapa 2:** sección "En camino / recepción" (hoy una página "Próximamente"); se enchufa a la recepción de la Fase 3 reutilizando el shell y los permisos.
+4. **Sitio Web** (placeholder en `app/admin/sitio-web/page.tsx`): editar textos/portada/banners del sitio público, ordenar secciones del catálogo, dominio y metadatos SEO. **Buen candidato para repartir a otra IA** (no toca compras ni empleados).
+5. Conectar `purchase_assignments.cost_mxn_cents` al margen de **Estadísticas** (hoy esos tickets no tienen variante y salen como "sin costo").
+6. Reversión de una entrega confirmada y cierre formal de caja del empleado (explícitamente fuera de la Etapa 1).
 
-## Orden sugerido para la próxima sesión
+## 7. Decisiones de alcance de la dueña (no las reabras sin que ella lo pida)
 
-1. ~~Correr las 4 migraciones y generar `REFUND_ENCRYPTION_KEY`~~ — ya hecho y verificado contra la base real.
-1b. ~~Arreglar que `main` estuviera desactualizado y que el deploy de Vercel fallara~~ — ya hecho, PR #3 fusionado, producción al día en `https://luxuryfinds.vercel.app`.
-1c. ~~Crear una cuenta de administradora y confirmar que el login + `/admin` funcionan en producción~~ — ya hecho, ver credenciales arriba.
-2. Con esa misma cuenta, probar el flujo operativo completo: crear categoría → crear producto (prueba también marcar "Admite plan de pago semanal") → verlo en inventario/vender → abrir caja → hacer una venta → ver que baja el stock y sube en Balance → cerrar caja → probar "Cancelar" esa venta y ver que el stock regrese.
-3. Probar Pedidos + Cobranza de punta a punta: agregar al carrito un producto con plan semanal activado → checkout con "Plan semanal" → confirmar el pedido en `/admin/pedidos` (o crear uno manual en `/admin/pedidos/nuevo`) → verificar que se generen los tickets, el `payment_plan` y sus cuotas → subir un comprobante desde `/cuenta` con esa clienta → aprobarlo en `/admin/cobranza` → confirmar que la cuota quede pagada y el ticket avance.
-4. Probar la logística: mover un ticket por `/admin/por-ordenar` → `/admin/en-camino` → márcalo `READY_FOR_DELIVERY` → publicar una disponibilidad en `/admin/agenda` → reservarlo → completarlo, y ver que llegue el aviso de Telegram en cada paso.
-5. Probar Devoluciones con una CLABE de prueba (no una real todavía) para validar que el cifrado/descifrado funcione antes de confiarle datos bancarios reales — ver la nota de deuda conocida.
-6. Ir a `/admin/inventario/sincronizacion` y correr "Sincronizar ahora" — ya no debería estar en modo simulado.
-7. Desplegar a Vercel: copiar las 8 variables de entorno (dashboard → Settings → Environment Variables, o "Import .env"), redeploy, registrar el webhook de Telegram, y decidir cómo resolver el cron de 15 min (Pro de Vercel vs. programador externo).
-8. Seguir con lo que falta de Fase 2 (Cotizaciones, Empleados) y luego Fase 3 (Estadísticas, Reportes) cuando quieras continuar el sistema administrativo. Facturación sigue fuera de alcance hasta que contrates un PAC certificado por el SAT.
+- Congelados a propósito: **Reportes, Facturación (3 pantallas), Multi-negocio** (Facturación además requiere PAC del SAT). **Empleados ya NO está congelado.**
+- "Productos entrega inmediata" = solo lo que **ella sube a mano**; la sincronización crea siempre `ON_DEMAND`. "En camino" = mercancía **propia** ya comprada (`IMMEDIATE` + `in_transit`), distinta de los pedidos de clientas (`/admin/en-camino`).
+- Tipo de cambio USD→MXN: **sin valor por defecto**; ella lo captura en la barra sobre la tabla de Productos (**pendiente: aún no lo captura**). Tax US = factor 1.083 (editable); comisión 10 % o 15 % **sobre el total ya con tax**.
+- El shopper **adelanta** las tiendas: ella le paga total con tax + comisión, menos abonos.
+- Entrega: los datos se registran **antes** de marcar "Entregado"; no hay entregas anticipadas.
+
+## 8. Acciones pendientes de la dueña
+
+1. Correr **010 → 011 → 012 → 013** en el editor SQL de Supabase, una por una y en ese orden (verificado 2026-10-04: ninguna está aplicada; por eso Compras, asignaciones y panel de empleado todavía muestran avisos). Luego crear su primer empleado en `/admin/empleados`.
+2. Capturar el **tipo de cambio** (barra sobre Productos) para activar el costo en dólares.
+3. Ponerle **precio** (inline) a los 402 productos Bath & Body Works y publicarlos con el chip Oculto→Visible. El CSV de referencia en USD (`precios-usd-bath-and-body-works.csv`) se le entregó por chat.
+4. Confirmar **Phone** en Supabase Auth (login solo con celular).
+5. Revisar la regla de pedidos online (ver §9, punto 1).
+6. (Opcional) Sincronización cada 15 min vía programador externo (cron-job.org/GitHub Actions) a `POST /api/sync/run?type=INCREMENTAL&source=mawmaw` y `…source=oskin` con header `x-sync-secret`; hoy corre 1 vez al día.
+
+## 9. Riesgos / deuda conocida
+
+1. **`confirmOrderAction` (`app/admin/pedidos/actions.ts`) exige existencia (`variant_stock`) también para productos `ON_DEMAND`**, y todos están en stock 0 → hoy **no se puede confirmar un pedido online**. Decidir con la dueña si "por pedido" debe saltarse esa validación. (Las asignaciones de compras con shopper no pasan por ahí.)
+2. La sincronización **solo sube precios** (nunca baja): si ella baja un precio de un producto sincronizado, el próximo sync lo vuelve a subir.
+3. Flujos operativos **nunca ejercitados con datos reales** (producción tiene 0 pedidos/ventas/tickets reales): venta POS de punta a punta, Cobranza, Agenda, Devoluciones (cifrado de CLABE sin probar con PostgREST `bytea`), plan semanal. Probar con la dueña antes de operar de verdad.
+4. Fotos y datos de Bath & Body Works/Maw Maw/Oskin vienen de esos sitios: confirmar derecho de uso.
+5. Los contadores de folio (`sale_number_seq`, `ticket_number_seq`) se reiniciaron a 1 tras las pruebas; pruebas posteriores de agentes pueden avanzarlos de nuevo (cosmético).
+6. El total de productos crece solo (sync diario); no asumas conteos fijos.
+
+## 10. Cómo repartir trabajo a otra IA (p. ej. ChatGPT/Codex)
+
+- Que lea este archivo y el código; que trabaje en **su propia rama y worktree**, con PR propio y el flujo de git del §1.
+- Asignación sugerida: **Sitio Web** (sin dependencias con compras/empleados). Rango de migraciones libre: **014+** (coordínalo antes de crear una).
+- No debe tocar: `getAdminSession`/`requireAdminActor` (blindaje de roles en curso), `app/admin/compras/*`, `lib/supabase/admin-purchases.ts`, `app/empleado/*`.
+- Debe respetar las reglas de oro (§1), el sistema de diseño (variables `--admin-*`/`--terracotta*`; botones de texto 39 px / radius 12 px; íconos 36×36 / radius 10 px) y verificar con datos reales o PGlite.
+
+## 11. Mapa rápido de rutas admin
+
+`/admin` (resumen) · `/admin/vender` · `/admin/balance` · `/admin/inventario` (+ `/sincronizacion`) · `/admin/productos` (online) · `/admin/productos/entrega-inmediata` · `/admin/productos/en-camino` · `/admin/productos/nuevo` · `/admin/categorias` · `/admin/clientes` · `/admin/proveedores` · `/admin/pedidos` (+ `/nuevo`, `/[id]`) · `/admin/por-ordenar` · `/admin/en-camino` · `/admin/agenda` · `/admin/cobranza` · `/admin/devoluciones` · `/admin/cotizaciones` · `/admin/estadisticas` · `/admin/compras` (+ `/nueva`, `/[id]`; `/pendientes` en la Fase 2) · `/admin/empleados` (alta de empleados, en el PR del panel de empleado) · `/admin/configuracion` · `/admin/ayuda` · placeholders: `/admin/reportes`, `/admin/facturacion*`, `/admin/sitio-web`.
