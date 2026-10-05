@@ -93,6 +93,8 @@ const groups: NavGroup[] = [
         icon: "shopper",
         title: "Compras en tiendas de EE.UU. a través de tu shopper",
         children: [
+          { label: "Próximamente", href: "/admin/proximamente", icon: "inbound", title: "Publicar piezas por llegar y registrar apartados" },
+          { label: "Apartados", href: "/admin/apartados", icon: "box", title: "Abonos, vencimiento y liberación de apartados" },
           {
             label: "Pendientes de envío",
             href: "/admin/compras/pendientes",

@@ -1,0 +1,58 @@
+import assert from 'node:assert/strict'; import fs from 'node:fs'; import {setup} from './incoming-reservations-db.mjs';
+let db; const owner='00000000-0000-4000-8000-000000000001', employee='00000000-0000-4000-8000-000000000002', client='00000000-0000-4000-8000-000000000003';
+try{
+ db=await setup(); await db.exec(fs.readFileSync('database/migrations/016_incoming_reservations.sql','utf8'));
+ const q=async(sql,params=[]) => (await db.query(sql,params)).rows;
+ await db.exec(`SET search_path=luxury_finds,public; INSERT INTO auth.users VALUES('${owner}'),('${employee}'),('${client}'); INSERT INTO admin_users(id,username,display_name,role) VALUES('${owner}','TEMP-owner','TEMP Owner','OWNER'),('${employee}','TEMP-staff','TEMP Staff','EMPLOYEE'); INSERT INTO clients(id,phone,first_name,last_name) VALUES('${client}','TEMP-003','TEMP','Client');`);
+ const shopper=(await q("INSERT INTO suppliers(name) VALUES('TEMP Shopper') RETURNING id"))[0].id;
+ const purchase=(await q("INSERT INTO purchases(supplier_id,purchase_date,exchange_rate,commission_percent) VALUES($1,current_date,20,10) RETURNING id",[shopper]))[0].id;
+ const store=(await q("INSERT INTO purchase_tickets(purchase_id,store_name,real_total_usd_cents) VALUES($1,'TEMP Store',5000) RETURNING id",[purchase]))[0].id;
+ const item=(await q("INSERT INTO purchase_items(purchase_id,ticket_id,name,quantity,unit_price_usd_cents,photo_storage_key) VALUES($1,$2,'TEMP Product',8,625,'TEMP/photo.jpg') RETURNING id",[purchase,store]))[0].id;
+ await db.transaction(async tx=>{await tx.query("SELECT set_config('luxury_finds.confirming_purchase',$1,true)",[purchase]);await tx.query("UPDATE purchase_items SET status='PURCHASED',line_cost_mxn_cents=110001,unit_cost_mxn_cents=13750 WHERE id=$1",[item]);await tx.query("UPDATE purchases SET status='CONFIRMED',captured_subtotal_usd_cents=5000,tax_usd_cents=0,total_real_usd_cents=5000,difference_usd_cents=0,commission_usd_cents=500,owed_usd_cents=5500,owed_mxn_cents=110001,confirmed_at=now(),confirmed_by_admin_id=$2 WHERE id=$1",[purchase,owner]);});
+ const expectReject=async(fn,pattern)=>{let failed=false;try{await fn();}catch(e){failed=true;assert.match(e.message,pattern);}assert.equal(failed,true);};
+ await expectReject(()=>q('SELECT save_incoming_offer($1,10001,NULL,NULL,true,$2)',[item,owner]),/check constraint/);
+ await expectReject(()=>q("SELECT save_incoming_offer($1,10001,NULL,'TEMP/photo.jpg',true,$2)",[item,employee]),/Solo la dueña/);
+ await q("SELECT save_incoming_offer($1,10001,current_date+7,'TEMP/photo.jpg',true,$2)",[item,owner]);
+ const create=async(quantity,initial=null,request=crypto.randomUUID())=>(await q("SELECT create_purchase_reservation($1,$2,$3,$4,'CASH','TEMP',$5,$6) result",[item,client,quantity,initial,owner,request]))[0].result;
+ const request=crypto.randomUUID(); const r1=await create(2,null,request);await create(2,null,request);
+ assert.equal((await q('SELECT count(*) n FROM payments WHERE ticket_id=$1',[r1.ticket_id]))[0].n,1);
+ const r2=await create(1,3100);
+ assert.equal((await q('SELECT available_quantity n FROM incoming_item_availability WHERE purchase_item_id=$1',[item]))[0].n,5);
+ await expectReject(()=>q('SELECT assign_purchase_item($1,$2,6,10001,$3)',[item,client,owner]),/apartadas/);
+ const assigned=(await q('SELECT assign_purchase_item($1,$2,2,10001,$3) result',[item,client,owner]))[0].result;
+ const ship=(await q('SELECT create_shipment($1,$2,$3) result',[owner,JSON.stringify({carrier:'TEMP Parcel',shipping_cost_mxn_cents:801}),JSON.stringify([{purchase_item_id:item,quantity:6},{assignment_id:assigned.assignment_id}])]))[0].result;
+ const shipId=ship.shipment_id??ship.id;assert.ok(shipId);
+ await q('SELECT confirm_shipment_departure($1,$2)',[shipId,owner]);
+ const r3=await create(3);await expectReject(()=>create(1),/Solo quedan 0/);
+ await q("SELECT pay_purchase_reservation($1,10001,'TRANSFER','TEMP',$2,$3)",[r1.id,owner,crypto.randomUUID()]);
+ assert.equal((await q('SELECT status FROM purchase_reservations WHERE id=$1',[r1.id]))[0].status,'PAID');
+ const lines=await q('SELECT id,assignment_id FROM shipment_lines WHERE shipment_id=$1 ORDER BY position',[shipId]); const free=lines.find(l=>!l.assignment_id).id; const assignedLine=lines.find(l=>l.assignment_id).id;
+ await q('SELECT receive_shipment($1,$2,$3)',[shipId,employee,JSON.stringify([{line_id:free,good:3,damaged:1,missing:0}])]);
+ let variant=(await q('SELECT variant_id FROM purchase_items WHERE id=$1',[item]))[0].variant_id;
+ assert.equal(Number((await q('SELECT available_quantity FROM variant_stock WHERE variant_id=$1',[variant]))[0].available_quantity),0);
+ assert.equal((await q('SELECT logistics_status FROM tickets WHERE id=$1',[r1.ticket_id]))[0].logistics_status,'READY_FOR_DELIVERY');
+ assert.equal((await q('SELECT logistics_status FROM tickets WHERE id=$1',[r2.ticket_id]))[0].logistics_status,'RECEIVED_LA_PAZ');
+ await expectReject(()=>q("UPDATE tickets SET logistics_status='DELIVERED' WHERE id=$1",[r2.ticket_id]),/liquidado/);
+ await q('SELECT receive_shipment($1,$2,$3)',[shipId,employee,JSON.stringify([{line_id:assignedLine,good:2}])]);
+ assert.equal((await q('SELECT logistics_status FROM tickets WHERE id=$1',[assigned.ticket_id]))[0].logistics_status,'READY_FOR_DELIVERY');
+ for(const id of [r1.id,r2.id,r3.id])await db.transaction(async tx=>{await tx.query("SELECT set_config('luxury_finds.reservation_op',$1,true)",[id]);await tx.query("UPDATE purchase_reservations SET expires_at=now()-interval '1 second' WHERE id=$1",[id]);});
+ assert.equal(Number((await q('SELECT available_quantity FROM variant_stock WHERE variant_id=$1',[variant]))[0].available_quantity),1);
+ // A sale materialises expiry under lock, never double counts virtual stock.
+ await q("INSERT INTO inventory_movements(variant_id,movement_type,quantity_delta,reason) VALUES($1,'ALLOCATION',-1,'TEMP sale')",[variant]);
+ assert.equal(Number((await q('SELECT available_quantity FROM variant_stock WHERE variant_id=$1',[variant]))[0].available_quantity),0);
+ assert.equal((await q("SELECT count(*) n FROM purchase_reservations WHERE status='EXPIRED'"))[0].n,2);
+ assert.equal((await q('SELECT status FROM purchase_reservations WHERE id=$1',[r1.id]))[0].status,'PAID');
+ await q('SELECT expire_purchase_reservations(100)');await q('SELECT expire_purchase_reservations(100)');
+ assert.equal((await q("SELECT count(*) n FROM notifications WHERE body='Tu producto no ha sido liquidado; pasa a disponible.'"))[0].n,2);
+ assert.equal((await q('SELECT amount_cents FROM payments WHERE ticket_id=$1',[r2.ticket_id]))[0].amount_cents,3100);
+ await expectReject(()=>q("SELECT pay_purchase_reservation($1,1,'CASH','TEMP',$2,$3)",[r2.id,owner,crypto.randomUUID()]),/venció/);
+ const outbox=await q('SELECT * FROM claim_reservation_notifications(10)');assert.equal(outbox.length,2);assert.equal((await q('SELECT * FROM claim_reservation_notifications(10)')).length,0);
+ await q('SELECT finish_reservation_notification($1,$2,true)',[outbox[0].reservation_id,outbox[0].claim_token]);
+ await q('SELECT receive_shipment($1,$2,$3)',[shipId,employee,JSON.stringify([{line_id:free,good:2}])]);
+ assert.equal(Number((await q('SELECT available_quantity FROM variant_stock WHERE variant_id=$1',[variant]))[0].available_quantity),2);
+ assert.equal((await q('SELECT available_quantity FROM incoming_item_availability WHERE purchase_item_id=$1',[item]))[0].available_quantity,0);
+ assert.equal((await q('SELECT price_cents FROM product_variants WHERE id=$1',[variant]))[0].price_cents,10001);
+ assert.equal((await q("SELECT has_function_privilege('service_role','luxury_finds.receive_shipment_before_reservations(uuid,uuid,jsonb)','EXECUTE') allowed"))[0].allowed,false);
+ console.log('OK: 016 idempotente; OWNER; anticipo 50/custom; reintentos; no sobreapartado; asignaciones; reserva en embarque; recepción parcial; entrega solo liquidada; stock; vencimiento; pagos conservados; notificación única; outbox y recepción normal.');
+}catch(e){console.error('FAIL',e.message,e.detail??'',e.where??'');process.exitCode=1;}finally{await db?.close();}
+

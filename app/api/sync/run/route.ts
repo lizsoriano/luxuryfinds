@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { runSync } from "../../../../lib/sync/engine";
 import { matchesSyncCronSecret, hasSyncCronSecret } from "../../../../lib/sync/env";
 import { SYNC_SOURCES, type SyncSource, type SyncType } from "../../../../lib/sync/types";
+import { processReservationExpiry } from "../../../../lib/supabase/incoming-reservations";
 
 /**
  * Catalogue synchronisation endpoint. Runs Maw Maw and Oskin against the Luxury
@@ -85,13 +86,19 @@ async function handle(request: NextRequest) {
 
   const syncType = parseSyncType(params.get("type"));
   const dryRun = params.get("dry") === "1";
+  let reservations: Awaited<ReturnType<typeof processReservationExpiry>> | { error: string } | null = null;
+  const reservationStart = Date.now();
+  if (!dryRun) {
+    try { reservations = await processReservationExpiry(8000); }
+    catch (error) { reservations = { error: error instanceof Error ? error.message : "No se pudieron revisar los apartados." }; }
+  }
   const maxPages = Number(params.get("maxPages")) || undefined;
   // Escape hatch for the checkpoint described in lib/sync/cursor.ts: forces the
   // crawl back to page 1 and forgets where the last run stopped.
   const resetCursor = params.get("resetCursor") === "1";
   // The whole invocation shares one budget so two sources cannot together run
   // past the function's time limit.
-  const budgetMs = Math.min(Number(params.get("budgetMs")) || DEFAULT_BUDGET_MS, 280_000);
+  const budgetMs = Math.max(1000, Math.min(Number(params.get("budgetMs")) || DEFAULT_BUDGET_MS, 280_000) - (Date.now() - reservationStart));
   const perSourceBudget = Math.floor(budgetMs / sources.length);
 
   const results = [];
@@ -110,10 +117,11 @@ async function handle(request: NextRequest) {
     );
   }
 
-  const anyFailed = results.some((result) => result.status === "failed");
+  const anyFailed = results.some((result) => result.status === "failed") || Boolean(reservations && "error" in reservations);
   return NextResponse.json(
     {
       ok: !anyFailed,
+      reservations,
       runs: results.map((result) => ({
         source: result.source,
         status: result.status,

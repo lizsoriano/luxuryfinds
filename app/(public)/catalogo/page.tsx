@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { ProductCard } from "../../../components/ui/ProductCard";
+import { readSiteContent } from "../../../lib/supabase/site-content";
 import {
   getCatalogProducts,
   getCatalogCategories,
@@ -86,6 +87,8 @@ const TYPE_TABS: FilterTab[] = [
 ];
 
 export default async function CatalogPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
+  const content = await readSiteContent();
+  const orderedTabs = [...TYPE_TABS].sort((a, b) => content.catalogOrder.indexOf(a.label) - content.catalogOrder.indexOf(b.label));
   const sp = await searchParams;
   const sort = (sp.orden as CatalogSort) || "recommended";
   const catalogType = sp.tipo === "IMMEDIATE" || sp.tipo === "ON_DEMAND" ? sp.tipo : undefined;
@@ -147,7 +150,7 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
         </form>
 
         <div className="filter-tabs" aria-label="Filtrar por disponibilidad, marca y categoría">
-          {TYPE_TABS.map((tab) => {
+          {orderedTabs.map((tab) => {
             const active = tab.marca
               ? sp.marca === tab.marca
               : tab.categoria

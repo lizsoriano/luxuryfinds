@@ -6,7 +6,7 @@ import { hasTelegramEnv, getTelegramEnv } from "./env";
  * configured yet or the request fails — callers should never let this block a
  * user-facing flow like checkout.
  */
-export async function sendTelegramMessage(chatId: number | string, text: string): Promise<boolean> {
+export async function sendTelegramMessage(chatId: number | string, text: string, timeoutMs?: number): Promise<boolean> {
   if (!hasTelegramEnv()) {
     console.warn("[telegram] Envío omitido: TELEGRAM_BOT_TOKEN/TELEGRAM_BOT_USERNAME no configurados.");
     return false;
@@ -16,6 +16,7 @@ export async function sendTelegramMessage(chatId: number | string, text: string)
     const { botToken } = getTelegramEnv();
     const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       method: "POST",
+      signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
     });

@@ -1,8 +1,10 @@
 import { getClientProfile } from "./auth";
+import { getClientReservations } from "./incoming-reservations";
 
 export async function getAccountData() {
   const { supabase, user, profile } = await getClientProfile();
   if (!profile) return { user, profile: null };
+  const reservations = await getClientReservations(user.id);
 
   const [orders, tickets, plans, installments, payments, fees, notifications, deliveries] = await Promise.all([
     supabase.schema("luxury_finds").from("orders").select("id, status, created_at, order_items(id, quantity)").order("created_at", { ascending: false }),
@@ -22,6 +24,7 @@ export async function getAccountData() {
   return {
     user,
     profile,
+    reservations,
     orders: orders.data ?? [],
     tickets: tickets.data ?? [],
     plans: plans.data ?? [],
