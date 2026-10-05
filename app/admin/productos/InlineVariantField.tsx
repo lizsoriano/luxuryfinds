@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition, type KeyboardEvent } from "react";
-import { emptyActionState } from "../../../lib/actions";
+import { emptyActionState, type ActionState } from "../../../lib/actions";
 import { centsToInput, formatQuantity } from "../../../lib/format";
 import { updateVariantQuickAction } from "./actions";
 
@@ -43,6 +43,7 @@ export function InlineVariantField({
   unitLabel,
   disabled = false,
   label,
+  action = updateVariantQuickAction,
 }: {
   variantId: string;
   field: "price" | "stock";
@@ -52,6 +53,7 @@ export function InlineVariantField({
   unitLabel?: string | null;
   disabled?: boolean;
   label: string;
+  action?: (state: ActionState, data: FormData) => Promise<ActionState>;
 }) {
   const [saved, setSaved] = useState(value);
   const [draft, setDraft] = useState(() => display(field, value));
@@ -114,7 +116,7 @@ export function InlineVariantField({
     startTransition(async () => {
       let result;
       try {
-        result = await updateVariantQuickAction(emptyActionState, formData);
+        result = await action(emptyActionState, formData);
       } catch {
         result = { error: "Sin conexión. No se guardó.", success: null };
       }

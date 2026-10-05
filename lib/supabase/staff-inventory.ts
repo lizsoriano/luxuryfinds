@@ -629,3 +629,38 @@ export async function editStaffVariant(input: { adminId: string; variantId: stri
   await logActivity({ adminUserId: input.adminId, action: "PRODUCT_VARIANT_UPDATED_STAFF", entityType: "product_variants", entityId: context.id, newData: { name, price_cents: input.priceCents, stock: input.quantity } });
   return { ok: true, productId: product.id, message: "Variante, precio y existencia guardados." };
 }
+
+export async function updateStaffInventoryField(input: { adminId: string; variantId: string; field: "price" | "stock"; value: number }): Promise<StaffResult<{ productId: string }>> {
+  if (input.field === "price") return updateStaffVariantPrice({ adminId: input.adminId, variantId: input.variantId, priceCents: input.value });
+  const context = await readVariant(input.variantId);
+  const product = context?.products;
+  if (!context || !product || !context.is_active || !product.is_active || product.catalog_type !== "IMMEDIATE" || product.created_by_admin_id !== input.adminId || product.is_public) return { ok: false, error: "Solo puedes editar tus productos aún ocultos." };
+  if (!Number.isFinite(input.value) || input.value < 0 || input.value > 1_000_000 || (product.product_kind !== "MEASURED" && !Number.isInteger(input.value))) return { ok: false, error: "Revisa la existencia." };
+  const result = await updateVariantQuick({ variantId: input.variantId, field: "stock", value: input.value, adminId: input.adminId });
+  if (!result.ok) return result;
+  return { ok: true, productId: product.id, message: "Existencia guardada." };
+}
+
+export async function archiveStaffProducts(adminId: string, productIds: string[]): Promise<StaffResult<{ productId: string }>> {
+  const ids = [...new Set(productIds)].filter(Boolean);
+  if (!ids.length || ids.length > 50) return { ok: false, error: "Selecciona entre 1 y 50 productos." };
+  const db = adminDb();
+  const { data, error } = await db.from("products").select(STAFF_SELECTS.productOwnership).in("id", ids);
+  if (error) return { ok: false, error: error.message };
+  if (!data || data.length !== ids.length || data.some(product => product.created_by_admin_id !== adminId || product.is_public || !product.is_active || product.catalog_type !== "IMMEDIATE")) return { ok: false, error: "Solo puedes archivar tus productos aún ocultos." };
+  const result = await db.from("products").update({ is_active: false, is_public: false, updated_at: new Date().toISOString() }).in("id", ids).eq("created_by_admin_id", adminId).eq("is_public", false).select("id");
+  if (result.error) return { ok: false, error: result.error.message };
+  if (result.data?.length !== ids.length) return { ok: false, error: "Algún producto cambió. Recarga para revisar los productos archivados." };
+  await logActivity({ adminUserId: adminId, action: "PRODUCT_ARCHIVED_STAFF", entityType: "products", entityId: ids.join(","), newData: { count: ids.length } });
+  return { ok: true, productId: ids[0], message: `${ids.length} producto(s) archivado(s). Su historial se conserva.` };
+}
+
+export async function duplicateStaffProduct(adminId: string, productId: string): Promise<StaffResult<{ productId: string }>> {
+  const { data, error } = await adminDb().from("products").select(STAFF_SELECTS.products).eq("id", productId).maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  if (!data || data.created_by_admin_id !== adminId || data.is_public || !data.is_active || data.catalog_type !== "IMMEDIATE") return { ok: false, error: "Solo puedes duplicar tus productos aún ocultos." };
+  const product = toStaffProduct(data as unknown as ProductRowRaw, new Map());
+  const result = await createStaffProduct({ adminId, name: `${product.name.slice(0,132)} (copia)`, categoryId: product.categoryId, variants: product.variants.map(variant => ({ name: variant.name, priceCents: variant.priceCents, quantity: 0 })) });
+  if (!result.ok) return result;
+  return { ...result, message: "Copia creada como oculta, sin fotos ni existencias. Completa sus datos." };
+}
