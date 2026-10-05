@@ -1,5 +1,6 @@
 import { createAdminSupabaseClient } from "./admin";
-import { getAdminSession } from "./auth";
+import { getAdminSession, getStaffSession, type StaffAccount } from "./auth";
+import { EMPLOYEE_ROLES_UNAVAILABLE_MESSAGE } from "./staff-roles";
 
 /**
  * Seeded in database/migrations/002_business_management.sql. Multi-business is
@@ -22,13 +23,33 @@ export const MAX_PRODUCT_IMAGES = 3;
 
 export type AdminActor = { id: string; display_name: string; username: string };
 
-/** Throws when the caller is not an active admin. Server actions catch this. */
+/**
+ * Throws when the caller is not an active OWNER (getAdminSession refuses
+ * employees). Every /admin server action goes through here, so the owner's
+ * panel stays owner-only with this single check. Server actions catch this.
+ */
 export async function requireAdminActor(): Promise<AdminActor> {
   const session = await getAdminSession();
   if (session.kind !== "authorized") {
     throw new Error("Tu sesión administrativa no es válida. Vuelve a iniciar sesión.");
   }
   return session.admin as AdminActor;
+}
+
+export type StaffActor = StaffAccount;
+
+/**
+ * Throws unless the caller is an active OWNER or EMPLOYEE and migration 012 is
+ * applied. ONLY for the staff panel (/empleado) — never use it to guard
+ * anything of the owner's panel.
+ */
+export async function requireStaffActor(): Promise<StaffActor> {
+  const session = await getStaffSession();
+  if (session.kind === "unavailable") throw new Error(EMPLOYEE_ROLES_UNAVAILABLE_MESSAGE);
+  if (session.kind !== "authorized") {
+    throw new Error("Tu sesión de empleado no es válida. Vuelve a iniciar sesión.");
+  }
+  return session.staff;
 }
 
 export function adminDb() {
