@@ -3,7 +3,7 @@
 ## Implementado
 
 - **Sitio Web**: edición de textos, portada comprimida, aviso, orden de inicio y catálogo, SEO y dominio principal. Solo guarda la clave `public_site_content`; conectar otro dominio requiere Vercel/DNS.
-- **Recepción para empleados**: embarques y recepción por línea, con cantidades, incidencias y foto comprimida. Lecturas sin costos; acciones autenticadas.
+- **Recepción para empleados**: lista de productos que la dueña puso en camino, con un check por producto para confirmar todas las piezas pendientes. Sin campos de cantidades, fotos ni observaciones. Si faltan piezas, el empleado deja el check pendiente y la dueña puede gestionar incidencias desde su panel. Lecturas sin costos; acciones autenticadas.
 - **Fotos de Productos**: hasta tres fotos comprimidas con presupuesto total de 800 KB y comprobación del formulario completo.
 - **Próximamente y Apartados**: publicar compras confirmadas con precio, foto y fecha estimada; público ve únicamente unidades libres. Solo OWNER registra apartados, también sobre unidades libres de embarques. Anticipo predeterminado del 50 %, editable, vencimiento de un mes calendario. Ticket y abono se crean juntos; recepción reserva existencias y entrega requiere recepción completa y liquidación. Abonos posteriores desde Apartados o Cobranza.
 - **Vencimiento**: el saldo pendiente libera las unidades, cancela el ticket y avisa «Tu producto no ha sido liquidado; pasa a disponible.». Conserva abonos e historial; no decide devolución o pérdida del anticipo. Los apartados liquidados no vencen. Cuenta muestra el apartado y sus avisos.
