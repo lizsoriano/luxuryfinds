@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { listLaPazProducts, listStaffCategories } from "../../../lib/supabase/staff-inventory";
+import { listLaPazProducts, listStaffBrands, listStaffCategories } from "../../../lib/supabase/staff-inventory";
 import { StaffInventoryWorkspace } from "./StaffInventoryWorkspace";
 import { requireStaffActor } from "../../../lib/supabase/business";
 
@@ -13,8 +13,11 @@ export default async function StaffInventoryPage({ searchParams }: { searchParam
   const sp = await searchParams;
   const search = (sp.q ?? "").trim();
   const page = Math.max(1, Number(sp.pagina) || 1);
-  let categories: Array<{ id: string; name: string }> = [];
-  try { categories = await listStaffCategories(); } catch { /* Category is optional. */ }
+  type Option = { id: string; name: string };
+  const [categories, brands] = await Promise.all([
+    listStaffCategories().catch((): Option[] => []), // Category is optional.
+    listStaffBrands().catch((): Option[] => []), // Brand is optional too.
+  ]);
 
   let result;
   try {
@@ -50,7 +53,7 @@ export default async function StaffInventoryPage({ searchParams }: { searchParam
         </Link>
       </div>
 
-      <StaffInventoryWorkspace products={result.products} total={result.total} search={search} actorId={actor.id} categories={categories}>
+      <StaffInventoryWorkspace products={result.products} total={result.total} search={search} actorId={actor.id} categories={categories} brands={brands}>
 
       <form className="staff-search" method="get" action="/empleado/inventario" role="search">
         <label htmlFor="staff-inventory-search" className="sr-only">

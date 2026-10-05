@@ -53,6 +53,10 @@ export const STAFF_SELECTS = {
   /** One variant, to validate an entry / a price edit. */
   variant: "id, product_id, name, price_cents, is_active, products(id, name, product_kind, catalog_type, is_active, is_public, created_by_admin_id)",
   categories: "id, name",
+  /** Brand picker of the photo drafts (existing brands only). */
+  brands: "id, name",
+  /** Resuming a photo draft whose first attempt lost its response (idempotent creation). */
+  draftResume: "id, name, catalog_type, is_active, created_by_admin_id, product_variants(id, name), product_images(storage_key)",
   /** Names shown next to "who did it". */
   staffNames: "id, display_name",
   /** Scheduled deliveries (Agenda bookings that are still BOOKED). */

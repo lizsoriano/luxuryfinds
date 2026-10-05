@@ -7,7 +7,7 @@ import {test} from 'node:test';
 function fixture({owner='staff',published=false,stockFailure=false}={}) {
  const writes=[];
  const product={id:'product',name:'Anterior',category_id:null,created_by_admin_id:owner,is_public:published,catalog_type:'IMMEDIATE',is_active:true};
- const variant={id:'variant',is_active:true,products:{...product,product_kind:'SIMPLE'}};
+ const variant={id:'variant',is_active:true,price_cents:25000,products:{...product,product_kind:'SIMPLE'}};
  const db={from(table){let change;const query={select(){return query},eq(){return query},update(value){change=value;return query},async maybeSingle(){if(change)writes.push({table,...change});return {data:product,error:null}},then(resolve){return Promise.resolve({data:[],error:null}).then(resolve)}};return query}};
  const mocks={
   '../actions':{describeError:e=>e.message},'../format':{slugify:s=>s},
