@@ -3,8 +3,8 @@ import { notFound } from "next/navigation";
 import { formatDateTime, formatMoney, formatQuantity } from "../../../../lib/format";
 import { MAX_PRODUCT_IMAGES } from "../../../../lib/supabase/business";
 import { getStaffSession } from "../../../../lib/supabase/auth";
-import { getStaffProduct } from "../../../../lib/supabase/staff-inventory";
-import { AddPhotoForm, EntryForm, PriceForm } from "../InventoryForms";
+import { getStaffProduct, listStaffCategories } from "../../../../lib/supabase/staff-inventory";
+import { AddPhotoForm, EntryForm, EditProductForm, EditVariantForm } from "../InventoryForms";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +35,7 @@ export default async function StaffProductPage({ params }: { params: Promise<{ i
     );
   }
   if (!product) notFound();
+  const categories = product.canEditPrices ? await listStaffCategories() : [];
 
   return (
     <main className="staff-content staff-narrow">
@@ -66,6 +67,11 @@ export default async function StaffProductPage({ params }: { params: Promise<{ i
         <div className="staff-note">Este producto todavía viene en camino. Las entradas se registran cuando la dueña lo marque como recibido.</div>
       ) : null}
 
+      {product.canEditPrices && <section className="staff-card staff-panel">
+        <h2 className="staff-section-title">Editar producto</h2>
+        <EditProductForm key={`${product.id}-${product.name}-${product.categoryId}`} productId={product.id} name={product.name} categoryId={product.categoryId} categories={categories} />
+      </section>}
+
       <section className="staff-card staff-panel">
         <h2 className="staff-section-title">Variantes</h2>
         <ul className="staff-variant-list">
@@ -81,10 +87,10 @@ export default async function StaffProductPage({ params }: { params: Promise<{ i
         </ul>
         {product.canEditPrices ? (
           <details className="staff-details">
-            <summary>Corregir precio de venta</summary>
+            <summary>Editar variantes, precios y existencias</summary>
             <div className="staff-details-body">
               {product.variants.map((variant) => (
-                <PriceForm key={variant.id} variantId={variant.id} variantName={variant.name} priceCents={variant.priceCents} />
+                <EditVariantForm key={`${variant.id}-${variant.name}-${variant.priceCents}-${variant.stock}`} variant={variant} allowsDecimal={product.allowsDecimal} />
               ))}
             </div>
           </details>

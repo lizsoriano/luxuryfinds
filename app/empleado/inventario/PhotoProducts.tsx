@@ -19,6 +19,7 @@ export function PhotoProducts({ categories }: { categories: Array<{ id: string; 
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
+  const [savedMessages, setSavedMessages] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const locked = useRef(false);
@@ -86,7 +87,8 @@ export function PhotoProducts({ categories }: { categories: Array<{ id: string; 
           const result = await createStaffProductAction({ error: null, success: null }, data);
           if (result.productId) {
             saved = true;
-            update(draft.id, { productId: result.productId, message: result.success ?? "Producto guardado." });
+            setSavedMessages((current) => [...current, result.success ?? `${draft.name}: producto guardado.`]);
+            remove(draft);
           } else update(draft.id, { error: result.error ?? "No se pudo guardar el producto." });
         } catch {
           update(draft.id, { uncertain: true, error: "Se perdió la conexión. Revisa el inventario antes de volver a crear este producto." });
@@ -116,6 +118,7 @@ export function PhotoProducts({ categories }: { categories: Array<{ id: string; 
         disabled={busy} onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
     </div>
     {error && <p className="form-message form-error" role="alert">{error}</p>}
+    {savedMessages.length > 0 && <div className="form-message form-success" role="status"><strong>{savedMessages.length} producto(s) guardados en el inventario de abajo.</strong>{savedMessages.map((message, index) => <p key={index}>{message}</p>)}<a href="#staff-saved-products">Ver productos guardados ↓</a></div>}
     {drafts.length > 0 && <form onSubmit={save}>
       <p className="staff-hint">Se guardan como productos ocultos hasta que la dueña los publique. Las fotos se comprimen automáticamente. Las fichas sin guardar se pierden al salir.</p>
       <div className="staff-photo-drafts">

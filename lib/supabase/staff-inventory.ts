@@ -49,6 +49,7 @@ export type StaffProductRow = {
   id: string;
   name: string;
   categoryName: string | null;
+  categoryId: string | null;
   imageUrl: string | null;
   isPublic: boolean;
   allowsDecimal: boolean;
@@ -62,6 +63,7 @@ export type StaffProductRow = {
 type ProductRowRaw = {
   id: string;
   name: string;
+  category_id: string | null;
   is_public: boolean;
   is_active: boolean;
   catalog_type: "ON_DEMAND" | "IMMEDIATE";
@@ -96,6 +98,7 @@ function toStaffProduct(row: ProductRowRaw, stock: Map<string, number>): StaffPr
     id: row.id,
     name: row.name,
     categoryName: relationName(row.categories),
+    categoryId: row.category_id,
     imageUrl: productImageUrl(image?.storage_key),
     isPublic: Boolean(row.is_public),
     allowsDecimal: (row.product_kind ?? "SIMPLE") === "MEASURED",
@@ -127,7 +130,7 @@ export async function listLaPazProducts(query: { search?: string; page?: number;
   const run = (filterInTransit: boolean) => {
     let builder = laPazQuery(filterInTransit);
     if (search) builder = builder.ilike("name", `%${search}%`);
-    return builder.order("name", { ascending: true }).range(from, from + pageSize - 1);
+    return builder.order("created_at", { ascending: false }).order("id").range(from, from + pageSize - 1);
   };
   let result = await run(true);
   if (result.error && isMissingInTransitColumn(result.error.message)) result = await run(false);
@@ -588,4 +591,41 @@ export async function addStaffProductPhoto(input: { adminId: string; productId: 
   }
   await logActivity({ adminUserId: input.adminId, action: "PRODUCT_PHOTO_ADDED_STAFF", entityType: "products", entityId: input.productId });
   return { ok: true, productId: input.productId, message: "Foto agregada." };
+}
+
+/** Employee edits remain limited to their own hidden products. */
+export async function editStaffProduct(input: { adminId: string; productId: string; name: string; categoryId: string | null }): Promise<StaffResult<{ productId: string }>> {
+  const name = input.name.trim();
+  if (!name || name.length > 140) return { ok: false, error: "Escribe un nombre de hasta 140 caracteres." };
+  const db = adminDb();
+  const { data: product, error } = await db.from("products").select("id,name,category_id,created_by_admin_id,is_public,catalog_type,is_active").eq("id", input.productId).maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  if (!product || product.catalog_type !== "IMMEDIATE" || !product.is_active || product.created_by_admin_id !== input.adminId || product.is_public) return { ok: false, error: "Solo puedes editar los productos que tú creaste y que la dueña aún no publicó." };
+  if (input.categoryId && !(await listStaffCategories()).some((category) => category.id === input.categoryId)) return { ok: false, error: "La categoría no está disponible." };
+  const result = await db.from("products").update({ name, category_id: input.categoryId, updated_at: new Date().toISOString() }).eq("id", product.id).eq("created_by_admin_id", input.adminId).eq("is_public", false).select("id").maybeSingle();
+  if (result.error || !result.data) return { ok: false, error: result.error?.message ?? "El producto cambió. Recarga la página." };
+  await logActivity({ adminUserId: input.adminId, action: "PRODUCT_UPDATED_STAFF", entityType: "products", entityId: product.id, previousData: { name: product.name, category_id: product.category_id }, newData: { name, category_id: input.categoryId } });
+  return { ok: true, productId: product.id, message: "Nombre y categoría guardados." };
+}
+
+export async function editStaffVariant(input: { adminId: string; variantId: string; name: string; priceCents: number; quantity: number }): Promise<StaffResult<{ productId: string }>> {
+  const name = input.name.trim();
+  if (!name || name.length > 100) return { ok: false, error: "Escribe una variante de hasta 100 caracteres." };
+  if (!Number.isInteger(input.priceCents) || input.priceCents <= 0 || input.priceCents > 100_000_000) return { ok: false, error: "Revisa el precio de venta." };
+  const context = await readVariant(input.variantId);
+  const product = context?.products;
+  if (!context || !product || !context.is_active || !product.is_active || product.catalog_type !== "IMMEDIATE" || product.created_by_admin_id !== input.adminId || product.is_public) return { ok: false, error: "Solo puedes editar los productos que tú creaste y que la dueña aún no publicó." };
+  if (!Number.isFinite(input.quantity) || input.quantity < 0 || input.quantity > 1_000_000 || (product.product_kind !== "MEASURED" && !Number.isInteger(input.quantity))) return { ok: false, error: "Revisa la existencia: no puede ser negativa." };
+  const db = adminDb();
+  const siblings = await db.from("product_variants").select("id,name").eq("product_id", product.id).eq("is_active", true);
+  if (siblings.error) return { ok: false, error: siblings.error.message };
+  if (siblings.data.some((variant) => variant.id !== context.id && variant.name.toLowerCase() === name.toLowerCase())) return { ok: false, error: "Ya existe otra variante con ese nombre." };
+  const renamed = await db.from("product_variants").update({ name, updated_at: new Date().toISOString() }).eq("id", context.id);
+  if (renamed.error) return { ok: false, error: renamed.error.message };
+  const price = await updateVariantQuick({ variantId: context.id, field: "price", value: input.priceCents, adminId: input.adminId });
+  if (!price.ok) return { ok: false, error: `El nombre se guardó; no se pudo guardar el precio: ${price.error}` };
+  const stock = await updateVariantQuick({ variantId: context.id, field: "stock", value: input.quantity, adminId: input.adminId });
+  if (!stock.ok) return { ok: false, error: `Nombre y precio guardados; no se pudo ajustar la existencia: ${stock.error}` };
+  await logActivity({ adminUserId: input.adminId, action: "PRODUCT_VARIANT_UPDATED_STAFF", entityType: "product_variants", entityId: context.id, newData: { name, price_cents: input.priceCents, stock: input.quantity } });
+  return { ok: true, productId: product.id, message: "Variante, precio y existencia guardados." };
 }
