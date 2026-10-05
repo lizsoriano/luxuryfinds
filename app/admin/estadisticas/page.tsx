@@ -384,7 +384,8 @@ export default async function EstadisticasPage({ searchParams }: { searchParams:
           <p className="admin-hint" style={{ marginTop: 16 }}>
             El costo de una venta de mostrador es el que quedó guardado al momento de venderla. El de una compra del
             catálogo usa el costo actual del producto, porque el ticket no guarda una copia: si cambias el costo, el
-            margen histórico se recalcula.
+            margen histórico se recalcula. Lo vendido desde Compras con shopper usa el costo congelado al asignarlo (tienda +
+            tax + comisión) más su parte del envío del embarque.
           </p>
         </Card>
       </section>
