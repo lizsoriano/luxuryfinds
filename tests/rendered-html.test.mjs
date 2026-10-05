@@ -27,6 +27,16 @@ before(async () => {
 
 after(() => server?.kill());
 
+test("redirects duplicate coming-soon section to incoming products", async () => {
+  const response = await fetch(`${origin}/proximamente`, { redirect: "manual" });
+  assert.equal(response.status, 308);
+  assert.equal(response.headers.get("location"), "/productos-en-camino");
+  const home = await fetch(origin);
+  const html = await home.text();
+  assert.match(html, /href="\/productos-en-camino"/);
+  assert.doesNotMatch(html, /href="\/proximamente"/);
+});
+
 test("serves stable panel styles", async () => {
   const login = await fetch(`${origin}/login`);
   assert.match(await login.text(), /href="\/styles\/luxury-finds\.css"/);

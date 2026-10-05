@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import Link from "next/link";
 
 export type CartItem = {
   /** Routing identifier for the product (slug when available, otherwise the raw id). */
@@ -51,6 +52,13 @@ function readStoredCart(): CartItem[] {
 export function CartProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
   const [hydrated, setHydrated] = useState(false);
+  const [added, setAdded] = useState<{ name: string } | null>(null);
+
+  useEffect(() => {
+    if (!added) return;
+    const timeout = window.setTimeout(() => setAdded(null), 6000);
+    return () => window.clearTimeout(timeout);
+  }, [added]);
 
   // Hydrate from localStorage on the client only, after mount, to avoid an SSR/CSR
   // mismatch (the server always renders an empty cart). This one-time read of an
@@ -72,6 +80,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, [items, hydrated]);
 
   const addItem = useCallback((item: Omit<CartItem, "quantity">, quantity = 1) => {
+    setAdded({ name: item.name });
     setItems((current) => {
       const existing = current.find((line) => sameLine(line, item.productId, item.variantId));
       if (existing) {
@@ -102,7 +111,15 @@ export function CartProvider({ children }: { children: ReactNode }) {
     return { items, count, subtotalCents, addItem, removeItem, updateQuantity, clear };
   }, [items, addItem, removeItem, updateQuantity, clear]);
 
-  return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
+  return <CartContext.Provider value={value}>{children}
+    <div className="cart-feedback-region" role="status" aria-live="polite" aria-atomic="true">
+      {added && <div className="cart-feedback">
+        <div><strong>Añadido correctamente al carrito</strong><span>{added.name}</span></div>
+        <Link href="/carrito" onClick={() => setAdded(null)}>Ver carrito ({value.count})</Link>
+        <button type="button" aria-label="Cerrar confirmación" onClick={() => setAdded(null)}>×</button>
+      </div>}
+    </div>
+  </CartContext.Provider>;
 }
 
 export function useCart() {
