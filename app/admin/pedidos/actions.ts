@@ -5,6 +5,7 @@ import { describeError, failure, ok, type ActionState } from "../../../lib/actio
 import { businessToday, LOGISTICS_STATUS_LABELS } from "../../../lib/format";
 import { getStockFor, getWeeklyPlanEligibility } from "../../../lib/supabase/admin-catalog";
 import { getRequestedPaymentPlan } from "../../../lib/supabase/admin-orders";
+import { hasReservationTickets } from "../../../lib/supabase/incoming-reservations";
 import { adminDb, logActivity, requireAdminActor } from "../../../lib/supabase/business";
 import { sendTelegramMessage } from "../../../lib/telegram/send";
 
@@ -428,6 +429,7 @@ export async function cancelOrderAction(_state: ActionState, formData: FormData)
         if (ticketsError) return failure(describeError(new Error(ticketsError.message), "No fue posible leer los tickets del pedido."));
 
         const ticketRows = tickets ?? [];
+        if (await hasReservationTickets(ticketRows.map((ticket) => ticket.id))) return failure("Este pedido corresponde a un apartado. Cancélalo desde Apartados para liberar las piezas y conservar sus abonos.");
         if (ticketRows.some((ticket) => ticket.logistics_status === "DELIVERED")) {
           return failure("Este pedido ya tiene artículos entregados; no se puede cancelar desde aquí.");
         }

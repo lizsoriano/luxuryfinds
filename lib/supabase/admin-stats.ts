@@ -253,6 +253,12 @@ async function getPurchaseTicketCosts(ticketIds: string[]) {
   } catch {
     return new Map<string, number>();
   }
+  // Apartados retain their frozen purchase + shipping costs after receiving a variant.
+  for (let index = 0; index < ticketIds.length; index += ID_BATCH_SIZE) {
+    const { data, error } = await db.from("purchase_reservations").select("ticket_id,cost_mxn_cents,shipping_cost_mxn_cents").in("ticket_id", ticketIds.slice(index, index + ID_BATCH_SIZE)).in("status", ["ACTIVE", "PAID"]);
+    if (error) break; // migration 016 pending: preserve the existing statistics
+    for (const row of data ?? []) costs.set(row.ticket_id, Number(row.cost_mxn_cents) + Number(row.shipping_cost_mxn_cents));
+  }
   return costs;
 }
 
@@ -317,7 +323,7 @@ export async function getPeriodTotals(range: StatsRange): Promise<PeriodTotals> 
 
   const [ticketCosts, purchaseTicketCosts] = await Promise.all([
     getVariantCosts(ticketRows.flatMap((ticket) => (ticket.variant_id ? [ticket.variant_id] : []))),
-    getPurchaseTicketCosts(ticketRows.flatMap((ticket) => (ticket.variant_id ? [] : [ticket.id]))),
+    getPurchaseTicketCosts(ticketRows.map((ticket) => ticket.id)),
   ]);
 
   const totals = EMPTY_TOTALS(range);
@@ -377,7 +383,7 @@ export async function getPeriodTotals(range: StatsRange): Promise<PeriodTotals> 
     // available figure. The screen says so rather than pretending it is exact.
     const unitCost = ticket.variant_id ? (ticketCosts.get(ticket.variant_id) ?? 0) : 0;
     // A shopper-purchase ticket (no variant) uses its frozen purchase cost + shipping instead.
-    const purchaseCost = ticket.variant_id ? undefined : purchaseTicketCosts.get(ticket.id);
+    const purchaseCost = purchaseTicketCosts.get(ticket.id);
     const cost = purchaseCost ?? Math.round(unitCost * quantity);
     const costMissing = purchaseCost === undefined && unitCost <= 0;
 

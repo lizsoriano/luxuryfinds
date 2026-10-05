@@ -2,27 +2,22 @@
 
 ## Implementado
 
-- **Sitio Web** (`/admin/sitio-web`): edición de textos, portada por URL o subida comprimida, aviso, orden de secciones de inicio y pestañas del catálogo, título y descripción SEO y dominio principal. Se guarda solo la clave nueva `public_site_content` de `app_settings`; los valores existentes no se alteran. Sin configuración, la portada mantiene sus valores anteriores. El dominio configura metadatos: conectar un dominio diferente también requiere Vercel/DNS.
-- **Recepción para empleados**: lista paginada de embarques en camino y recepción por línea (buenas, dañadas, faltantes, observaciones y una foto comprimida). Acciones protegidas con `requireStaffActor`; lecturas reducidas sin costos ni comisiones. Usa `receive_shipment` de 014 y registra al empleado como actor.
-- **Fotos de Productos**: se comprime el conjunto de hasta tres imágenes, con presupuesto total de 800 KB. También se comprueba el tamaño del formulario completo antes de enviarlo. Mantiene el límite de origen de 5 MB por foto.
+- **Sitio Web**: edición de textos, portada comprimida, aviso, orden de inicio y catálogo, SEO y dominio principal. Solo guarda la clave `public_site_content`; conectar otro dominio requiere Vercel/DNS.
+- **Recepción para empleados**: embarques y recepción por línea, con cantidades, incidencias y foto comprimida. Lecturas sin costos; acciones autenticadas.
+- **Fotos de Productos**: hasta tres fotos comprimidas con presupuesto total de 800 KB y comprobación del formulario completo.
+- **Próximamente y Apartados**: publicar compras confirmadas con precio, foto y fecha estimada; público ve únicamente unidades libres. Solo OWNER registra apartados, también sobre unidades libres de embarques. Anticipo predeterminado del 50 %, editable, vencimiento de un mes calendario. Ticket y abono se crean juntos; recepción reserva existencias y entrega requiere recepción completa y liquidación. Abonos posteriores desde Apartados o Cobranza.
+- **Vencimiento**: el saldo pendiente libera las unidades, cancela el ticket y avisa «Tu producto no ha sido liquidado; pasa a disponible.». Conserva abonos e historial; no decide devolución o pérdida del anticipo. Los apartados liquidados no vencen. Cuenta muestra el apartado y sus avisos.
 
 ## Activación manual
 
-Ejecutar `database/migrations/015_staff_reception.sql` en el editor SQL de Supabase, después de 014. El agente no la ejecutó en producción. Antes de aplicarla, el detalle de recepción muestra el archivo pendiente; los demás módulos siguen funcionando.
+Aplicar `015_staff_reception.sql` después de 014 y luego `016_incoming_reservations.sql` en el editor SQL de Supabase. El agente no ejecutó estas migraciones en producción. Aplicar 016 al final: envuelve las funciones de embarques de 014. Ambas son idempotentes. Revisar y respaldar la base antes de aplicar.
+
+Disponibilidad y existencias descuentan/liberan apartados según su vencimiento, incluso antes del proceso programado. Visitar las páginas de apartados, Próximamente o Cuenta materializa vencimientos y avisos internos. El endpoint autorizado `/api/sync/run` procesa vencimientos y la cola Telegram antes de sincronizar; `dryRun=1` no procesa apartados. Usa el cron existente. Telegram se envía en su siguiente ejecución y reintenta fallos; no garantiza aviso al minuto exacto. Para una frecuencia superior, configurar un programador externo autenticado. No requiere nuevas variables de entorno.
 
 ## Validación
 
-- `npm run typecheck`, `npm run lint` (0 errores, 13 avisos previos), `npm run build`.
-- Lecturas GET de Supabase: columnas de `shipments` y `app_settings` válidas; vista 015 ausente con 404/PGRST205.
-- 015 en PGlite temporal: idempotencia, cantidades, ausencia de costos, denegación de SELECT a anon/authenticated y concesión a service_role.
-- Contenido: rutas permitidas, rechazo de javascript/URLs con credenciales, configuración por defecto y reordenación de catálogo.
-- Navegador con harness temporal: tres fotos originales de 3,441,418 bytes; formulario completo comprimido de 544,986 bytes. Harness retirado.
-- No se modificaron registros reales, no se introdujeron contraseñas y no se ejecutó DDL en Supabase.
-
-## Cuarto pendiente: Próximamente con apartados
-
-Reglas confirmadas por la dueña: anticipo de 50 %, con monto alternativo editable por ella; plazo de un mes; se permite apartar unidades libres que ya van en un embarque.
-
-Faltan dos respuestas antes de implementar el flujo: quién registra el apartado (clienta en web o dueña/empleado) y qué hacer al vencer el mes (avisar para decisión manual o liberar automáticamente). No se asume la disposición del anticipo.
-
-Siguiente número de migración libre: 016. La rama y carpeta originales de la dueña conservan sus cambios locales.
+- TypeScript y lint sin errores; compilación de producción.
+- 015 y 016 probadas en PostgreSQL WASM/PGlite temporal con datos ficticios: permisos, idempotencia, 50 % y monto alternativo, reintentos, sobreapartado, recepción parcial, stock, liquidación, vencimiento, pagos preservados y aviso único.
+- Regresión reproducible desde la raíz: `npm install --prefix .tmp/pglite --no-save --package-lock=false @electric-sql/pglite`, luego `node tests/incoming-reservations.test.mjs`. Ejecuta exclusivamente una base en memoria.
+- Navegador: formulario de tres fotos originales de 3,441,418 bytes cada una comprimido a 544,986 bytes incluyendo multipart.
+- No se modificaron registros reales ni se ejecutó DDL en Supabase. La rama original conserva sus cambios locales.

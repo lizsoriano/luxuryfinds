@@ -8,6 +8,7 @@ import { PageHeader } from "../../../../components/ui/PageHeader";
 import { FINANCIAL_STATUS_LABELS, formatDateTime, formatMoney, LOGISTICS_STATUS_LABELS } from "../../../../lib/format";
 import { getOrderDetail, type OrderStatus } from "../../../../lib/supabase/admin-orders";
 import { getPurchaseLinksForTickets } from "../../../../lib/supabase/admin-purchases";
+import { hasReservationTickets } from "../../../../lib/supabase/incoming-reservations";
 import { cancelOrderAction, confirmOrderAction } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -70,6 +71,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const ticketByItem = new Map(tickets.map((ticket) => [ticket.order_item_id, ticket]));
   const purchaseLinks = await getPurchaseLinksForTickets(tickets.map((ticket) => ticket.id));
   const purchaseLink = [...purchaseLinks.values()][0] ?? null;
+  const isReservation = await hasReservationTickets(tickets.map((ticket) => ticket.id));
 
   return (
     <main className="admin-content">
@@ -102,7 +104,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                 Ver compra {purchaseLink.purchaseNumber}
               </Button>
             )}
-            {(order.status === "DRAFT" || order.status === "CONFIRMED") && !purchaseLink && (
+            {isReservation && <Button href="/admin/apartados" variant="secondary" size="small">Gestionar apartado</Button>}
+            {(order.status === "DRAFT" || order.status === "CONFIRMED") && !purchaseLink && !isReservation && (
               <ConfirmAction
                 action={cancelOrderAction}
                 fields={{ id: order.id }}
