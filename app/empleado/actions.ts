@@ -8,6 +8,8 @@ import { confirmStaffDelivery } from "../../lib/supabase/staff-deliveries";
 import {
   addStaffProductPhoto,
   createStaffProduct,
+  readCreatedStaffProduct,
+  type StaffProductRow,
   editStaffProduct,
   editStaffVariant,
   updateStaffInventoryField,
@@ -22,7 +24,7 @@ import {
 // lib/supabase/staff-*.ts function with the actor id. Nothing here deletes a
 // record, reads a cost, or touches a confirmed payment.
 
-export type StaffActionState = ActionState & { productId?: string; confirmationId?: string };
+export type StaffActionState = ActionState & { productId?: string; confirmationId?: string; product?: StaffProductRow };
 
 function photoFrom(formData: FormData) {
   const entry = formData.get("photo");
@@ -56,7 +58,10 @@ export async function createStaffProductAction(_state: StaffActionState, formDat
     });
     if (!result.ok) return failure(result.error);
     revalidateInventory(result.productId);
-    return { error: null, success: result.message, productId: result.productId };
+    // A read-back failure must never turn an already committed creation into a retry.
+    let product: StaffProductRow | undefined;
+    try { product = await readCreatedStaffProduct(result.productId, actor.id); } catch { /* The id still confirms the save. */ }
+    return { error: null, success: product ? result.message : `${result.message} Actualiza el inventario para verlo.`, productId: result.productId, product };
   } catch (error) {
     return failure(describeError(error, "No fue posible crear el producto."));
   }

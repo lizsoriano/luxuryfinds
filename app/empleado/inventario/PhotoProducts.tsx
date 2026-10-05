@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { compressPhoto } from "../../admin/compras/compress-photo";
+import type { StaffProductRow } from "../../../lib/supabase/staff-inventory";
 import { createStaffProductAction } from "../actions";
 
 type Draft = {
@@ -30,7 +31,7 @@ function draftErrors(draft: Draft): Partial<Record<DraftField, string>> {
 }
 function isComplete(draft: Draft) { return Object.keys(draftErrors(draft)).length === 0; }
 
-export function PhotoProducts({ categories }: { categories: Array<{ id: string; name: string }> }) {
+export function PhotoProducts({ categories, onSaved }: { categories: Array<{ id: string; name: string }>; onSaved?: (product: StaffProductRow) => void }) {
   const router = useRouter();
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [busy, setBusy] = useState(false);
@@ -105,6 +106,7 @@ export function PhotoProducts({ categories }: { categories: Array<{ id: string; 
           const result = await createStaffProductAction({ error: null, success: null }, data);
           if (result.productId) {
             saved = true;
+            if (result.product) onSaved?.(result.product);
             setSavedMessages((current) => [...current, result.success ?? `${draft.name}: producto guardado.`]);
             remove(draft);
           } else update(draft.id, { error: result.error ?? "No se pudo guardar el producto." });
