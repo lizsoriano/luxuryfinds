@@ -2,172 +2,340 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { compressPhoto } from "../../admin/compras/compress-photo";
 import type { StaffProductRow } from "../../../lib/supabase/staff-inventory";
-import { createStaffProductAction } from "../actions";
+import {
+  DRAFT_PHOTO_TARGET_BYTES,
+  EMPTY_VALUES,
+  MAX_UNSENT_PHOTOS,
+  PhotoDraftQueue,
+  brandIndex,
+  draftLabel,
+  fieldErrors,
+  isFinished,
+  missingFields,
+  nextOp,
+  parsePriceCents,
+  parseQuantity,
+  provisionalProductName,
+  summarize,
+  type BrandIndex,
+  type Draft,
+  type DraftField,
+  type ExecResult,
+  type Op,
+  type QueueDeps,
+} from "../../../lib/staff-photo-drafts";
+import { openDraftStorage, type DraftStorage } from "../../../lib/staff-photo-drafts-db";
+import {
+  createStaffProductAction,
+  editStaffProductAction,
+  editStaffVariantAction,
+  recordStaffEntryAction,
+  updateStaffInventoryFieldAction,
+  updateStaffPriceAction,
+  type StaffActionState,
+} from "../actions";
 
-type Draft = {
-  id: string; file: File; preview: string; name: string; category: string;
-  variant: string; price: string; quantity: string; productId?: string;
-  message?: string; error?: string; uncertain?: boolean; checked?: boolean;
-};
-const MAX_PHOTOS = 30;
+// "Añadir productos desde fotos". Each photo becomes a hidden product on its
+// own (photo + provisional data), then every field she fills in is saved when
+// she leaves it. Drafts that have not reached the server yet are kept on this
+// device (IndexedDB) and continue after a reload. See lib/staff-photo-drafts.ts.
 
-type DraftField = "name" | "variant" | "price" | "quantity";
-function draftErrors(draft: Draft): Partial<Record<DraftField, string>> {
-  const errors: Partial<Record<DraftField, string>> = {};
-  const price = Number(draft.price);
-  const quantity = Number(draft.quantity);
-  if (!draft.name.trim()) errors.name = "Falta el nombre.";
-  else if (draft.name.length > 140) errors.name = "Usa hasta 140 caracteres.";
-  if (!draft.variant.trim()) errors.variant = "Falta la variante.";
-  else if (draft.variant.length > 100) errors.variant = "Usa hasta 100 caracteres.";
-  if (!draft.price.trim()) errors.price = "Falta el precio de venta.";
-  else if (!Number.isFinite(price) || price < 0.01 || Math.abs(price * 100 - Math.round(price * 100)) >= 0.000001) errors.price = "Indica un precio mayor a cero, con hasta dos decimales.";
-  if (!draft.quantity.trim()) errors.quantity = "Falta la cantidad.";
-  else if (!Number.isSafeInteger(quantity) || quantity < 1) errors.quantity = "Indica una cantidad entera de al menos 1.";
-  return errors;
+type Option = { id: string; name: string };
+type Action = (state: StaffActionState, data: FormData) => Promise<StaffActionState>;
+
+const ACCEPTED = ["image/jpeg", "image/png", "image/webp"];
+const EMPTY: Draft[] = [];
+
+/** One queue per employee for the whole tab: it keeps working if she navigates inside the panel. */
+const queues = new Map<string, PhotoDraftQueue>();
+let storagePromise: Promise<DraftStorage> | null = null;
+const restoredActors = new Set<string>();
+/** The mounted screen of each employee (the queue outlives it when she navigates). */
+const mounted = new Map<string, { refresh: () => void; onSaved?: (product: StaffProductRow) => void; brands: BrandIndex }>();
+
+function deviceStorage() {
+  storagePromise ??= openDraftStorage();
+  return storagePromise;
 }
-function isComplete(draft: Draft) { return Object.keys(draftErrors(draft)).length === 0; }
 
-export function PhotoProducts({ categories, onSaved }: { categories: Array<{ id: string; name: string }>; onSaved?: (product: StaffProductRow) => void }) {
+function call(action: Action, fields: Record<string, string | Blob>) {
+  const data = new FormData();
+  for (const [key, value] of Object.entries(fields)) data.set(key, value);
+  return action({ error: null, success: null }, data);
+}
+
+const money = (cents: number) => (cents / 100).toFixed(2);
+
+export function PhotoProducts({ actorId, categories, brands, onSaved }: { actorId: string; categories: Option[]; brands: Option[]; onSaved?: (product: StaffProductRow) => void }) {
   const router = useRouter();
-  const [drafts, setDrafts] = useState<Draft[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState("");
-  const [error, setError] = useState("");
-  const [savedMessages, setSavedMessages] = useState<string[]>([]);
+  const brandsIndex = useMemo(() => brandIndex(brands), [brands]);
+  useEffect(() => {
+    const current = { refresh: () => router.refresh(), onSaved, brands: brandsIndex };
+    mounted.set(actorId, current);
+    return () => { if (mounted.get(actorId) === current) mounted.delete(actorId); };
+  }, [actorId, router, onSaved, brandsIndex]);
+
+  const [queue] = useState(() => {
+    const existing = typeof window === "undefined" ? undefined : queues.get(actorId);
+    if (existing) return existing;
+    const live = { get current() { return mounted.get(actorId) ?? { refresh: () => {}, onSaved: undefined, brands: brandsIndex }; } };
+    const deps: QueueDeps = {
+      execute: (op, draft) => send(op, draft),
+      prepare: (draft) => {
+        if (!draft.photo) return Promise.reject(new Error("Falta la foto."));
+        return compressPhoto(new File([draft.photo], "foto", { type: draft.photo.type || "image/jpeg" }), DRAFT_PHOTO_TARGET_BYTES);
+      },
+      save: async (draft) => { await (await deviceStorage()).put(draft); },
+      drop: async (id) => { await (await deviceStorage()).remove(id); },
+      brands: () => live.current.brands,
+      onIdle: (changed) => { if (changed) live.current.refresh(); },
+    };
+    async function send(op: Op, draft: Draft): Promise<ExecResult> {
+      if (op.kind === "create") {
+        if (!draft.photo) return { ok: false, error: "Falta la foto." };
+        const photo = new File([draft.photo], `foto-${draft.id.slice(0, 8)}.jpg`, { type: draft.photo.type || "image/jpeg" });
+        const result = await call(createStaffProductAction, { draft: "1", clientRef: draft.id, name: draft.provisionalName, photo });
+        if (!result.productId) return { ok: false, error: result.error ?? "No se pudo guardar el producto." };
+        if (result.product) live.current.onSaved?.(result.product);
+        return {
+          ok: true,
+          patch: { productId: result.productId, variantId: result.variantId ?? result.product?.variants[0]?.id ?? null, imageUrl: result.product?.imageUrl ?? null },
+          savedName: result.product?.name,
+        };
+      }
+      if (!draft.productId || !draft.variantId) return { ok: false, error: "Recarga la página para terminar de guardar este producto." };
+      let result: StaffActionState;
+      switch (op.kind) {
+        case "product":
+          result = await call(editStaffProductAction, { productId: draft.productId, name: op.name, categoryId: op.categoryId ?? "", brandId: op.brandId ?? "" });
+          break;
+        case "price":
+          result = await call(updateStaffPriceAction, { variantId: draft.variantId, price: money(op.priceCents) });
+          break;
+        case "variant":
+          result = await call(editStaffVariantAction, { variantId: draft.variantId, name: op.name, price: money(op.priceCents) });
+          break;
+        case "entry":
+          result = await call(recordStaffEntryAction, { variantId: draft.variantId, quantity: String(op.quantity), note: "Existencia inicial (alta desde fotos)", expectedStock: String(op.expectedStock) });
+          break;
+        case "stock":
+          result = await call(updateStaffInventoryFieldAction, { variantId: draft.variantId, field: "stock", value: String(op.quantity) });
+          break;
+      }
+      return result.error ? { ok: false, error: result.error } : { ok: true };
+    }
+    const created = new PhotoDraftQueue(deps);
+    if (typeof window !== "undefined") queues.set(actorId, created);
+    return created;
+  });
+  const drafts = useSyncExternalStore(queue.subscribe, queue.getSnapshot, () => EMPTY);
+
+  const [storageKind, setStorageKind] = useState<"pending" | DraftStorage["kind"]>("pending");
+  const [restored, setRestored] = useState<{ count: number; unsent: number } | null>(null);
+  const [notice, setNotice] = useState("");
   const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLInputElement>(null);
-  const locked = useRef(false);
-  const previews = useRef(new Set<string>());
 
-  useEffect(() => () => { for (const url of previews.current) URL.revokeObjectURL(url); }, []);
+  // Open the device copy once and bring back what was left unsaved.
+  useEffect(() => {
+    let cancelled = false;
+    void deviceStorage().then(async (storage) => {
+      if (cancelled) return;
+      setStorageKind(storage.kind);
+      if (restoredActors.has(actorId)) return;
+      restoredActors.add(actorId);
+      try {
+        const rows = await storage.list(actorId);
+        const count = queue.load(rows);
+        if (count) setRestored({ count, unsent: rows.filter((row) => !row.productId).length });
+      } catch {
+        setNotice("No pudimos leer los borradores guardados en este dispositivo.");
+      }
+    });
+    return () => { cancelled = true; };
+  }, [actorId, queue]);
+
+  // Warn before leaving with photos not uploaded or changes not saved; save on hide; resume when online.
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      queue.commitAll();
+      if (!queue.hasUnsaved()) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    const hide = () => { if (document.visibilityState === "hidden") { queue.commitAll(); void queue.persistPending(); } };
+    const pageHide = () => { queue.commitAll(); void queue.persistPending(); };
+    const online = () => queue.flush();
+    window.addEventListener("beforeunload", beforeUnload);
+    window.addEventListener("pagehide", pageHide);
+    document.addEventListener("visibilitychange", hide);
+    window.addEventListener("online", online);
+    return () => {
+      window.removeEventListener("beforeunload", beforeUnload);
+      window.removeEventListener("pagehide", pageHide);
+      document.removeEventListener("visibilitychange", hide);
+      window.removeEventListener("online", online);
+    };
+  }, [queue]);
 
   function addFiles(files: File[]) {
-    if (locked.current) return;
     const errors: string[] = [];
-    const additions: Draft[] = [];
+    let unsent = queue.drafts.filter((draft) => !draft.productId).length;
+    let seq = queue.drafts.reduce((max, draft) => Math.max(max, draft.seq), 0);
     for (const file of files) {
-      if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
-        errors.push(`${file.name}: usa JPG, PNG o WebP.`); continue;
-      }
-      if (file.size > 20 * 1024 * 1024 || file.size === 0) {
-        errors.push(`${file.name}: la foto debe pesar entre 1 byte y 20 MB.`); continue;
-      }
-      if (drafts.length + additions.length >= MAX_PHOTOS) {
-        errors.push(`Puedes preparar hasta ${MAX_PHOTOS} productos a la vez.`); break;
-      }
-      if ([...drafts, ...additions].some((draft) => draft.file.name === file.name && draft.file.size === file.size && draft.file.lastModified === file.lastModified)) continue;
-      const preview = URL.createObjectURL(file);
-      previews.current.add(preview);
-      additions.push({ id: crypto.randomUUID(), file, preview, name: "", category: "", variant: "Único", price: "", quantity: "1" });
+      if (!ACCEPTED.includes(file.type)) { errors.push(`${file.name}: usa JPG, PNG o WebP.`); continue; }
+      if (file.size === 0 || file.size > 20 * 1024 * 1024) { errors.push(`${file.name}: la foto debe pesar menos de 20 MB.`); continue; }
+      if (unsent >= MAX_UNSENT_PHOTOS) { errors.push(`Hay ${MAX_UNSENT_PHOTOS} fotos esperando subir: agrega más cuando terminen de guardarse.`); break; }
+      const photoKey = `${file.name}:${file.size}:${file.lastModified}`;
+      if (queue.drafts.some((draft) => draft.photoKey === photoKey)) continue;
+      seq += 1;
+      unsent += 1;
+      const now = Date.now();
+      queue.add({
+        id: crypto.randomUUID(), actorId, createdAt: now, seq, provisionalName: provisionalProductName(new Date(now), seq),
+        photo: file, photoReady: false, photoKey, productId: null, variantId: null, imageUrl: null, values: { ...EMPTY_VALUES }, saved: null,
+      });
     }
-    setDrafts((current) => [...current, ...additions]);
-    setError(errors.join(" "));
+    setNotice(errors.join(" "));
   }
 
-  function update(id: string, values: Partial<Draft>) {
-    setDrafts((current) => current.map((draft) => draft.id === id ? { ...draft, ...values } : draft));
-  }
+  // Stable, so unchanged cards are not re-rendered on every keystroke (memo).
+  const remove = useCallback((draft: Draft) => {
+    const pending = !draft.productId || nextOp(draft, brandsIndex, draft.values) !== null || draft.rt.phase === "error";
+    if (pending && !window.confirm(draft.productId
+      ? "Este producto tiene cambios sin guardar. ¿Quitarlo de la lista de todos modos? (El producto sigue en el inventario.)"
+      : "Esta foto todavía no se guarda en el inventario. ¿Quitarla?")) return;
+    if (!queue.remove(draft.id)) setNotice("Espera a que termine de subir esa foto para quitarla.");
+  }, [brandsIndex, queue]);
 
-  function remove(draft: Draft) {
-    URL.revokeObjectURL(draft.preview);
-    previews.current.delete(draft.preview);
-    setDrafts((current) => current.filter((row) => row.id !== draft.id));
-  }
+  const summary = summarize(drafts, brandsIndex, queue.busy());
+  const finished = drafts.filter((draft) => isFinished(draft, brandsIndex));
+  const somethingToSend = summary.unsent > 0 || summary.pendingEdits > 0 || summary.errors.length > 0;
 
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (locked.current) return;
-    setDrafts((current) => current.map((draft) => draft.uncertain ? draft : { ...draft, checked: true }));
-    const pending = drafts.filter((draft) => !draft.productId && !draft.uncertain && isComplete(draft));
-    if (!pending.length) { setError("Completa los campos marcados en rojo para guardar un producto."); return; }
-    locked.current = true;
-    setBusy(true);
-    setError("");
-    let saved = false;
-    try {
-      for (const [index, draft] of pending.entries()) {
-        setProgress(`Guardando ${index + 1} de ${pending.length}…`);
-        update(draft.id, { error: undefined });
-        let photo;
-        try { photo = await compressPhoto(draft.file, 750 * 1024); }
-        catch (cause) { update(draft.id, { error: cause instanceof Error ? cause.message : "No se pudo preparar la foto." }); continue; }
-        const data = new FormData();
-        data.set("name", draft.name);
-        data.set("categoryId", draft.category);
-        data.set("variantName", draft.variant);
-        data.set("variantPrice", draft.price);
-        data.set("variantQuantity", draft.quantity);
-        data.set("photo", photo);
-        try {
-          const result = await createStaffProductAction({ error: null, success: null }, data);
-          if (result.productId) {
-            saved = true;
-            if (result.product) onSaved?.(result.product);
-            setSavedMessages((current) => [...current, result.success ?? `${draft.name}: producto guardado.`]);
-            remove(draft);
-          } else update(draft.id, { error: result.error ?? "No se pudo guardar el producto." });
-        } catch {
-          update(draft.id, { uncertain: true, error: "Se perdió la conexión. Revisa el inventario antes de volver a crear este producto." });
-          break;
-        }
-      }
-    } finally {
-      setBusy(false);
-      locked.current = false;
-      setProgress("");
-      if (saved) router.refresh();
-    }
-  }
-
-  const pendingCount = drafts.filter((draft) => !draft.productId && !draft.uncertain && isComplete(draft)).length;
-  const incompleteCount = drafts.filter((draft) => !draft.productId && !draft.uncertain && !isComplete(draft)).length;
   return <section className="staff-photo-products" aria-labelledby="photo-products-title">
     <h2 id="photo-products-title">Añadir productos desde fotos</h2>
-    <p>Arrastra varias fotos: cada una será un producto. Completa sus datos y guarda.</p>
+    <p>Arrastra o elige varias fotos: <strong>cada foto se guarda sola</strong> en el inventario como producto oculto. Después completa nombre, precio y cantidad; cada dato se guarda al salir del campo.</p>
+    {storageKind === "memory" && <p className="form-message form-error" role="alert">Este navegador no deja guardar copias en el teléfono (¿modo privado?). Las fotos se suben igual, pero no cierres ni recargues la página hasta que digan “Guardado”.</p>}
+    {restored && <div className="form-message form-success staff-photo-restored" role="status">
+      <span>Recuperamos {restored.count} borrador(es) de la vez anterior{restored.unsent ? `: ${restored.unsent} foto(s) no se habían subido y ya se están guardando` : ""}{restored.count - restored.unsent ? `${restored.unsent ? ";" : ":"} ${restored.count - restored.unsent} ya están en el inventario y les faltan datos o cambios por guardar` : ""}.</span>
+      <button type="button" className="staff-link-button" onClick={() => setRestored(null)}>Entendido</button>
+    </div>}
     <div className={`staff-photo-drop${dragging ? " is-dragging" : ""}`}
-      onDragOver={(event) => { event.preventDefault(); if (!busy) setDragging(true); }}
+      onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
       onDrop={(event) => { event.preventDefault(); setDragging(false); addFiles(Array.from(event.dataTransfer.files)); }}>
       <strong>Arrastra tus fotos aquí</strong>
-      <span>JPG, PNG o WebP · hasta {MAX_PHOTOS} fotos</span>
-      <button type="button" className="button button-secondary" disabled={busy} onClick={() => input.current?.click()}>Seleccionar varias fotos</button>
+      <span>JPG, PNG o WebP · hasta {MAX_UNSENT_PHOTOS} fotos por subir a la vez</span>
+      <button type="button" className="button button-secondary" onClick={() => input.current?.click()}>Seleccionar varias fotos</button>
       <input ref={input} className="sr-only" type="file" multiple accept="image/jpeg,image/png,image/webp" aria-label="Fotos para nuevos productos"
-        disabled={busy} onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
+        onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
     </div>
-    {error && <p className="form-message form-error" role="alert">{error}</p>}
-    {savedMessages.length > 0 && <div className="form-message form-success" role="status"><strong>{savedMessages.length} producto(s) guardados en el inventario de abajo.</strong>{savedMessages.map((message, index) => <p key={index}>{message}</p>)}<a href="#staff-saved-products">Ver productos guardados ↓</a></div>}
-    {drafts.length > 0 && <form onSubmit={save} noValidate>
-      <p className="staff-hint">Se guardan como productos ocultos hasta que la dueña los publique. Las fotos se comprimen automáticamente. Al guardar se registran solo los productos completos; los demás siguen aquí como borradores. Las fichas sin guardar se pierden al salir.</p>
-      <div className="staff-photo-drafts">
-        {drafts.map((draft, index) => {
-          const errors = draft.checked ? draftErrors(draft) : {};
-          const validation = (field: DraftField) => ({ "aria-invalid": Boolean(errors[field]), "aria-describedby": errors[field] ? `${draft.id}-${field}-error` : undefined });
-          return <article className="staff-photo-draft" key={draft.id}>
-          {/* Previews are local object URLs, not remote images. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={draft.preview} alt={`Foto del producto ${index + 1}`} />
-          <div className="staff-photo-draft-body">
-            <div className="staff-photo-draft-heading"><strong>Producto {index + 1} · {isComplete(draft) ? "Listo para guardar" : "Borrador"}</strong>
-              <button type="button" className="staff-link-button" disabled={busy} onClick={() => remove(draft)}>{draft.productId ? "Quitar de esta lista" : "Quitar"}</button></div>
-            <fieldset disabled={busy || Boolean(draft.productId) || draft.uncertain} className="staff-photo-fields">
-              <label className="field"><span>Nombre *</span><input className="input" {...validation("name")} required maxLength={140} value={draft.name} onChange={(event) => update(draft.id, { name: event.target.value })} />{errors.name && <span className="staff-field-error" id={`${draft.id}-name-error`}>{errors.name}</span>}</label>
-              <label className="field"><span>Categoría</span><select className="input" value={draft.category} onChange={(event) => update(draft.id, { category: event.target.value })}><option value="">Sin categoría</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
-              <label className="field"><span>Variante *</span><input className="input" {...validation("variant")} required maxLength={100} value={draft.variant} onChange={(event) => update(draft.id, { variant: event.target.value })} />{errors.variant && <span className="staff-field-error" id={`${draft.id}-variant-error`}>{errors.variant}</span>}</label>
-              <div className="staff-photo-numbers">
-                <label className="field"><span>Precio de venta *</span><input className="input" type="number" min="0.01" step="0.01" inputMode="decimal" {...validation("price")} required value={draft.price} onChange={(event) => update(draft.id, { price: event.target.value })} />{errors.price && <span className="staff-field-error" id={`${draft.id}-price-error`}>{errors.price}</span>}</label>
-                <label className="field"><span>Cantidad *</span><input className="input" type="number" min="1" step="1" inputMode="numeric" {...validation("quantity")} required value={draft.quantity} onChange={(event) => update(draft.id, { quantity: event.target.value })} />{errors.quantity && <span className="staff-field-error" id={`${draft.id}-quantity-error`}>{errors.quantity}</span>}</label>
-              </div>
-            </fieldset>
-            {draft.error && <p className="form-message form-error" role="alert">{draft.error}</p>}
-            {draft.productId && <><p className="form-message form-success" role="status">{draft.message}</p><Link href={`/empleado/inventario/${draft.productId}`}>Ver producto guardado →</Link></>}
-          </div>
-        </article>; })}
+    {notice && <p className="form-message form-error" role="alert">{notice}</p>}
+
+    {drafts.length > 0 && <>
+      <div className="staff-photo-summary" role="status" aria-live="polite">
+        <p><strong>Guardados en el inventario {summary.saved}</strong> · Faltan datos {summary.missing} · <span className={summary.errors.length ? "staff-photo-summary-error" : undefined}>Con error {summary.errors.length}</span>{summary.unsent ? ` · Fotos por subir ${summary.unsent}` : ""}</p>
+        {summary.busy && <p className="staff-hint">Guardando en segundo plano… puedes seguir llenando datos.</p>}
+        {summary.errors.length > 0 && <ul className="staff-photo-errors">{summary.errors.map((item) => <li key={item.id}><strong>{item.label}:</strong> {item.error}</li>)}</ul>}
+        <div className="staff-photo-save">
+          <button type="button" className="button button-primary" disabled={!somethingToSend} onClick={() => queue.flush()}>Guardar todo ahora</button>
+          {finished.length > 0 && <button type="button" className="button button-secondary" onClick={() => { for (const draft of finished) queue.remove(draft.id); }}>{finished.length === 1 ? "Quitar de la lista el producto completo" : `Quitar de la lista los ${finished.length} completos`}</button>}
+        </div>
       </div>
-      <div className="staff-photo-save"><button className="button button-primary" type="submit" disabled={busy || drafts.every((draft) => draft.uncertain)}>{busy ? progress : pendingCount ? `Guardar ${pendingCount} producto(s) completo(s)` : "Guardar productos completos"}</button><span role="status">{pendingCount} listo(s) para guardar · {incompleteCount} borrador(es) por completar</span></div>
-    </form>}
+      <datalist id="staff-brand-options">{brands.map((brand) => <option key={brand.id} value={brand.name} />)}</datalist>
+      <div className="staff-photo-drafts">
+        {drafts.map((draft) => <DraftCard key={draft.id} draft={draft} queue={queue} categories={categories} brands={brandsIndex} onRemove={remove} />)}
+      </div>
+    </>}
   </section>;
 }
+
+function DraftPhoto({ draft }: { draft: Draft }) {
+  // Only the compressed copy (≤1600 px) is previewed: decoding dozens of
+  // full-size phone originals at once can exhaust a phone's memory.
+  const blob = draft.photoReady ? draft.photo : null;
+  const url = useMemo(() => (blob ? URL.createObjectURL(blob) : null), [blob]);
+  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
+  const src = url ?? draft.imageUrl;
+  if (!src) return <div className="staff-photo-draft-noimage">{draft.photo && !draft.photoReady && draft.rt.phase !== "error" ? "Preparando foto…" : "Sin vista previa"}</div>;
+  // Local preview (object URL) or the catalogue image just uploaded.
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={src} alt={`Foto del producto ${draft.seq}`} loading="lazy" decoding="async" />;
+}
+
+function statusOf(draft: Draft, brands: BrandIndex): { tone: "neutral" | "warning" | "danger" | "success"; text: string; retry?: boolean } {
+  const { phase, error } = draft.rt;
+  if (!draft.productId) {
+    if (phase === "error") return { tone: "danger", text: `No se pudo guardar: ${error}`, retry: true };
+    if (phase === "retrying") return { tone: "warning", text: `Reintentando solo… (${error})` };
+    if (phase === "uploading") return { tone: "neutral", text: "Subiendo y guardando…" };
+    if (phase === "preparing" || !draft.photoReady) return { tone: "neutral", text: "Preparando foto…" };
+    return { tone: "neutral", text: "En cola para subir" };
+  }
+  if (phase === "saving") return { tone: "neutral", text: "Guardando cambios…" };
+  if (phase === "retrying") return { tone: "warning", text: `Cambio sin guardar, reintentando solo… (${error})` };
+  if (phase === "error") return { tone: "danger", text: `Cambio sin guardar: ${error}`, retry: true };
+  if (nextOp(draft, brands, draft.values)) return { tone: "warning", text: "Cambios por guardar (se guardan al salir del campo)" };
+  if (missingFields(draft.values).length) return { tone: "warning", text: "Guardado ✓ · faltan datos" };
+  return { tone: "success", text: "Completo ✓" };
+}
+
+const DraftCard = memo(function DraftCard({ draft, queue, categories, brands, onRemove }: { draft: Draft; queue: PhotoDraftQueue; categories: Option[]; brands: BrandIndex; onRemove: (draft: Draft) => void }) {
+  const values = draft.values;
+  const errors = fieldErrors(values, brands);
+  const shown = (field: DraftField) => (draft.rt.touched[field] ? errors[field] : undefined);
+  const missing = missingFields(values);
+  const status = statusOf(draft, brands);
+  const id = `draft-${draft.id}`;
+  const waitingForPrice = Boolean(draft.productId) && (draft.saved?.priceCents ?? 0) <= 0 && parseQuantity(values.quantity) !== null && parsePriceCents(values.price) === null;
+  const field = (name: DraftField) => ({
+    id: `${id}-${name}`,
+    className: "input",
+    value: values[name],
+    "aria-invalid": Boolean(shown(name)),
+    "aria-describedby": shown(name) ? `${id}-${name}-error` : undefined,
+    onChange: (event: { target: { value: string } }) => queue.edit(draft.id, name, event.target.value),
+    onBlur: () => queue.commit(draft.id),
+  });
+  const message = (name: DraftField) => shown(name) ? <span className="staff-field-error" id={`${id}-${name}-error`}>{shown(name)}</span> : null;
+  const uploading = draft.rt.phase === "uploading" && !draft.productId;
+
+  return <article className="staff-photo-draft" aria-labelledby={`${id}-title`}>
+    <DraftPhoto draft={draft} />
+    <div className="staff-photo-draft-body">
+      <div className="staff-photo-draft-heading">
+        <strong id={`${id}-title`}>Producto {draft.seq}{values.name.trim() ? ` · ${draftLabel(draft)}` : ""}</strong>
+        <button type="button" className="staff-link-button" disabled={uploading} onClick={() => onRemove(draft)}>{draft.productId ? "Quitar de esta lista" : "Quitar"}</button>
+      </div>
+      <p className={`staff-photo-status is-${status.tone}`} role={status.tone === "danger" ? "alert" : "status"}>
+        <span>{status.text}</span>
+        {status.retry && <button type="button" className="button button-secondary button-small" onClick={() => queue.retry(draft.id)}>Reintentar</button>}
+      </p>
+      {draft.rt.localError && <p className="staff-hint staff-photo-local-error">{draft.rt.localError}</p>}
+      <p className="staff-photo-chips">
+        {missing.length ? <span className="badge badge-warning">Falta: {missing.join(" · ")}</span> : <span className="badge badge-success">Datos completos</span>}
+        {!values.brand.trim() && <span className="badge badge-neutral">marca (opcional)</span>}
+      </p>
+      <div className="staff-photo-fields">
+        <label className="field" htmlFor={`${id}-name`}><span>Nombre</span><input {...field("name")} maxLength={140} placeholder={draft.provisionalName} autoComplete="off" />{message("name")}</label>
+        <label className="field" htmlFor={`${id}-brand`}><span>Marca (opcional)</span><input {...field("brand")} list="staff-brand-options" placeholder="Busca una marca…" autoComplete="off" />{message("brand")}</label>
+        <label className="field" htmlFor={`${id}-categoryId`}><span>Categoría</span>
+          <select id={`${id}-categoryId`} className="input" value={values.categoryId} onChange={(event) => { queue.edit(draft.id, "categoryId", event.target.value); queue.commit(draft.id); }}>
+            <option value="">Sin categoría</option>
+            {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+          </select>
+        </label>
+        <label className="field" htmlFor={`${id}-variant`}><span>Variante</span><input {...field("variant")} maxLength={100} autoComplete="off" />{message("variant")}</label>
+        <div className="staff-photo-numbers">
+          <label className="field" htmlFor={`${id}-price`}><span>Precio de venta</span><input {...field("price")} inputMode="decimal" placeholder="$0.00" autoComplete="off" />{message("price")}</label>
+          <label className="field" htmlFor={`${id}-quantity`}><span>Cantidad</span><input {...field("quantity")} inputMode="numeric" placeholder="Ej. 1" autoComplete="off" />{message("quantity")}</label>
+        </div>
+        {waitingForPrice && <p className="staff-hint">La cantidad se guarda en cuanto el producto tenga precio.</p>}
+      </div>
+      {draft.productId && <Link className="staff-photo-link" href={`/empleado/inventario/${draft.productId}`}>Ver producto guardado →</Link>}
+    </div>
+  </article>;
+});

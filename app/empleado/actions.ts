@@ -24,7 +24,7 @@ import {
 // lib/supabase/staff-*.ts function with the actor id. Nothing here deletes a
 // record, reads a cost, or touches a confirmed payment.
 
-export type StaffActionState = ActionState & { productId?: string; confirmationId?: string; product?: StaffProductRow };
+export type StaffActionState = ActionState & { productId?: string; variantId?: string; confirmationId?: string; product?: StaffProductRow };
 
 function photoFrom(formData: FormData) {
   const entry = formData.get("photo");
@@ -41,10 +41,13 @@ function revalidateInventory(productId?: string) {
 export async function createStaffProductAction(_state: StaffActionState, formData: FormData): Promise<StaffActionState> {
   try {
     const actor = await requireStaffActor();
+    // "draft" (photo-first product): the server ignores any price/quantity and
+    // applies its own provisional defaults; see createStaffProduct.
+    const draft = formData.get("draft") === "1";
     const names = formData.getAll("variantName").map((value) => String(value));
     const prices = formData.getAll("variantPrice");
     const quantities = formData.getAll("variantQuantity");
-    const variants = names.map((name, index) => ({
+    const variants = draft ? [] : names.map((name, index) => ({
       name,
       priceCents: parseMoneyToCents(prices[index] ?? "") ?? Number.NaN,
       quantity: String(quantities[index] ?? "").trim() === "" ? 0 : Number(String(quantities[index]).trim()),
@@ -55,13 +58,16 @@ export async function createStaffProductAction(_state: StaffActionState, formDat
       categoryId: String(formData.get("categoryId") ?? "").trim() || null,
       variants,
       photo: photoFrom(formData),
+      clientRef: String(formData.get("clientRef") ?? "").trim() || null,
+      draft,
+      brandId: String(formData.get("brandId") ?? "").trim() || null,
     });
     if (!result.ok) return failure(result.error);
     revalidateInventory(result.productId);
     // A read-back failure must never turn an already committed creation into a retry.
     let product: StaffProductRow | undefined;
     try { product = await readCreatedStaffProduct(result.productId, actor.id); } catch { /* The id still confirms the save. */ }
-    return { error: null, success: product ? result.message : `${result.message} Actualiza el inventario para verlo.`, productId: result.productId, product };
+    return { error: null, success: product ? result.message : `${result.message} Actualiza el inventario para verlo.`, productId: result.productId, variantId: result.variantId ?? product?.variants[0]?.id, product };
   } catch (error) {
     return failure(describeError(error, "No fue posible crear el producto."));
   }
@@ -70,7 +76,9 @@ export async function createStaffProductAction(_state: StaffActionState, formDat
 export async function editStaffProductAction(_state: StaffActionState, data: FormData): Promise<StaffActionState> {
   try {
     const actor = await requireStaffActor();
-    const result = await editStaffProduct({ adminId: actor.id, productId: String(data.get("productId") ?? ""), name: String(data.get("name") ?? ""), categoryId: String(data.get("categoryId") ?? "").trim() || null });
+    // brandId only when the form sends it (photo drafts); the inventory edit form leaves the brand alone.
+    const brand = data.get("brandId");
+    const result = await editStaffProduct({ adminId: actor.id, productId: String(data.get("productId") ?? ""), name: String(data.get("name") ?? ""), categoryId: String(data.get("categoryId") ?? "").trim() || null, brandId: brand === null ? undefined : String(brand).trim() || null });
     if (!result.ok) return failure(result.error);
     revalidateInventory(result.productId);
     return { error: null, success: result.message, productId: result.productId };
@@ -80,8 +88,10 @@ export async function editStaffProductAction(_state: StaffActionState, data: For
 export async function editStaffVariantAction(_state: StaffActionState, data: FormData): Promise<StaffActionState> {
   try {
     const actor = await requireStaffActor();
-    const rawQuantity = String(data.get("quantity") ?? "").trim();
-    const result = await editStaffVariant({ adminId: actor.id, variantId: String(data.get("variantId") ?? ""), name: String(data.get("name") ?? ""), priceCents: parseMoneyToCents(data.get("price")) ?? Number.NaN, quantity: rawQuantity ? Number(rawQuantity) : Number.NaN });
+    // No "quantity" field at all = rename/price only (photo drafts); an empty one is still an error.
+    const sentQuantity = data.get("quantity");
+    const rawQuantity = String(sentQuantity ?? "").trim();
+    const result = await editStaffVariant({ adminId: actor.id, variantId: String(data.get("variantId") ?? ""), name: String(data.get("name") ?? ""), priceCents: parseMoneyToCents(data.get("price")) ?? Number.NaN, quantity: sentQuantity === null ? null : rawQuantity ? Number(rawQuantity) : Number.NaN });
     if (!result.ok) return failure(result.error);
     revalidateInventory(result.productId);
     return { error: null, success: result.message, productId: result.productId };
@@ -131,6 +141,7 @@ export async function recordStaffEntryAction(_state: StaffActionState, formData:
       quantity: formData.get("quantity"),
       note: String(formData.get("note") ?? ""),
       photo: photoFrom(formData),
+      expectedStock: (() => { const raw = String(formData.get("expectedStock") ?? "").trim(); return raw ? Number(raw) : null; })(),
     });
     if (!result.ok) return failure(result.error);
     revalidateInventory(result.productId);

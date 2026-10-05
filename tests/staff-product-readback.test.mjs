@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import {test} from 'node:test';
 import {STAFF_SELECTS, mentionsForbiddenField} from '../lib/supabase/staff-schema.ts';
-function load(path,mocks){const code=ts.transpileModule(fs.readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;const module={exports:{}};vm.runInNewContext(code,{module,exports:module.exports,require:p=>mocks[p]??{},console,Date,Number,Map,Set,File,crypto});return module.exports;}
+function load(path,mocks){const code=ts.transpileModule(fs.readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;const sandboxModule={exports:{}};vm.runInNewContext(code,{module:sandboxModule,exports:sandboxModule.exports,require:p=>mocks[p]??{},console,Date,Number,Map,Set,File,crypto});return sandboxModule.exports;}
 test('creation read-back returns actual stock and staff-safe fields only for its creator',async()=>{
  const row={id:'product',name:'Guardado',category_id:null,is_public:false,is_active:true,catalog_type:'IMMEDIATE',product_kind:'SIMPLE',created_by_admin_id:'staff',in_transit:false,product_variants:[{id:'variant',name:'Único',price_cents:110000,is_active:true,unit_label:null}],product_images:[{storage_key:'photo.jpg',sort_order:0}]};
  const reads=[];

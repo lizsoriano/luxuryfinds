@@ -1,5 +1,6 @@
 import { describeError } from "../actions";
 import { slugify } from "../format";
+import { DRAFT_PRODUCT_NAME_PREFIX, provisionalProductName } from "../staff-photo-drafts";
 import {
   ensureUniqueSlug,
   getStockFor,
@@ -288,6 +289,24 @@ export async function listStaffCategories() {
   return (data ?? []) as Array<{ id: string; name: string }>;
 }
 
+/** Existing brands (id and name only) for the optional "Marca" of the photo drafts. */
+export async function listStaffBrands() {
+  const rows: Array<{ id: string; name: string }> = [];
+  for (let from = 0; from < 20_000; from += 1000) {
+    const { data, error } = await adminDb().from("brands").select(STAFF_SELECTS.brands).order("name").order("id").range(from, from + 999);
+    if (error) throw new Error(error.message);
+    rows.push(...((data ?? []) as Array<{ id: string; name: string }>));
+    if (!data || data.length < 1000) break;
+  }
+  return rows;
+}
+
+async function brandExists(brandId: string) {
+  const { data, error } = await adminDb().from("brands").select("id").eq("id", brandId).maybeSingle();
+  if (error) throw new Error(error.message);
+  return Boolean(data);
+}
+
 // ---------------------------------------------------------------------------
 // Writes
 // ---------------------------------------------------------------------------
@@ -301,16 +320,124 @@ function checkPhoto(photo: File | null | undefined): string | null {
   return null;
 }
 
-async function uploadProductPhoto(productId: string, photo: File, sortOrder: number) {
-  const key = `${productId}/${crypto.randomUUID()}.${PHOTO_EXTENSIONS[photo.type]}`;
+function isUniqueViolation(error: { code?: string; message?: string } | null | undefined) {
+  return Boolean(error && (error.code === "23505" || /duplicate key/i.test(error.message ?? "")));
+}
+
+function isAlreadyStored(error: unknown) {
+  const detail = error as { message?: string; statusCode?: string | number; status?: number } | null;
+  return Boolean(detail && (String(detail.statusCode) === "409" || detail.status === 409 || /already exists|duplicate/i.test(detail.message ?? "")));
+}
+
+/**
+ * `fixedKey` (idempotent photo drafts): the same key on every attempt, so a
+ * repeated upload finds the object already there and a repeated row hits the
+ * UNIQUE storage_key — never a second image.
+ */
+async function uploadProductPhoto(productId: string, photo: File, sortOrder: number, fixedKey?: string) {
+  const key = fixedKey ?? `${productId}/${crypto.randomUUID()}.${PHOTO_EXTENSIONS[photo.type]}`;
   const { error } = await adminStorage().from(PRODUCT_IMAGE_BUCKET).upload(key, photo, { contentType: photo.type, upsert: false });
-  if (error) throw new Error(error.message);
+  if (error && !(fixedKey && isAlreadyStored(error))) throw new Error(error.message);
   const { error: rowError } = await adminDb().from("product_images").insert({ product_id: productId, storage_key: key, sort_order: sortOrder });
   if (rowError) {
-    await adminStorage().from(PRODUCT_IMAGE_BUCKET).remove([key]).catch(() => {});
+    if (fixedKey && isUniqueViolation(rowError)) return;
+    // With a fixed key another attempt may own the object: leave it for the retry.
+    if (!fixedKey) await adminStorage().from(PRODUCT_IMAGE_BUCKET).remove([key]).catch(() => {});
     throw new Error(rowError.message);
   }
 }
+
+const CLIENT_REF_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function draftPhotoKey(productId: string, photo: File) {
+  return `${productId}/borrador-${productId.slice(0, 8)}.${PHOTO_EXTENSIONS[photo.type]}`;
+}
+
+type DraftResumeRow = {
+  id: string;
+  name: string;
+  catalog_type: string;
+  is_active: boolean;
+  created_by_admin_id: string | null;
+  product_variants: Array<{ id: string; name: string }> | null;
+  product_images: Array<{ storage_key: string }> | null;
+};
+
+async function readDraftResume(productId: string) {
+  const { data, error } = await adminDb().from("products").select(STAFF_SELECTS.draftResume).eq("id", productId).maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as unknown as DraftResumeRow | null) ?? null;
+}
+
+/**
+ * A creation with this clientRef already reached the database (its response was
+ * lost, or two attempts overlapped). Finish whatever the first attempt could
+ * not (variant, photo, audit row) WITHOUT creating anything twice, and answer
+ * with the same product. Stock is never written here: only the attempt that
+ * inserted the product writes its opening stock.
+ */
+async function resumeStaffCreation(
+  existing: DraftResumeRow,
+  input: { adminId: string; clientRef: string; photo?: File | null; draft?: boolean },
+  variants: NewStaffVariant[],
+  single: boolean,
+): Promise<StaffResult<{ productId: string; variantId: string | null; resumed: true }>> {
+  if (existing.created_by_admin_id !== input.adminId || existing.catalog_type !== "IMMEDIATE") {
+    return { ok: false, error: "Esta foto ya está ligada a otro producto. Quítala de la lista y vuelve a agregarla." };
+  }
+  const db = adminDb();
+  const productId = existing.id;
+  let variantRows = existing.product_variants ?? [];
+  const warnings: string[] = [];
+  if (!variantRows.length) {
+    // The first attempt stopped between the product and its variants.
+    const inserted = await db.from("product_variants").insert(variantInsertRows(productId, variants, single)).select("id, name");
+    if (inserted.error && !isUniqueViolation(inserted.error)) {
+      return { ok: false, error: describeError(new Error(inserted.error.message), "No fue posible completar el producto. Intenta de nuevo.") };
+    }
+    const reread = await db.from("product_variants").select("id, name").eq("product_id", productId);
+    if (reread.error) return { ok: false, error: reread.error.message };
+    variantRows = (reread.data ?? []) as Array<{ id: string; name: string }>;
+  }
+  if (input.photo && !(existing.product_images ?? []).length) {
+    try {
+      await uploadProductPhoto(productId, input.photo, 0, draftPhotoKey(productId, input.photo));
+    } catch (error) {
+      warnings.push(` La foto no se pudo guardar (${error instanceof Error ? error.message : "error de almacenamiento"}).`);
+    }
+  }
+  // Audit row only if the first attempt never wrote it. An overlapping attempt
+  // may still be about to: give it a moment before writing ours (a rare double
+  // audit row is preferable to a missing one).
+  const hasLog = async () => {
+    const logged = await db.from("activity_logs").select("id").eq("action", "PRODUCT_CREATED_STAFF").eq("entity_id", productId).limit(1);
+    return Boolean(logged.error) || (logged.data ?? []).length > 0;
+  };
+  if (!(await hasLog()) && !(await new Promise((resolve) => setTimeout(resolve, 1500)).then(hasLog))) {
+    await logActivity({
+      adminUserId: input.adminId,
+      action: "PRODUCT_CREATED_STAFF",
+      entityType: "products",
+      entityId: productId,
+      newData: { name: existing.name, catalog_type: "IMMEDIATE", is_public: false, client_ref: input.clientRef, draft: Boolean(input.draft), resumed: true },
+    });
+  }
+  const sorted = [...variantRows].sort((a, b) => a.name.localeCompare(b.name, "es"));
+  return { ok: true, productId, variantId: sorted[0]?.id ?? null, resumed: true, message: `"${existing.name}" ya estaba guardado (no se duplicó).${warnings.join("")}` };
+}
+
+function variantInsertRows(productId: string, variants: NewStaffVariant[], single: boolean) {
+  return variants.map((variant) => ({
+    product_id: productId,
+    name: single ? "Único" : variant.name,
+    price_cents: variant.priceCents,
+    attributes: single ? {} : { variante: variant.name },
+    is_active: true,
+  }));
+}
+
+/** A $0 product must not get stock: the POS would sell it for free. */
+export const STOCK_NEEDS_PRICE_MESSAGE = "Primero ponle precio de venta: un producto a $0 no puede tener existencia.";
 
 export type NewStaffVariant = { name: string; priceCents: number; quantity: number };
 
@@ -321,6 +448,18 @@ export type NewStaffVariant = { name: string; priceCents: number; quantity: numb
  * refuses to publish at $0). Sale price only; the purchase cost stays at 0 for
  * the owner to fill in. Opening stock enters as RECEIPT movements signed by the
  * employee (recordManualMovement, the same ledger writer the owner uses).
+ *
+ * `clientRef` (uuid of a browser draft) makes the call idempotent: it becomes
+ * the product id, so the primary key itself refuses a second product for the
+ * same draft — also when two attempts overlap. A repeat answers with the
+ * existing product (resumeStaffCreation) instead of creating another one.
+ *
+ * `draft` = "Añadir productos desde fotos": only the photo is required. Name,
+ * price and quantity are NOT taken from the browser: the product is created
+ * with a provisional name, one "Único" variant at $0 and no stock (no
+ * movement), to be completed afterwards with the staff edit actions. A $0
+ * product cannot be published (setProductPublic) and, with no stock, cannot be
+ * sold or confirmed in an order; stock is refused while the price is $0.
  */
 export async function createStaffProduct(input: {
   adminId: string;
@@ -328,18 +467,29 @@ export async function createStaffProduct(input: {
   categoryId: string | null;
   variants: NewStaffVariant[];
   photo?: File | null;
-}): Promise<StaffResult<{ productId: string }>> {
-  const name = input.name.trim();
+  clientRef?: string | null;
+  draft?: boolean;
+  brandId?: string | null;
+}): Promise<StaffResult<{ productId: string; variantId: string | null; resumed?: boolean }>> {
+  const clientRef = input.clientRef?.trim() || null;
+  if (clientRef && !CLIENT_REF_PATTERN.test(clientRef)) return { ok: false, error: "La referencia del borrador no es válida. Vuelve a agregar la foto." };
+  if (input.draft) {
+    if (!clientRef) return { ok: false, error: "Falta la referencia del borrador. Recarga la página." };
+    if (!input.photo) return { ok: false, error: "Agrega la foto del producto." };
+  }
+  const name = input.draft ? input.name.trim() || provisionalProductName(new Date()) : input.name.trim();
   if (!name) return { ok: false, error: "Escribe el nombre del producto." };
   if (name.length > 140) return { ok: false, error: "El nombre no puede exceder 140 caracteres." };
   const photoError = checkPhoto(input.photo);
   if (photoError) return { ok: false, error: photoError };
 
-  const variants = input.variants.map((variant) => ({ ...variant, name: variant.name.trim() }));
+  const variants = input.draft
+    ? [{ name: "Único", priceCents: 0, quantity: 0 }]
+    : input.variants.map((variant) => ({ ...variant, name: variant.name.trim() }));
   if (!variants.length) return { ok: false, error: "Agrega al menos una variante con su precio." };
   if (variants.length > 20) return { ok: false, error: "Máximo 20 variantes por producto." };
   const seen = new Set<string>();
-  for (const variant of variants) {
+  for (const variant of input.draft ? [] : variants) {
     if (!variant.name) return { ok: false, error: "Cada variante necesita un nombre." };
     const key = variant.name.toLowerCase();
     if (seen.has(key)) return { ok: false, error: `La variante "${variant.name}" está repetida.` };
@@ -357,41 +507,56 @@ export async function createStaffProduct(input: {
     const { data: category } = await db.from("categories").select("id").eq("id", input.categoryId).eq("is_active", true).maybeSingle();
     if (!category) return { ok: false, error: "La categoría elegida ya no existe." };
   }
+  if (input.brandId && !(await brandExists(input.brandId))) return { ok: false, error: "La marca elegida ya no existe." };
 
-  const slug = await ensureUniqueSlug("products", slugify(name));
   // One variant called "Único" is a basic product, like the owner's form makes it.
   const single = variants.length === 1 && variants[0].name.toLowerCase() === "único";
-  const { data: product, error: productError } = await db
-    .from("products")
-    .insert({
-      name,
-      slug,
-      category_id: input.categoryId,
-      catalog_type: "IMMEDIATE",
-      product_kind: single ? "SIMPLE" : "VARIANTS",
-      is_public: false,
-      is_active: true,
-      created_by_admin_id: input.adminId,
-    })
-    .select("id")
-    .single();
+  const idempotency = clientRef ? { adminId: input.adminId, clientRef, photo: input.photo, draft: input.draft } : null;
+  if (idempotency) {
+    const existing = await readDraftResume(clientRef!);
+    if (existing) return resumeStaffCreation(existing, idempotency, variants, single);
+  }
+
+  let slug = await ensureUniqueSlug("products", slugify(name));
+  const insertProduct = (candidate: string) =>
+    db
+      .from("products")
+      .insert({
+        ...(clientRef ? { id: clientRef } : {}),
+        name,
+        slug: candidate,
+        category_id: input.categoryId,
+        ...(input.brandId ? { brand_id: input.brandId } : {}),
+        catalog_type: "IMMEDIATE",
+        product_kind: single ? "SIMPLE" : "VARIANTS",
+        is_public: false,
+        is_active: true,
+        created_by_admin_id: input.adminId,
+      })
+      .select("id")
+      .single();
+  let { data: product, error: productError } = await insertProduct(slug);
+  if (productError && idempotency && isUniqueViolation(productError)) {
+    // Either another attempt of this same draft won the primary key (resume
+    // it), or the slug was taken in between (try once more with a suffix).
+    const existing = await readDraftResume(clientRef!);
+    if (existing) return resumeStaffCreation(existing, idempotency, variants, single);
+    slug = `${slug}-${crypto.randomUUID().slice(0, 6)}`;
+    ({ data: product, error: productError } = await insertProduct(slug));
+  }
   if (productError || !product) {
     return { ok: false, error: describeError(new Error(productError?.message ?? "error desconocido"), "No fue posible crear el producto.") };
   }
   const productId = product.id as string;
 
-  const { data: variantRows, error: variantError } = await db
+  let { data: variantRows, error: variantError } = await db
     .from("product_variants")
-    .insert(
-      variants.map((variant) => ({
-        product_id: productId,
-        name: single ? "Único" : variant.name,
-        price_cents: variant.priceCents,
-        attributes: single ? {} : { variante: variant.name },
-        is_active: true,
-      })),
-    )
+    .insert(variantInsertRows(productId, variants, single))
     .select("id, name");
+  if (variantError && idempotency && isUniqueViolation(variantError)) {
+    // An overlapping attempt of the same draft already added them.
+    ({ data: variantRows, error: variantError } = await db.from("product_variants").select("id, name").eq("product_id", productId));
+  }
   if (variantError || !variantRows) {
     // Undo the half-created product of THIS request (nothing references it yet).
     await db.from("products").delete().eq("id", productId);
@@ -414,7 +579,7 @@ export async function createStaffProduct(input: {
 
   if (input.photo) {
     try {
-      await uploadProductPhoto(productId, input.photo, 0);
+      await uploadProductPhoto(productId, input.photo, 0, clientRef ? draftPhotoKey(productId, input.photo) : undefined);
     } catch (error) {
       warnings.push(` La foto no se pudo guardar (${error instanceof Error ? error.message : "error de almacenamiento"}).`);
     }
@@ -431,13 +596,20 @@ export async function createStaffProduct(input: {
       catalog_type: "IMMEDIATE",
       is_public: false,
       variants: variants.map((variant) => ({ name: variant.name, price_cents: variant.priceCents, quantity: variant.quantity })),
+      ...(clientRef ? { client_ref: clientRef } : {}),
+      ...(input.draft ? { draft: true } : {}),
+      ...(input.brandId ? { brand_id: input.brandId } : {}),
     },
   });
 
+  const firstVariant = [...(variantRows as Array<{ id: string; name: string }>)].sort((a, b) => a.name.localeCompare(b.name, "es"))[0];
   return {
     ok: true,
     productId,
-    message: `"${name}" quedó registrado como oculto: la dueña lo revisa y lo publica.${warnings.join("")}`,
+    variantId: firstVariant?.id ?? null,
+    message: input.draft
+      ? `Foto guardada como "${name}" (oculto, sin precio ni existencia todavía).${warnings.join("")}`
+      : `"${name}" quedó registrado como oculto: la dueña lo revisa y lo publica.${warnings.join("")}`,
   };
 }
 
@@ -487,6 +659,12 @@ export async function recordStaffEntry(input: {
   quantity: unknown;
   note: string;
   photo?: File | null;
+  /**
+   * Retry-safe first entry (photo drafts): the RECEIPT is written only while
+   * the stock is still this number; if it already equals expected + quantity
+   * the entry is reported as done (a repeated request never doubles it).
+   */
+  expectedStock?: number | null;
 }): Promise<StaffResult<{ productId: string }>> {
   const photoError = checkPhoto(input.photo);
   if (photoError) return { ok: false, error: photoError };
@@ -506,6 +684,21 @@ export async function recordStaffEntry(input: {
 
   const quantity = parseEntryQuantity(input.quantity, product.product_kind === "MEASURED");
   if (!quantity.ok) return quantity;
+  // Her own hidden product still at $0 (a photo draft): price first.
+  if (product.created_by_admin_id === input.adminId && !product.is_public && Number(variant.price_cents ?? 0) <= 0) {
+    return { ok: false, error: STOCK_NEEDS_PRICE_MESSAGE };
+  }
+  if (input.expectedStock !== undefined && input.expectedStock !== null) {
+    if (!Number.isFinite(input.expectedStock) || input.expectedStock < 0) return { ok: false, error: "Revisa la existencia esperada." };
+    const current = (await getStockFor([variant.id])).get(variant.id) ?? 0;
+    const round = (value: number) => Math.round(value * 1000) / 1000;
+    if (round(current) === round(input.expectedStock + quantity.value)) {
+      return { ok: true, productId: product.id, message: `La entrada de ${quantity.value} ya estaba registrada (no se duplicó).` };
+    }
+    if (round(current) !== round(input.expectedStock)) {
+      return { ok: false, error: `La existencia de este producto cambió (ahora hay ${current}). Corrígela en la lista de inventario.` };
+    }
+  }
 
   let evidenceKey: string | null = null;
   if (input.photo) {
@@ -604,28 +797,49 @@ export async function addStaffProductPhoto(input: { adminId: string; productId: 
 }
 
 /** Employee edits remain limited to their own hidden products. */
-export async function editStaffProduct(input: { adminId: string; productId: string; name: string; categoryId: string | null }): Promise<StaffResult<{ productId: string }>> {
+/**
+ * `brandId`: undefined leaves the brand alone (the inventory edit form does not
+ * send it); null clears it; an id must be an existing brand (never created here).
+ */
+export async function editStaffProduct(input: { adminId: string; productId: string; name: string; categoryId: string | null; brandId?: string | null }): Promise<StaffResult<{ productId: string }>> {
   const name = input.name.trim();
   if (!name || name.length > 140) return { ok: false, error: "Escribe un nombre de hasta 140 caracteres." };
   const db = adminDb();
-  const { data: product, error } = await db.from("products").select("id,name,category_id,created_by_admin_id,is_public,catalog_type,is_active").eq("id", input.productId).maybeSingle();
+  const { data: product, error } = await db.from("products").select("id,name,slug,category_id,brand_id,created_by_admin_id,is_public,catalog_type,is_active").eq("id", input.productId).maybeSingle();
   if (error) return { ok: false, error: error.message };
   if (!product || product.catalog_type !== "IMMEDIATE" || !product.is_active || product.created_by_admin_id !== input.adminId || product.is_public) return { ok: false, error: "Solo puedes editar los productos que tú creaste y que la dueña aún no publicó." };
   if (input.categoryId && !(await listStaffCategories()).some((category) => category.id === input.categoryId)) return { ok: false, error: "La categoría no está disponible." };
-  const result = await db.from("products").update({ name, category_id: input.categoryId, updated_at: new Date().toISOString() }).eq("id", product.id).eq("created_by_admin_id", input.adminId).eq("is_public", false).select("id").maybeSingle();
+  const brandChange = input.brandId !== undefined;
+  if (brandChange && input.brandId && !(await brandExists(input.brandId))) return { ok: false, error: "Esa marca no existe. Elige una de la lista." };
+  const changes: Record<string, unknown> = { name, category_id: input.categoryId, updated_at: new Date().toISOString() };
+  if (brandChange) changes.brand_id = input.brandId ?? null;
+  // A photo draft gets its real slug the first time it gets a real name.
+  if (String(product.name ?? "").startsWith(DRAFT_PRODUCT_NAME_PREFIX) && !name.startsWith(DRAFT_PRODUCT_NAME_PREFIX)) {
+    changes.slug = await ensureUniqueSlug("products", slugify(name), product.id);
+  }
+  const result = await db.from("products").update(changes).eq("id", product.id).eq("created_by_admin_id", input.adminId).eq("is_public", false).select("id").maybeSingle();
   if (result.error || !result.data) return { ok: false, error: result.error?.message ?? "El producto cambió. Recarga la página." };
-  await logActivity({ adminUserId: input.adminId, action: "PRODUCT_UPDATED_STAFF", entityType: "products", entityId: product.id, previousData: { name: product.name, category_id: product.category_id }, newData: { name, category_id: input.categoryId } });
-  return { ok: true, productId: product.id, message: "Nombre y categoría guardados." };
+  await logActivity({
+    adminUserId: input.adminId,
+    action: "PRODUCT_UPDATED_STAFF",
+    entityType: "products",
+    entityId: product.id,
+    previousData: { name: product.name, category_id: product.category_id, ...(brandChange ? { brand_id: product.brand_id ?? null } : {}) },
+    newData: { name, category_id: input.categoryId, ...(brandChange ? { brand_id: input.brandId ?? null } : {}), ...(changes.slug ? { slug: changes.slug } : {}) },
+  });
+  return { ok: true, productId: product.id, message: brandChange ? "Nombre, marca y categoría guardados." : "Nombre y categoría guardados." };
 }
 
-export async function editStaffVariant(input: { adminId: string; variantId: string; name: string; priceCents: number; quantity: number }): Promise<StaffResult<{ productId: string }>> {
+/** `quantity` null = rename / price only, the stock is left as it is. */
+export async function editStaffVariant(input: { adminId: string; variantId: string; name: string; priceCents: number; quantity: number | null }): Promise<StaffResult<{ productId: string }>> {
   const name = input.name.trim();
   if (!name || name.length > 100) return { ok: false, error: "Escribe una variante de hasta 100 caracteres." };
   if (!Number.isInteger(input.priceCents) || input.priceCents <= 0 || input.priceCents > 100_000_000) return { ok: false, error: "Revisa el precio de venta." };
   const context = await readVariant(input.variantId);
   const product = context?.products;
   if (!context || !product || !context.is_active || !product.is_active || product.catalog_type !== "IMMEDIATE" || product.created_by_admin_id !== input.adminId || product.is_public) return { ok: false, error: "Solo puedes editar los productos que tú creaste y que la dueña aún no publicó." };
-  if (!Number.isFinite(input.quantity) || input.quantity < 0 || input.quantity > 1_000_000 || (product.product_kind !== "MEASURED" && !Number.isInteger(input.quantity))) return { ok: false, error: "Revisa la existencia: no puede ser negativa." };
+  const quantity = input.quantity;
+  if (quantity !== null && (!Number.isFinite(quantity) || quantity < 0 || quantity > 1_000_000 || (product.product_kind !== "MEASURED" && !Number.isInteger(quantity)))) return { ok: false, error: "Revisa la existencia: no puede ser negativa." };
   const db = adminDb();
   const siblings = await db.from("product_variants").select("id,name").eq("product_id", product.id).eq("is_active", true);
   if (siblings.error) return { ok: false, error: siblings.error.message };
@@ -634,10 +848,12 @@ export async function editStaffVariant(input: { adminId: string; variantId: stri
   if (renamed.error) return { ok: false, error: renamed.error.message };
   const price = await updateVariantQuick({ variantId: context.id, field: "price", value: input.priceCents, adminId: input.adminId });
   if (!price.ok) return { ok: false, error: `El nombre se guardó; no se pudo guardar el precio: ${price.error}` };
-  const stock = await updateVariantQuick({ variantId: context.id, field: "stock", value: input.quantity, adminId: input.adminId });
-  if (!stock.ok) return { ok: false, error: `Nombre y precio guardados; no se pudo ajustar la existencia: ${stock.error}` };
-  await logActivity({ adminUserId: input.adminId, action: "PRODUCT_VARIANT_UPDATED_STAFF", entityType: "product_variants", entityId: context.id, newData: { name, price_cents: input.priceCents, stock: input.quantity } });
-  return { ok: true, productId: product.id, message: "Variante, precio y existencia guardados." };
+  if (quantity !== null) {
+    const stock = await updateVariantQuick({ variantId: context.id, field: "stock", value: quantity, adminId: input.adminId });
+    if (!stock.ok) return { ok: false, error: `Nombre y precio guardados; no se pudo ajustar la existencia: ${stock.error}` };
+  }
+  await logActivity({ adminUserId: input.adminId, action: "PRODUCT_VARIANT_UPDATED_STAFF", entityType: "product_variants", entityId: context.id, newData: { name, price_cents: input.priceCents, ...(quantity !== null ? { stock: quantity } : {}) } });
+  return { ok: true, productId: product.id, message: quantity !== null ? "Variante, precio y existencia guardados." : "Variante y precio guardados." };
 }
 
 export async function updateStaffInventoryField(input: { adminId: string; variantId: string; field: "price" | "stock"; value: number }): Promise<StaffResult<{ productId: string }>> {
@@ -646,6 +862,7 @@ export async function updateStaffInventoryField(input: { adminId: string; varian
   const product = context?.products;
   if (!context || !product || !context.is_active || !product.is_active || product.catalog_type !== "IMMEDIATE" || product.created_by_admin_id !== input.adminId || product.is_public) return { ok: false, error: "Solo puedes editar tus productos aún ocultos." };
   if (!Number.isFinite(input.value) || input.value < 0 || input.value > 1_000_000 || (product.product_kind !== "MEASURED" && !Number.isInteger(input.value))) return { ok: false, error: "Revisa la existencia." };
+  if (input.value > 0 && Number(context.price_cents ?? 0) <= 0) return { ok: false, error: STOCK_NEEDS_PRICE_MESSAGE };
   const result = await updateVariantQuick({ variantId: input.variantId, field: "stock", value: input.value, adminId: input.adminId });
   if (!result.ok) return result;
   return { ok: true, productId: product.id, message: "Existencia guardada." };
