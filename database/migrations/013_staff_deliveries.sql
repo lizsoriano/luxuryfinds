@@ -182,7 +182,13 @@ BEGIN
   IF TG_OP IN ('UPDATE', 'DELETE') THEN
     RAISE EXCEPTION 'Una entrega confirmada no se puede editar ni borrar.';
   END IF;
-  v_confirmation_id := CASE WHEN TG_TABLE_NAME = 'delivery_confirmations' THEN NEW.id ELSE NEW.confirmation_id END;
+  -- Separate branches: PL/pgSQL resolves NEW.<field> per table, so a CASE
+  -- naming both columns fails on the table that lacks one of them.
+  IF TG_TABLE_NAME = 'delivery_confirmations' THEN
+    v_confirmation_id := NEW.id;
+  ELSE
+    v_confirmation_id := NEW.confirmation_id;
+  END IF;
   IF coalesce(current_setting('luxury_finds.confirming_delivery', true), '') <> v_confirmation_id::text THEN
     RAISE EXCEPTION 'Una entrega solo se registra con la acción Confirmar entrega.';
   END IF;

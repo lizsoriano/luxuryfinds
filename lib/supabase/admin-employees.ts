@@ -20,6 +20,12 @@ import { isMissingStaffDeliverySchema } from "./staff-schema";
 
 export const MIN_EMPLOYEE_PASSWORD = 8;
 
+/** Either column of migration 012 missing (PostgREST names the first one it meets). */
+function isMissing012(message: string) {
+  if (isMissingRoleColumn(message)) return true;
+  return /column admin_users\.phone does not exist|'phone' column of 'admin_users'/.test(message);
+}
+
 export type EmployeeRow = {
   id: string;
   displayName: string;
@@ -94,7 +100,7 @@ export async function listEmployees(): Promise<{ employees: EmployeeRow[]; unava
     .eq("role", "EMPLOYEE")
     .order("display_name");
   if (error) {
-    if (isMissingRoleColumn(error.message) || error.message.includes("admin_users.phone")) return { employees: [], unavailable: true };
+    if (isMissing012(error.message)) return { employees: [], unavailable: true };
     throw new Error(error.message);
   }
   const rows = (data ?? []) as Array<Record<string, unknown>>;
@@ -125,7 +131,7 @@ export async function getEmployeeDetail(id: string): Promise<EmployeeDetail | nu
     .eq("role", "EMPLOYEE")
     .maybeSingle();
   if (error) {
-    if (isMissingRoleColumn(error.message)) return null;
+    if (isMissing012(error.message)) return null;
     throw new Error(error.message);
   }
   if (!data) return null;
@@ -223,7 +229,7 @@ export type EmployeeResult = { ok: true; message: string; employeeId: string } |
 export async function areEmployeeRolesAvailable() {
   const { error } = await adminDb().from("admin_users").select("id, role, phone").limit(1);
   if (!error) return true;
-  if (isMissingRoleColumn(error.message) || error.message.includes("admin_users.phone")) return false;
+  if (isMissing012(error.message)) return false;
   throw new Error(error.message);
 }
 
@@ -309,7 +315,7 @@ export async function createEmployee(input: {
   });
   if (rowError) {
     await admin.auth.admin.deleteUser(userId).catch(() => {});
-    if (isMissingRoleColumn(rowError.message)) return { ok: false, error: EMPLOYEE_ROLES_UNAVAILABLE_MESSAGE };
+    if (isMissing012(rowError.message)) return { ok: false, error: EMPLOYEE_ROLES_UNAVAILABLE_MESSAGE };
     return { ok: false, error: describeError(new Error(rowError.message), "No fue posible registrar al empleado.") };
   }
 
@@ -333,7 +339,7 @@ export async function setEmployeeStatus(input: { ownerId: string; employeeId: st
     .eq("role", "EMPLOYEE")
     .select("id, display_name");
   if (error) {
-    if (isMissingRoleColumn(error.message)) return { ok: false, error: EMPLOYEE_ROLES_UNAVAILABLE_MESSAGE };
+    if (isMissing012(error.message)) return { ok: false, error: EMPLOYEE_ROLES_UNAVAILABLE_MESSAGE };
     return { ok: false, error: describeError(new Error(error.message), "No fue posible cambiar el estado.") };
   }
   const row = (data ?? [])[0] as { id: string; display_name: string } | undefined;
@@ -366,7 +372,7 @@ export async function resetEmployeePassword(input: { ownerId: string; employeeId
     .eq("role", "EMPLOYEE")
     .maybeSingle();
   if (error) {
-    if (isMissingRoleColumn(error.message)) return { ok: false, error: EMPLOYEE_ROLES_UNAVAILABLE_MESSAGE };
+    if (isMissing012(error.message)) return { ok: false, error: EMPLOYEE_ROLES_UNAVAILABLE_MESSAGE };
     return { ok: false, error: describeError(new Error(error.message), "No fue posible leer al empleado.") };
   }
   if (!data) return { ok: false, error: "Empleado no encontrado." };

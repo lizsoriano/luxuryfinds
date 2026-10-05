@@ -21,8 +21,9 @@ type Method = "CASH" | "TRANSFER" | "NONE";
 export function DeliveryFlow({ delivery, bookingId }: { delivery: ScheduledDelivery; bookingId: string }) {
   const deliverable = delivery.items.filter((item) => item.deliverable);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(deliverable.map((item) => item.ticketId)));
-  const [method, setMethod] = useState<Method>(() => (delivery.balanceCents > 0 ? "CASH" : "NONE"));
-  const [amountText, setAmountText] = useState(() => (delivery.balanceCents > 0 ? (delivery.balanceCents / 100).toFixed(2) : ""));
+  const initialBalance = deliverable.reduce((sum, item) => sum + item.balanceCents, 0);
+  const [method, setMethod] = useState<Method>(() => (initialBalance > 0 ? "CASH" : "NONE"));
+  const [amountText, setAmountText] = useState(() => (initialBalance > 0 ? (initialBalance / 100).toFixed(2) : ""));
   const [receivedBy, setReceivedBy] = useState<"CLIENT" | "OTHER">("CLIENT");
   const [acknowledged, setAcknowledged] = useState(false);
   const photo = usePhoto();

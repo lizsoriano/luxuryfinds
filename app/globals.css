@@ -316,7 +316,7 @@ body{font-weight:400}
 .staff-title{margin:0;font-size:24px;line-height:1.15;letter-spacing:-.4px;color:var(--admin-text);overflow-wrap:anywhere}
 .staff-lead{margin:6px 0 10px;color:var(--admin-muted);font-size:14px;line-height:1.5}
 .staff-back{display:inline-flex;align-items:center;min-height:44px;color:var(--terracotta-dark);font-size:14px;font-weight:700}
-.staff-search{display:flex;gap:8px;margin:0 0 10px}.staff-search .input{flex:1;min-width:0}
+.staff-search{display:flex;gap:8px;margin:0 0 10px}.staff-search .input{flex:1;min-width:0}.staff-search .button,.staff-date-filter .button,.staff-inline-form .button,.staff-pagination .button{width:auto;flex:0 0 auto}
 .staff-date-filter{display:flex;gap:8px;align-items:flex-end;margin:0 0 8px}.staff-date-filter .field{flex:1;min-width:0}
 .staff-count{margin:0 0 12px;color:var(--admin-muted);font-size:13px}
 .staff-list{list-style:none;margin:0;padding:0;display:grid;gap:10px}

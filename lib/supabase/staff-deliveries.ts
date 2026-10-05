@@ -367,6 +367,9 @@ function describeConfirmError(message: string) {
   const cents = message.match(/importe cobrado \((\d+) centavos\).*saldo pendiente de lo que se entrega \((\d+) centavos\)/);
   if (cents) return `El importe cobrado (${money(Number(cents[1]))}) es mayor que el saldo pendiente de lo que se entrega (${money(Number(cents[2]))}).`;
   if (message.includes("uq_delivery_confirmation_items_ticket")) return "Uno de estos artículos ya fue entregado. Recarga la entrega.";
+  if (/permission denied for table (payments|payment_allocations|payment_proofs)/.test(message)) {
+    return "No se guardó nada: la base de datos todavía no permite registrar cobros (falta el permiso de service_role sobre luxury_finds.payments; lo da 013_staff_deliveries.sql o un GRANT de la dueña). Puedes confirmar la entrega sin cobro mientras tanto.";
+  }
   return describeError(new Error(message), "No fue posible confirmar la entrega.");
 }
 
