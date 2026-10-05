@@ -25,7 +25,7 @@ export default function ContactPage() {
           <span aria-hidden>📷</span>
           <h2>Instagram</h2>
           <p>Sigue nuestras novedades y hallazgos recién llegados.</p>
-          <Button href="https://instagram.com/luxuryfindsmx" variant="secondary" size="small">@luxuryfindsmx</Button>
+          <Button href="https://www.instagram.com/luxury_finds_mx/" variant="secondary" size="small">@luxury_finds_mx</Button>
         </Card>
         <Card className="step-card">
           <span aria-hidden>📍</span>
