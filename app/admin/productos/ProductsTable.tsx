@@ -218,6 +218,7 @@ export function ProductsTable({
   return (
     <>
       <BulkBar selected={[...selected]} onClear={() => setSelected(new Set())} />
+      <label className="inventory-mobile-select"><input type="checkbox" checked={allSelected} onChange={toggleAll} disabled={!products.length} /> Seleccionar todos los productos</label>
       <div className="admin-table-scroll">
         <table className="admin-data-table admin-products-table">
           <thead>
@@ -268,22 +269,22 @@ export function ProductsTable({
                     </span>
                   </Link>
                 </td>
-                <td style={{ color: "var(--admin-muted)" }}>{product.categoryName ?? "—"}</td>
-                <td>
+                <td data-label="Categoría" style={{ color: "var(--admin-muted)" }}>{product.categoryName ?? "—"}</td>
+                <td data-label="Tipo">
                   <Badge tone="neutral">
                     {product.product_kind === "VARIANTS" ? "Variantes" : product.product_kind === "MEASURED" ? "Medidas" : "Básico"}
                   </Badge>
                 </td>
-                <td className="numeric admin-col-stock">
+                <td data-label="Existencia" className="numeric admin-col-stock">
                   <StockCell product={product} />
                 </td>
-                <td className="numeric admin-col-price">
+                <td data-label="Precio de venta" className="numeric admin-col-price">
                   <PriceCell product={product} />
                 </td>
-                <td className="numeric admin-col-cost">
+                <td data-label="Costo tienda" className="numeric admin-col-cost">
                   <StoreCostCell product={product} context={storeCost} />
                 </td>
-                <td>
+                <td data-label="Catálogo">
                   {!product.is_active ? (
                     <Badge tone="neutral">Archivado</Badge>
                   ) : (
