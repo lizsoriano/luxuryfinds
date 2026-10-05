@@ -7,6 +7,7 @@ import { EmptyState } from "../../../../components/ui/EmptyState";
 import { PageHeader } from "../../../../components/ui/PageHeader";
 import { FINANCIAL_STATUS_LABELS, formatDateTime, formatMoney, LOGISTICS_STATUS_LABELS } from "../../../../lib/format";
 import { getOrderDetail, type OrderStatus } from "../../../../lib/supabase/admin-orders";
+import { getPurchaseLinksForTickets } from "../../../../lib/supabase/admin-purchases";
 import { cancelOrderAction, confirmOrderAction } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -64,6 +65,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const totalCents = items.reduce((sum, item) => sum + item.unit_price_cents * item.quantity, 0);
   const clientName = client ? `${client.first_name} ${client.last_name}`.trim() : "Clienta eliminada";
   const isWeeklyPlanRequest = order.requestedPaymentPlan.mode === "WEEKLY_PLAN";
+  // Items with no catalogue product (sales assigned from a shopper purchase,
+  // migration 011) are named by their ticket's snapshot.
+  const ticketByItem = new Map(tickets.map((ticket) => [ticket.order_item_id, ticket]));
+  const purchaseLinks = await getPurchaseLinksForTickets(tickets.map((ticket) => ticket.id));
+  const purchaseLink = [...purchaseLinks.values()][0] ?? null;
 
   return (
     <main className="admin-content">
@@ -91,7 +97,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                 variant="primary"
               />
             )}
-            {(order.status === "DRAFT" || order.status === "CONFIRMED") && (
+            {purchaseLink && (
+              <Button href={`/admin/compras/${purchaseLink.purchaseId}`} variant="secondary" size="small">
+                Ver compra {purchaseLink.purchaseNumber}
+              </Button>
+            )}
+            {(order.status === "DRAFT" || order.status === "CONFIRMED") && !purchaseLink && (
               <ConfirmAction
                 action={cancelOrderAction}
                 fields={{ id: order.id }}
@@ -132,8 +143,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             <tbody>
               {items.map((item) => (
                 <tr key={item.id}>
-                  <td className="admin-cell-product">{item.productName ?? "Producto eliminado"}</td>
-                  <td className="admin-cell-muted">{item.variantName ?? "—"}</td>
+                  <td className="admin-cell-product">
+                    {item.productName ?? ticketByItem.get(item.id)?.product_name_snapshot ?? "Producto eliminado"}
+                    {!item.product_id && item.store_name ? <span className="admin-cell-sub">{item.store_name}</span> : null}
+                  </td>
+                  <td className="admin-cell-muted">{item.variantName ?? ticketByItem.get(item.id)?.variant_name_snapshot ?? "—"}</td>
                   <td className="numeric">{item.quantity}</td>
                   <td className="numeric">{formatMoney(item.unit_price_cents)}</td>
                   <td className="numeric">{formatMoney(item.unit_price_cents * item.quantity)}</td>
@@ -160,6 +174,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         {order.client_notes && (
           <p className="admin-hint" style={{ marginTop: 12 }}>
             Nota de la clienta: {order.client_notes}
+          </p>
+        )}
+        {purchaseLink && (
+          <p className="admin-hint" style={{ marginTop: 12 }}>
+            Venta asignada desde la compra con shopper <strong>{purchaseLink.purchaseNumber}</strong>. No descuenta inventario;
+            para cancelarla usa <strong>Cancelar asignación</strong> en esa compra (solo mientras siga en Ordenado y sin pagos).
           </p>
         )}
       </Card>

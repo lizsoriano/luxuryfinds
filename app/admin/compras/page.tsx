@@ -82,9 +82,14 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
         description="Lo que compras en tiendas de EE.UU. a través de tu shopper: captura los artículos de cada ticket, cuádralos con la foto y lleva la cuenta de lo que le debes."
         action={
           unavailable ? undefined : (
-            <Button href="/admin/compras/nueva" size="small">
-              Nueva compra <span aria-hidden>＋</span>
-            </Button>
+            <span className="shopper-header-actions">
+              <Button href="/admin/compras/pendientes" variant="secondary" size="small">
+                Pendientes de envío
+              </Button>
+              <Button href="/admin/compras/nueva" size="small">
+                Nueva compra <span aria-hidden>＋</span>
+              </Button>
+            </span>
           )
         }
       />
