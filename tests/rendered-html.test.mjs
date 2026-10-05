@@ -42,7 +42,7 @@ for (const [pathname, expected] of [
   });
 }
 
-for (const pathname of ["/cuenta", "/admin"]) {
+for (const pathname of ["/cuenta", "/admin", "/empleado", "/empleado/recepcion"]) {
   test(`protects ${pathname}`, async () => {
     const response = await fetch(`${origin}${pathname}`, { redirect: "manual" });
     assert.equal(response.status, 307);
