@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { formatMoney, formatQuantity } from "../../../lib/format";
-import { listLaPazProducts } from "../../../lib/supabase/staff-inventory";
+import { listLaPazProducts, listStaffCategories } from "../../../lib/supabase/staff-inventory";
+import { PhotoProducts } from "./PhotoProducts";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,8 @@ export default async function StaffInventoryPage({ searchParams }: { searchParam
   const sp = await searchParams;
   const search = (sp.q ?? "").trim();
   const page = Math.max(1, Number(sp.pagina) || 1);
+  let categories: Array<{ id: string; name: string }> = [];
+  try { categories = await listStaffCategories(); } catch { /* Category is optional. */ }
 
   let result;
   try {
@@ -44,6 +47,8 @@ export default async function StaffInventoryPage({ searchParams }: { searchParam
           + Añadir producto
         </Link>
       </div>
+
+      <PhotoProducts categories={categories} />
 
       <form className="staff-search" method="get" action="/empleado/inventario" role="search">
         <label htmlFor="staff-inventory-search" className="sr-only">
