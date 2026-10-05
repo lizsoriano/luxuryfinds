@@ -35,6 +35,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es">
+      <head>
+        {/* Stable fallback for tabs whose generated CSS URL belongs to an older deployment. */}
+        {/* eslint-disable-next-line @next/next/no-css-tags */}
+        <link rel="stylesheet" href="/styles/luxury-finds.css" />
+      </head>
       <body className={`${inter.className} ${inter.variable} antialiased`}>
         <CartProvider>
           <FavoritesProvider>{children}</FavoritesProvider>

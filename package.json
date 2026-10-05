@@ -6,8 +6,8 @@
     "node": "24.x"
   },
   "scripts": {
-    "dev": "vinext dev",
-    "build": "vite build",
+    "dev": "node scripts/sync-public-styles.mjs && vinext dev",
+    "build": "node scripts/sync-public-styles.mjs && vite build",
     "start": "node .output/server/index.mjs",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern .tmp --ignore-pattern .vercel --ignore-pattern .output --ignore-pattern .vinext",

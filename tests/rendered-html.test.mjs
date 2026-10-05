@@ -27,6 +27,17 @@ before(async () => {
 
 after(() => server?.kill());
 
+test("serves stable panel styles", async () => {
+  const login = await fetch(`${origin}/login`);
+  assert.match(await login.text(), /href="\/styles\/luxury-finds\.css"/);
+  const response = await fetch(`${origin}/styles/luxury-finds.css`);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") ?? "", /^text\/css\b/i);
+  const css = await response.text();
+  assert.match(css, /\.staff-topbar\s*\{/);
+  assert.match(css, /\.staff-photo-drop\s*\{/);
+});
+
 for (const [pathname, expected] of [
   ["/", "Encuentra algo"],
   ["/catalogo", "Encuentra tu próximo"],
