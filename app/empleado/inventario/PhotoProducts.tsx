@@ -13,6 +13,16 @@ type Draft = {
 };
 const MAX_PHOTOS = 30;
 
+function isComplete(draft: Draft) {
+  const price = Number(draft.price);
+  const quantity = Number(draft.quantity);
+  return Boolean(draft.name.trim() && draft.variant.trim() && draft.price.trim() && draft.quantity.trim())
+    && draft.name.length <= 140 && draft.variant.length <= 100
+    && Number.isFinite(price) && price >= 0.01
+    && Math.abs(price * 100 - Math.round(price * 100)) < 0.000001
+    && Number.isSafeInteger(quantity) && quantity >= 1;
+}
+
 export function PhotoProducts({ categories }: { categories: Array<{ id: string; name: string }> }) {
   const router = useRouter();
   const [drafts, setDrafts] = useState<Draft[]>([]);
@@ -63,7 +73,7 @@ export function PhotoProducts({ categories }: { categories: Array<{ id: string; 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (locked.current) return;
-    const pending = drafts.filter((draft) => !draft.productId && !draft.uncertain);
+    const pending = drafts.filter((draft) => !draft.productId && !draft.uncertain && isComplete(draft));
     if (!pending.length) return;
     locked.current = true;
     setBusy(true);
@@ -103,7 +113,8 @@ export function PhotoProducts({ categories }: { categories: Array<{ id: string; 
     }
   }
 
-  const pendingCount = drafts.filter((draft) => !draft.productId && !draft.uncertain).length;
+  const pendingCount = drafts.filter((draft) => !draft.productId && !draft.uncertain && isComplete(draft)).length;
+  const incompleteCount = drafts.filter((draft) => !draft.productId && !draft.uncertain && !isComplete(draft)).length;
   return <section className="staff-photo-products" aria-labelledby="photo-products-title">
     <h2 id="photo-products-title">Añadir productos desde fotos</h2>
     <p>Arrastra varias fotos: cada una será un producto. Completa sus datos y guarda.</p>
@@ -119,15 +130,15 @@ export function PhotoProducts({ categories }: { categories: Array<{ id: string; 
     </div>
     {error && <p className="form-message form-error" role="alert">{error}</p>}
     {savedMessages.length > 0 && <div className="form-message form-success" role="status"><strong>{savedMessages.length} producto(s) guardados en el inventario de abajo.</strong>{savedMessages.map((message, index) => <p key={index}>{message}</p>)}<a href="#staff-saved-products">Ver productos guardados ↓</a></div>}
-    {drafts.length > 0 && <form onSubmit={save}>
-      <p className="staff-hint">Se guardan como productos ocultos hasta que la dueña los publique. Las fotos se comprimen automáticamente. Las fichas sin guardar se pierden al salir.</p>
+    {drafts.length > 0 && <form onSubmit={save} noValidate>
+      <p className="staff-hint">Se guardan como productos ocultos hasta que la dueña los publique. Las fotos se comprimen automáticamente. Al guardar se registran solo los productos completos; los demás siguen aquí como borradores. Las fichas sin guardar se pierden al salir.</p>
       <div className="staff-photo-drafts">
         {drafts.map((draft, index) => <article className="staff-photo-draft" key={draft.id}>
           {/* Previews are local object URLs, not remote images. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={draft.preview} alt={`Foto del producto ${index + 1}`} />
           <div className="staff-photo-draft-body">
-            <div className="staff-photo-draft-heading"><strong>Producto {index + 1}</strong>
+            <div className="staff-photo-draft-heading"><strong>Producto {index + 1} · {isComplete(draft) ? "Listo para guardar" : "Borrador"}</strong>
               <button type="button" className="staff-link-button" disabled={busy} onClick={() => remove(draft)}>{draft.productId ? "Quitar de esta lista" : "Quitar"}</button></div>
             <fieldset disabled={busy || Boolean(draft.productId) || draft.uncertain} className="staff-photo-fields">
               <label className="field"><span>Nombre *</span><input className="input" required maxLength={140} value={draft.name} onChange={(event) => update(draft.id, { name: event.target.value })} /></label>
@@ -143,7 +154,7 @@ export function PhotoProducts({ categories }: { categories: Array<{ id: string; 
           </div>
         </article>)}
       </div>
-      <div className="staff-photo-save"><button className="button button-primary" type="submit" disabled={busy || pendingCount === 0}>{busy ? progress : pendingCount ? `Guardar ${pendingCount} producto(s)` : "Productos guardados"}</button><span role="status">{drafts.filter((draft) => draft.productId).length} de {drafts.length} guardados</span></div>
+      <div className="staff-photo-save"><button className="button button-primary" type="submit" disabled={busy || pendingCount === 0}>{busy ? progress : pendingCount ? `Guardar ${pendingCount} producto(s) completo(s)` : "Completa un producto para guardar"}</button><span role="status">{pendingCount} listo(s) para guardar · {incompleteCount} borrador(es) por completar</span></div>
     </form>}
   </section>;
 }
