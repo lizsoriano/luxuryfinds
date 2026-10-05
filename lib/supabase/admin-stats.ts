@@ -175,6 +175,7 @@ type SaleItemRow = {
 };
 
 type TicketRow = {
+  id: string;
   client_id: string;
   product_id: string | null;
   variant_id: string | null;
@@ -207,6 +208,55 @@ async function getVariantCosts(variantIds: string[]) {
 }
 
 /**
+ * Tickets sold from a shopper purchase (Compras > Asignar) have no catalogue
+ * variant, so they have no variant cost. Their real cost is frozen on the
+ * ACTIVE assignment that generated them (purchase_assignments.cost_mxn_cents,
+ * migration 011) plus that assignment's share of the parcel cost
+ * (shipment_lines.shipping_cost_mxn_cents of its non-cancelled line, migration
+ * 014). Whole-ticket cost per ticket id. Empty when 011 is not applied (those
+ * tickets keep counting as "sin costo", as before); without 014 only the
+ * shipping part is left out.
+ */
+async function getPurchaseTicketCosts(ticketIds: string[]) {
+  const costs = new Map<string, number>();
+  if (!ticketIds.length) return costs;
+  const db = adminDb();
+  const ticketByAssignment = new Map<string, string>();
+  try {
+    for (let index = 0; index < ticketIds.length; index += ID_BATCH_SIZE) {
+      const batch = ticketIds.slice(index, index + ID_BATCH_SIZE);
+      const { data, error } = await db
+        .from("purchase_assignments")
+        .select("id, ticket_id, cost_mxn_cents")
+        .in("ticket_id", batch)
+        .eq("status", "ACTIVE");
+      if (error) return new Map<string, number>();
+      for (const row of data ?? []) {
+        costs.set(row.ticket_id as string, Number(row.cost_mxn_cents ?? 0));
+        ticketByAssignment.set(row.id as string, row.ticket_id as string);
+      }
+    }
+    const assignmentIds = [...ticketByAssignment.keys()];
+    for (let index = 0; index < assignmentIds.length; index += ID_BATCH_SIZE) {
+      const batch = assignmentIds.slice(index, index + ID_BATCH_SIZE);
+      const { data, error } = await db
+        .from("shipment_lines")
+        .select("assignment_id, shipping_cost_mxn_cents")
+        .in("assignment_id", batch)
+        .eq("status", "ACTIVE");
+      if (error) break;
+      for (const row of data ?? []) {
+        const ticketId = ticketByAssignment.get(row.assignment_id as string);
+        if (ticketId) costs.set(ticketId, (costs.get(ticketId) ?? 0) + Number(row.shipping_cost_mxn_cents ?? 0));
+      }
+    }
+  } catch {
+    return new Map<string, number>();
+  }
+  return costs;
+}
+
+/**
  * Every sold line in the window, priced and costed. Throws only on a real query
  * failure; an empty window is a perfectly valid (and, today, the expected)
  * answer.
@@ -227,7 +277,7 @@ export async function getPeriodTotals(range: StatsRange): Promise<PeriodTotals> 
     db
       .from("tickets")
       .select(
-        "client_id, product_id, variant_id, product_name_snapshot, category_name_snapshot, quantity, agreed_total_cents, created_at",
+        "id, client_id, product_id, variant_id, product_name_snapshot, category_name_snapshot, quantity, agreed_total_cents, created_at",
       )
       .not("financial_status", "in", `(${CANCELLED_TICKET_STATES.join(",")})`)
       .gte("created_at", fromIso)
@@ -265,9 +315,10 @@ export async function getPeriodTotals(range: StatsRange): Promise<PeriodTotals> 
     else itemsBySale.set(item.sale_id, [item]);
   }
 
-  const ticketCosts = await getVariantCosts(
-    ticketRows.flatMap((ticket) => (ticket.variant_id ? [ticket.variant_id] : [])),
-  );
+  const [ticketCosts, purchaseTicketCosts] = await Promise.all([
+    getVariantCosts(ticketRows.flatMap((ticket) => (ticket.variant_id ? [ticket.variant_id] : []))),
+    getPurchaseTicketCosts(ticketRows.flatMap((ticket) => (ticket.variant_id ? [] : [ticket.id]))),
+  ]);
 
   const totals = EMPTY_TOTALS(range);
   totals.salesUnavailable = Boolean(sales.error);
@@ -325,8 +376,10 @@ export async function getPeriodTotals(range: StatsRange): Promise<PeriodTotals> 
     // Tickets carry no cost snapshot, so the product's current cost is the best
     // available figure. The screen says so rather than pretending it is exact.
     const unitCost = ticket.variant_id ? (ticketCosts.get(ticket.variant_id) ?? 0) : 0;
-    const cost = Math.round(unitCost * quantity);
-    const costMissing = unitCost <= 0;
+    // A shopper-purchase ticket (no variant) uses its frozen purchase cost + shipping instead.
+    const purchaseCost = ticket.variant_id ? undefined : purchaseTicketCosts.get(ticket.id);
+    const cost = purchaseCost ?? Math.round(unitCost * quantity);
+    const costMissing = purchaseCost === undefined && unitCost <= 0;
 
     totals.revenueCents += revenue;
     totals.costCents += cost;
