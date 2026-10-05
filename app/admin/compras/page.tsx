@@ -86,6 +86,9 @@ export default async function PurchasesPage({ searchParams }: { searchParams: Pr
               <Button href="/admin/compras/pendientes" variant="secondary" size="small">
                 Pendientes de envío
               </Button>
+              <Button href="/admin/compras/embarques" variant="secondary" size="small">
+                Embarques
+              </Button>
               <Button href="/admin/compras/nueva" size="small">
                 Nueva compra <span aria-hidden>＋</span>
               </Button>

@@ -30,6 +30,7 @@ import {
   SHOPPER_PAYMENT_METHOD_LABELS,
   type PurchaseDetail,
 } from "../../../../lib/supabase/admin-purchases";
+import { getItemShippingInfo, type ItemShippingInfo } from "../../../../lib/supabase/admin-shipments";
 import {
   computeOwed,
   formatRate,
@@ -167,9 +168,15 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
   let assignmentData: Awaited<ReturnType<typeof getPurchaseAssignments>> | null = null;
   let assignmentError: string | null = null;
   let clients: ClientOption[] = [];
+  // Phase 3 (migration 014): units already in a shipment. Empty without 014.
+  let shipping = new Map<string, ItemShippingInfo>();
   if (isConfirmed) {
     try {
-      [assignmentData, clients] = await Promise.all([getPurchaseAssignments(purchase.id), listClientOptions().catch(() => [])]);
+      [assignmentData, clients, shipping] = await Promise.all([
+        getPurchaseAssignments(purchase.id),
+        listClientOptions().catch(() => []),
+        getItemShippingInfo(allItems.map((item) => item.id)),
+      ]);
     } catch (error) {
       assignmentError = error instanceof Error ? error.message : "error desconocido";
     }
@@ -384,12 +391,16 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
           ) : null}
           <ul className="assign-list">
             {allItems.map((item) => {
-              const counts = assignmentData?.availability.get(item.id) ?? {
+              const baseCounts = assignmentData?.availability.get(item.id) ?? {
                 purchased: item.quantity,
                 assigned: 0,
                 available: item.quantity,
                 assignedCostMxnCents: 0,
               };
+              // Free units travelling in a shipment are no longer assignable (014 enforces it too).
+              const shippingInfo = shipping.get(item.id);
+              const inShipment = (shippingInfo?.freeShipped ?? 0) + (shippingInfo?.assignedShipped ?? 0);
+              const counts = { ...baseCounts, available: Math.max(0, baseCounts.available - (shippingInfo?.freeShipped ?? 0)) };
               const rows = (assignmentData?.assignments ?? []).filter((row) => row.purchase_item_id === item.id);
               return (
                 <li key={item.id} id={`articulo-${item.id}`} className="assign-item">
@@ -410,6 +421,7 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
                       </small>
                       <span className="shopper-badges">
                         <Badge tone={item.status === "PURCHASED" ? "rose" : "neutral"}>{PURCHASE_ITEM_STATUS_LABELS[item.status]}</Badge>
+                        {inShipment ? <Badge tone="warning">{inShipment} en embarque</Badge> : null}
                       </span>
                     </div>
                     {canAssign && counts.available > 0 && item.status === "PURCHASED" && item.line_cost_mxn_cents !== null ? (

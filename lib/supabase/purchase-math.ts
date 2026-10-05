@@ -497,10 +497,55 @@ export function parseAssignQuantity(raw: unknown, max: number): { ok: true; valu
 }
 
 // ---------------------------------------------------------------------------
+// Phase 3: shipments (embarques) and reception in La Paz
+// ---------------------------------------------------------------------------
+
+export const SHIPMENT_MIGRATION_FILE = "database/migrations/014_shipments.sql";
+
+/** $1,000,000,000.00 — the CHECK in 014; anything near it is a typo anyway. */
+export const MAX_SHIPPING_COST_CENTS = 100_000_000_000;
+
+/**
+ * Shipping cost split over the lines of a shipment BY PIECES, with the exact
+ * largest-remainder residue (ties: the line added first). Same rule as
+ * shipment_prorate() in database/migrations/014_shipments.sql, which is the
+ * authority; this copy lets the panel preview it. Σ result = total exactly.
+ *   prorateShippingCents(90000, [2, 1, 4]) -> [25714, 12857, 51429]
+ */
+export function prorateShippingCents(totalCents: number, pieces: number[]): number[] {
+  if (!pieces.length) return [];
+  return allocateLargestRemainder(totalCents, pieces);
+}
+
+/** Shipping cost as typed in pesos ("900", "1,250.50", "$0"). Empty = 0. */
+export function parseShippingCostToCents(raw: unknown): { ok: true; value: number } | { ok: false; error: string } {
+  const typed = String(raw ?? "").trim().replace(/^\$\s*/, "");
+  if (!typed) return { ok: true, value: 0 };
+  if (typed.startsWith("-")) return { ok: false, error: "El costo de envío no puede ser negativo." };
+  if (!/^(\d{1,3}(,\d{3})+|\d+)(\.\d{1,2})?$/.test(typed)) {
+    return { ok: false, error: "Escribe el costo de envío en pesos con hasta 2 decimales (por ejemplo 900 o 1,250.50)." };
+  }
+  const [whole, fraction = ""] = typed.replace(/,/g, "").split(".");
+  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+  if (!Number.isSafeInteger(cents) || cents > MAX_SHIPPING_COST_CENTS) return { ok: false, error: "Ese costo de envío es demasiado alto. Revísalo." };
+  return { ok: true, value: cents };
+}
+
+/** Reception counts as typed: "" = 0, whole numbers only. */
+export function parseReceivedCount(raw: unknown, label: string): { ok: true; value: number } | { ok: false; error: string } {
+  const typed = String(raw ?? "").trim();
+  if (!typed) return { ok: true, value: 0 };
+  if (!/^\d+$/.test(typed)) return { ok: false, error: `${label}: escribe un número entero (0, 1, 2…).` };
+  const value = Number(typed);
+  if (value > 1_000_000) return { ok: false, error: `${label}: esa cantidad es demasiado alta.` };
+  return { ok: true, value };
+}
+
+// ---------------------------------------------------------------------------
 // Formatting
 // ---------------------------------------------------------------------------
 
-const USD = new Intl.NumberFormat("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const USD =new Intl.NumberFormat("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /** 102450 -> "US$1,024.50"; negative -> "-US$3.00". */
 export function formatUsd(cents: number) {

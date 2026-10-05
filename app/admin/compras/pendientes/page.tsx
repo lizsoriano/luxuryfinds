@@ -13,6 +13,7 @@ import {
   listPendingPurchaseItems,
   type PendingItemsResult,
 } from "../../../../lib/supabase/admin-purchases";
+import { getItemShippingInfo, type ItemShippingInfo } from "../../../../lib/supabase/admin-shipments";
 
 export const dynamic = "force-dynamic";
 
@@ -31,9 +32,14 @@ function Header() {
       title="Comprados pendientes de envío"
       description="Todo lo que ya compró tu shopper y todavía no se envía: cuántas piezas compraste, cuántas ya asignaste a clientas y cuántas siguen disponibles."
       action={
-        <Button href="/admin/compras" variant="secondary" size="small">
-          Volver a compras
-        </Button>
+        <span className="shopper-header-actions">
+          <Button href="/admin/compras" variant="secondary" size="small">
+            Volver a compras
+          </Button>
+          <Button href="/admin/compras/embarques/nuevo" size="small">
+            Crear embarque
+          </Button>
+        </span>
       }
     />
   );
@@ -92,6 +98,9 @@ export default async function PendingPurchaseItemsPage({ searchParams }: { searc
   }
 
   const filtered = Boolean(sp.q || sp.purchase || sp.shopper || stock);
+  // Phase 3 (migration 014): free units already travelling in a shipment can no
+  // longer be assigned. Empty map (and the same screen as before) without 014.
+  const shipping: Map<string, ItemShippingInfo> = await getItemShippingInfo(result.items.map((item) => item.id));
 
   return (
     <main className="admin-content">
@@ -144,62 +153,70 @@ export default async function PendingPurchaseItemsPage({ searchParams }: { searc
       <Card className="admin-panel">
         {result.items.length ? (
           <ul className="assign-list pending-list">
-            {result.items.map((item) => (
-              <li key={item.id} className="assign-item">
-                <div className="assign-item-head">
-                  {item.photoUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img className="shopper-item-thumb" src={item.photoUrl} alt="" />
-                  ) : (
-                    <span className="shopper-item-thumb admin-thumb-fallback" aria-hidden>
-                      {initialsOf(item.name)}
-                    </span>
-                  )}
-                  <div className="shopper-item-main">
-                    <strong>{item.name}</strong>
-                    <small>
-                      {item.variant_label ? `${item.variant_label} · ` : ""}
-                      {item.store_name}
-                    </small>
-                    <small>
-                      {item.purchase_number} · {item.supplierName} · {formatDate(item.purchase_date)}
-                    </small>
-                    <span className="shopper-badges">
-                      {item.available > 0 ? (
-                        <Badge tone="rose">{item.available} disponible(s)</Badge>
-                      ) : (
-                        <Badge tone="success">Todo asignado</Badge>
-                      )}
-                    </span>
+            {result.items.map((item) => {
+              const info = shipping.get(item.id);
+              const inShipment = (info?.freeShipped ?? 0) + (info?.assignedShipped ?? 0);
+              const assignable = Math.max(0, item.available - (info?.freeShipped ?? 0));
+              return (
+                <li key={item.id} className="assign-item">
+                  <div className="assign-item-head">
+                    {item.photoUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img className="shopper-item-thumb" src={item.photoUrl} alt="" />
+                    ) : (
+                      <span className="shopper-item-thumb admin-thumb-fallback" aria-hidden>
+                        {initialsOf(item.name)}
+                      </span>
+                    )}
+                    <div className="shopper-item-main">
+                      <strong>{item.name}</strong>
+                      <small>
+                        {item.variant_label ? `${item.variant_label} · ` : ""}
+                        {item.store_name}
+                      </small>
+                      <small>
+                        {item.purchase_number} · {item.supplierName} · {formatDate(item.purchase_date)}
+                      </small>
+                      <span className="shopper-badges">
+                        {assignable > 0 ? (
+                          <Badge tone="rose">{assignable} disponible(s)</Badge>
+                        ) : item.available > 0 ? (
+                          <Badge tone="neutral">Libres ya en embarque</Badge>
+                        ) : (
+                          <Badge tone="success">Todo asignado</Badge>
+                        )}
+                        {inShipment ? <Badge tone="warning">{inShipment} en embarque</Badge> : null}
+                      </span>
+                    </div>
+                    <Button href={`/admin/compras/${item.purchase_id}#articulo-${item.id}`} variant={assignable > 0 ? "primary" : "secondary"} size="small">
+                      {assignable > 0 ? "Asignar" : "Ver compra"}
+                    </Button>
                   </div>
-                  <Button href={`/admin/compras/${item.purchase_id}#articulo-${item.id}`} variant={item.available > 0 ? "primary" : "secondary"} size="small">
-                    {item.available > 0 ? "Asignar" : "Ver compra"}
-                  </Button>
-                </div>
-                <dl className="assign-counts">
-                  <div>
-                    <dt>Comprado</dt>
-                    <dd>{item.purchased}</dd>
-                  </div>
-                  <div>
-                    <dt>Asignado</dt>
-                    <dd>{item.assigned}</dd>
-                  </div>
-                  <div className={item.available > 0 ? "assign-counts-strong" : undefined}>
-                    <dt>Disponible</dt>
-                    <dd>{item.available}</dd>
-                  </div>
-                  <div>
-                    <dt>Costo c/u</dt>
-                    <dd>{item.unit_cost_mxn_cents !== null ? formatMoney(item.unit_cost_mxn_cents) : "—"}</dd>
-                  </div>
-                  <div>
-                    <dt>Costo línea</dt>
-                    <dd>{item.line_cost_mxn_cents !== null ? formatMoney(item.line_cost_mxn_cents) : "—"}</dd>
-                  </div>
-                </dl>
-              </li>
-            ))}
+                  <dl className="assign-counts">
+                    <div>
+                      <dt>Comprado</dt>
+                      <dd>{item.purchased}</dd>
+                    </div>
+                    <div>
+                      <dt>Asignado</dt>
+                      <dd>{item.assigned}</dd>
+                    </div>
+                    <div className={assignable > 0 ? "assign-counts-strong" : undefined}>
+                      <dt>Disponible</dt>
+                      <dd>{assignable}</dd>
+                    </div>
+                    <div>
+                      <dt>Costo c/u</dt>
+                      <dd>{item.unit_cost_mxn_cents !== null ? formatMoney(item.unit_cost_mxn_cents) : "—"}</dd>
+                    </div>
+                    <div>
+                      <dt>Costo línea</dt>
+                      <dd>{item.line_cost_mxn_cents !== null ? formatMoney(item.line_cost_mxn_cents) : "—"}</dd>
+                    </div>
+                  </dl>
+                </li>
+              );
+            })}
           </ul>
         ) : (
           <EmptyState
@@ -222,8 +239,9 @@ export default async function PendingPurchaseItemsPage({ searchParams }: { searc
           hasNextPage={result.hasNextPage}
         />
         <p className="admin-hint" style={{ marginTop: 12 }}>
-          Disponible = comprado − asignado a clientas (asignaciones activas). Costo puesto en tienda, sin paquetería. Para
-          asignar, abre la compra y usa <strong>Asignar</strong> en el artículo.
+          Disponible = comprado − asignado a clientas (asignaciones activas) − piezas libres que ya van en un embarque. Costo
+          puesto en tienda, sin paquetería. Para asignar, abre la compra y usa <strong>Asignar</strong> en el artículo; para
+          mandarlo, <strong>Crear embarque</strong>.
         </p>
       </Card>
     </main>
