@@ -84,7 +84,8 @@ const groups: NavGroup[] = [
         ],
       },
       // Buying in US stores through a shopper (phase 1: open, capture, square,
-      // confirm, pay; phase 2: assign to clients). Next to Inventario because it
+      // confirm, pay; phase 2: assign to clients; phase 3: shipments and reception
+      // in La Paz). Next to Inventario because it
       // is where stock comes from.
       {
         label: "Compras con shopper",
@@ -97,6 +98,12 @@ const groups: NavGroup[] = [
             href: "/admin/compras/pendientes",
             icon: "inbound",
             title: "Comprados con shopper, pendientes de envío: asignados y disponibles",
+          },
+          {
+            label: "Embarques",
+            href: "/admin/compras/embarques",
+            icon: "truck",
+            title: "Embarques de paquetería y recepción en La Paz",
           },
         ],
       },

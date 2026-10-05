@@ -198,14 +198,19 @@ export async function completeBookingAction(_state: ActionState, formData: FormD
     if (ticket) {
       await db.from("tickets").update({ logistics_status: "DELIVERED", updated_at: new Date().toISOString() }).eq("id", ticket.id);
       // Audit-only movement: zero delta, the stock already left on ALLOCATION when the pedido was confirmed.
-      await db.from("inventory_movements").insert({
-        variant_id: ticket.variant_id,
-        movement_type: "DELIVERY",
-        quantity_delta: 0,
-        ticket_id: ticket.id,
-        reason: `Entrega completada ${ticket.ticket_number}`,
-        created_by_admin_id: actor.id,
-      });
+      // A ticket sold from a shopper purchase (Compras > Asignar) has no catalogue variant and never
+      // touched stock: inventory_movements.variant_id is NOT NULL, so that insert could only fail
+      // silently. Those deliveries stay recorded in the booking (COMPLETED) and the activity log.
+      if (ticket.variant_id) {
+        await db.from("inventory_movements").insert({
+          variant_id: ticket.variant_id,
+          movement_type: "DELIVERY",
+          quantity_delta: 0,
+          ticket_id: ticket.id,
+          reason: `Entrega completada ${ticket.ticket_number}`,
+          created_by_admin_id: actor.id,
+        });
+      }
       await notifyClient(
         db,
         ticket.client_id as string,
