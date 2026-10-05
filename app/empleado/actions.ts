@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { describeError, failure, type ActionState } from "../../lib/actions";
-import { parseMoneyToCents } from "../../lib/format";
+import { parseMoneyToCents, parseQuantity } from "../../lib/format";
 import { requireStaffActor } from "../../lib/supabase/business";
 import { confirmStaffDelivery } from "../../lib/supabase/staff-deliveries";
 import {
@@ -10,6 +10,9 @@ import {
   createStaffProduct,
   editStaffProduct,
   editStaffVariant,
+  updateStaffInventoryField,
+  archiveStaffProducts,
+  duplicateStaffProduct,
   recordStaffEntry,
   updateStaffVariantPrice,
 } from "../../lib/supabase/staff-inventory";
@@ -78,6 +81,40 @@ export async function editStaffVariantAction(_state: StaffActionState, data: For
     revalidateInventory(result.productId);
     return { error: null, success: result.message, productId: result.productId };
   } catch (error) { return failure(describeError(error, "No se pudo guardar la variante.")); }
+}
+
+export async function updateStaffInventoryFieldAction(_state: StaffActionState, data: FormData): Promise<StaffActionState> {
+  try {
+    const actor = await requireStaffActor();
+    const field = data.get("field");
+    if (field !== "price" && field !== "stock") return failure("Campo no permitido.");
+    const value = field === "price" ? parseMoneyToCents(data.get("value")) : parseQuantity(data.get("value"));
+    if (value === null) return failure("Revisa el valor.");
+    const result = await updateStaffInventoryField({ adminId: actor.id, variantId: String(data.get("variantId") ?? ""), field, value });
+    if (!result.ok) return failure(result.error);
+    revalidateInventory(result.productId);
+    return { error: null, success: result.message };
+  } catch (error) { return failure(describeError(error, "No se pudo guardar.")); }
+}
+
+export async function archiveStaffProductsAction(_state: StaffActionState, data: FormData): Promise<StaffActionState> {
+  try {
+    const actor = await requireStaffActor();
+    const result = await archiveStaffProducts(actor.id, String(data.get("ids") ?? "").split(","));
+    revalidateInventory();
+    if (!result.ok) return failure(result.error);
+    return { error: null, success: result.message };
+  } catch (error) { return failure(describeError(error, "No se pudo archivar.")); }
+}
+
+export async function duplicateStaffProductAction(_state: StaffActionState, data: FormData): Promise<StaffActionState> {
+  try {
+    const actor = await requireStaffActor();
+    const result = await duplicateStaffProduct(actor.id, String(data.get("id") ?? ""));
+    if (!result.ok) return failure(result.error);
+    revalidateInventory(result.productId);
+    return { error: null, success: result.message, productId: result.productId };
+  } catch (error) { return failure(describeError(error, "No se pudo duplicar.")); }
 }
 
 export async function recordStaffEntryAction(_state: StaffActionState, formData: FormData): Promise<StaffActionState> {

@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { formatMoney, formatQuantity } from "../../../lib/format";
+
 import { listLaPazProducts, listStaffCategories } from "../../../lib/supabase/staff-inventory";
 import { PhotoProducts } from "./PhotoProducts";
 import { requireStaffActor } from "../../../lib/supabase/business";
-import { EditProductForm, EditVariantForm } from "./InventoryForms";
+import { InventoryRows } from "./InventoryRows";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +22,7 @@ export default async function StaffInventoryPage({ searchParams }: { searchParam
     result = await listLaPazProducts({ search, page });
   } catch (error) {
     return (
-      <main className="staff-content">
+      <main className="staff-content staff-inventory-content">
         <h1 className="staff-title">Inventario en La Paz</h1>
         <p className="form-message form-error" role="alert">
           No pudimos cargar el inventario: {error instanceof Error ? error.message : "error desconocido"}
@@ -40,7 +40,7 @@ export default async function StaffInventoryPage({ searchParams }: { searchParam
   };
 
   return (
-    <main className="staff-content">
+    <main className="staff-content staff-inventory-content">
       <div className="staff-heading">
         <div>
           <p className="staff-eyebrow">Entrega inmediata</p>
@@ -65,51 +65,11 @@ export default async function StaffInventoryPage({ searchParams }: { searchParam
 
       <h2 id="staff-saved-products" className="staff-saved-title">Productos guardados</h2>
       <p className="staff-count">
-        {result.total} producto(s){search ? ` con “${search}”` : ""}. Toca uno para registrar una entrada.
+        {result.total} producto(s){search ? ` con “${search}”` : ""}. Edita existencia y precio directamente en la fila.
       </p>
 
       {result.products.length ? (
-        <ul className="staff-list">
-          {result.products.map((product) => (
-            <li key={product.id}>
-              <Link className="staff-card staff-product-card" href={`/empleado/inventario/${product.id}`}>
-                {product.imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img className="staff-thumb" src={product.imageUrl} alt="" loading="lazy" />
-                ) : (
-                  <span className="staff-thumb staff-thumb-empty" aria-hidden>
-                    LF
-                  </span>
-                )}
-                <span className="staff-card-main">
-                  <strong>{product.name}</strong>
-                  <small>
-                    {product.categoryName ?? "Sin categoría"} · {product.variants.length} variante(s)
-                    {!product.isPublic ? " · Oculto" : ""}
-                  </small>
-                  <span className="staff-card-meta">
-                    <span className={product.stock > 0 ? "staff-stock" : "staff-stock staff-stock-out"}>
-                      {formatQuantity(product.stock)} en existencia
-                    </span>
-                    <span className="staff-price">
-                      {product.priceCents === product.maxPriceCents
-                        ? formatMoney(product.priceCents)
-                        : `${formatMoney(product.priceCents)} – ${formatMoney(product.maxPriceCents)}`}
-                    </span>
-                  </span>
-                </span>
-              </Link>
-              {product.createdByAdminId === actor.id && !product.isPublic && <details className="staff-saved-edit">
-                <summary>Editar producto</summary>
-                <div className="staff-details-body">
-                  <EditProductForm key={`${product.id}-${product.name}-${product.categoryId}`} productId={product.id} name={product.name} categoryId={product.categoryId} categories={categories} />
-                  {product.variants.map((variant) => <EditVariantForm key={`${variant.id}-${variant.name}-${variant.priceCents}-${variant.stock}`} variant={variant} allowsDecimal={product.allowsDecimal} />)}
-                  <Link className="staff-link-button" href={`/empleado/inventario/${product.id}`}>Ver fotos e historial →</Link>
-                </div>
-              </details>}
-            </li>
-          ))}
-        </ul>
+        <InventoryRows products={result.products} actorId={actor.id} categories={categories} />
       ) : (
         <div className="staff-empty">
           <strong>{search ? "Sin resultados" : "Todavía no hay productos en La Paz"}</strong>
