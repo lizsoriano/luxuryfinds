@@ -82,7 +82,8 @@ export default function CartPage() {
                         </span>
                       </span>
                       <span role="cell" className="cart-col-center cart-col-price">{money(item.priceCents)}</span>
-                      <span role="cell" className="cart-col-center">
+                      <span role="cell" className="cart-col-center cart-cell-quantity">
+                        <span className="cart-mobile-label" aria-hidden="true">Cantidad</span>
                         <input
                           className="cart-qty-input"
                           type="number"
@@ -95,7 +96,7 @@ export default function CartPage() {
                           }}
                         />
                       </span>
-                      <span role="cell" className="cart-col-right">{money(item.priceCents * item.quantity)}</span>
+                      <span role="cell" className="cart-col-right cart-cell-subtotal"><span className="cart-mobile-label" aria-hidden="true">Subtotal</span><strong>{money(item.priceCents * item.quantity)}</strong></span>
                     </div>
                   ))}
                 </div>
