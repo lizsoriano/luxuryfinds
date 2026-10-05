@@ -23,6 +23,8 @@ Documento pensado para que **otra IA o persona retome el proyecto sin releer tod
 
 ## 2. Lecciones técnicas específicas
 
+- **Para saber si una tabla/migración existe, haz un GET crudo** (`/rest/v1/<tabla>?select=*&limit=1` con `Accept-Profile: luxury_finds`; una tabla ausente da 404 `PGRST205`). **NO uses `select(..., {head:true})` de supabase-js: puede devolver "ok" para tablas que no existen** (nos dio un falso "aplicada" para 010/011/013).
+
 - **vinext/Vercel:** el plan Hobby solo admite cron **1 vez al día**; el bloque `functions` en `vercel.json` rompe el build (nitro lo gestiona). Duración de función ~60 s.
 - **Variables de entorno en Vercel por ambiente:** una variable puede tener filas separadas por ambiente (Production/Preview/Development); si algo funciona en producción pero no en un preview, revisa que la fila exista para **Preview**.
 - **PostgREST:** `.in()` con cientos de UUID genera URLs enormes (400) → procesa por lotes (150). `.or()` con `id.in.(…)` intenta castear todo a uuid (error 22P02): separa por forma del valor. Un `select()` sin paginar corta en **1,000 filas**. Falta de índice en `product_images.product_id` hacía lenta la lista (migración 005).
@@ -51,12 +53,12 @@ Documento pensado para que **otra IA o persona retome el proyecto sin releer tod
 | 007 | `quotes` | Cotizaciones | aplicada |
 | 008 | `products.in_transit` | "Productos en camino" | aplicada |
 | 009 | `product_variants.store_cost_usd_cents`, `commission_percent` + `app_settings.us_tax_factor` | costo tienda USD → costo MXN | aplicada |
-| 010 | `purchases`, `purchase_tickets`, `purchase_items`, `shopper_payments`, triggers, `confirm_shopper_purchase()` | Compras con shopper, Fase 1 | aplicada (tablas presentes) |
-| 011 | `purchase_assignments` + funciones de asignar/cancelar | Compras con shopper, Fase 2 | **tabla ya presente en la base; el código llega con el PR de la Fase 2 (en curso)** |
-| 012 | `admin_users.role` ('OWNER'/'EMPLOYEE') | roles para el panel de empleado | **NO aplicada** (la dueña debe correrla cuando se fusione el panel de empleado) |
-| 013 | `delivery_confirmations` y puente a tickets | confirmar entregas del empleado | **tabla ya presente; el código llega con el PR del panel de empleado (en curso)** |
+| 010 | `purchases`, `purchase_tickets`, `purchase_items`, `shopper_payments`, triggers, `confirm_shopper_purchase()` | Compras con shopper, Fase 1 | **NO aplicada** (código ya en producción, degrada con aviso) |
+| 011 | `purchase_assignments` + funciones de asignar/cancelar | Compras con shopper, Fase 2 | **NO aplicada** (necesita la 010 antes; código ya en producción, PR #44) |
+| 012 | `admin_users.role` ('OWNER'/'EMPLOYEE') | roles para el panel de empleado | **NO aplicada** (código ya en producción, PR #45) |
+| 013 | `delivery_confirmations` y puente a tickets | confirmar entregas del empleado | **NO aplicada** (incluye un GRANT sobre payments; código ya en producción, PR #45) |
 
-Numeración reservada: 011 = compras Fase 2; 012–013 = panel de empleado; **014+ libres** (Fase 3/4 de compras, Sitio Web si necesita tablas, etc.). Si una migración trae SQL en un PR no fusionado, **no la renumeres**: coordina.
+**Orden obligatorio para correrlas: 010 → 011 → 012 → 013** (la 011 se detiene sola si falta la 010). Numeración: 011 = compras Fase 2; 012–013 = panel de empleado; **014 = embarques (Fase 3, en curso)**; **015+ libres** (Fase 3/4 de compras, Sitio Web si necesita tablas, etc.). Si una migración trae SQL en un PR no fusionado, **no la renumeres**: coordina.
 
 ## 6. Módulos — estado
 
@@ -67,9 +69,11 @@ Numeración reservada: 011 = compras Fase 2; 012–013 = panel de empleado; **01
 - **Compras con shopper — Fase 1 (010)**: `/admin/compras` — shopper = un Proveedor; compra con tipo de cambio y comisión 10/15 %; tickets de tienda con tax por ticket; artículos con foto opcional (subida manual); cuadre contra el total real con tax; al confirmar congela `owed_usd = total_real + comisión`, `owed_mxn`, costo por línea/unidad; abonos al shopper y saldos por compra y por shopper.
 - **Placeholders honestos ("Próximamente")** que siguen: Reportes, Facturación (+ global, reportería), Sitio Web. Multi-negocio: la BD guarda `business_id` pero el selector solo muestra un aviso.
 
-### En curso al escribir esto (no dupliques)
-- **Compras con shopper, Fase 2** — asignar unidades compradas a clientas con su precio de venta (genera orden + ticket reutilizando el sistema de pedidos/tickets, `logistics_status='ORDERED'`, sin exigir inventario), cancelar asignación (solo si no hay pagos y sigue `ORDERED`), pantalla `/admin/compras/pendientes`. Trabaja en el directorio principal, rama `feature/appluxury2`, migración 011.
-- **Panel de empleado `/empleado` (Etapa 1)** — roles (012), alta de empleados en `/admin/empleados`, blindaje de `getAdminSession`/`requireAdminActor` para que un EMPLOYEE **nunca** entre a `/admin`, Inventario en La Paz, Entregas programadas, Confirmar entrega (cobro efectivo/transferencia "reportada", quién recibe, saldo), caja del empleado, migración 013. Trabaja en un worktree aparte, rama `feature/panel-empleado`.
+### Fusionado y en curso (no dupliques)
+- **En curso: Compras con shopper, Fase 3** (embarques + recepción en La Paz con correctas/dañadas/faltantes, migración 014; opcional: conectar costo de asignaciones al margen de Estadísticas y arreglar un fallo silencioso de auditoría en Agenda para tickets sin variante).
+- Una IA externa publicó `/productos-en-camino` (PR #43): página pública con productos `IMMEDIATE` + `in_transit` + visibles.
+- (YA FUSIONADO, PR #44) **Compras con shopper, Fase 2** — asignar unidades compradas a clientas con su precio de venta (genera orden + ticket reutilizando el sistema de pedidos/tickets, `logistics_status='ORDERED'`, sin exigir inventario), cancelar asignación (solo si no hay pagos y sigue `ORDERED`), pantalla `/admin/compras/pendientes`. Trabaja en el directorio principal, rama `feature/appluxury2`, migración 011.
+- (YA FUSIONADO, PR #45) **Panel de empleado `/empleado` (Etapa 1)** — roles (012), alta de empleados en `/admin/empleados`, blindaje de `getAdminSession`/`requireAdminActor` para que un EMPLOYEE **nunca** entre a `/admin`, Inventario en La Paz, Entregas programadas, Confirmar entrega (cobro efectivo/transferencia "reportada", quién recibe, saldo), caja del empleado, migración 013. Trabaja en un worktree aparte, rama `feature/panel-empleado`.
 
 ### Por construir
 1. **Compras con shopper — Fase 3:** embarques (guía, costo de paquetería, llegada estimada, selección de artículos de varias tiendas), al confirmar salida los tickets pasan `ORDERED → IN_TRANSIT`; **recepción en La Paz** con cantidades **correctas / dañadas / faltantes**, fotos y observaciones (solo las buenas pasan a "listas para entrega" o a Productos en La Paz; lo faltante sigue pendiente en el embarque); prorrateo de la paquetería al costo. Debe ampliar el CHECK de `purchase_items.status` con su propia migración (014+).
@@ -89,7 +93,7 @@ Numeración reservada: 011 = compras Fase 2; 012–013 = panel de empleado; **01
 
 ## 8. Acciones pendientes de la dueña
 
-1. Correr `012_employee_roles.sql` cuando se fusione el panel de empleado (y avisar; las tablas de 011/013 ya existen). Crear su primer empleado en `/admin/empleados`.
+1. Correr **010 → 011 → 012 → 013** en el editor SQL de Supabase, una por una y en ese orden (verificado 2026-10-04: ninguna está aplicada; por eso Compras, asignaciones y panel de empleado todavía muestran avisos). Luego crear su primer empleado en `/admin/empleados`.
 2. Capturar el **tipo de cambio** (barra sobre Productos) para activar el costo en dólares.
 3. Ponerle **precio** (inline) a los 402 productos Bath & Body Works y publicarlos con el chip Oculto→Visible. El CSV de referencia en USD (`precios-usd-bath-and-body-works.csv`) se le entregó por chat.
 4. Confirmar **Phone** en Supabase Auth (login solo con celular).
