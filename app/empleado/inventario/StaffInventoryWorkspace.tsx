@@ -1,5 +1,6 @@
 "use client";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import type { StaffProductRow } from "../../../lib/supabase/staff-inventory";
 import { PhotoProducts } from "./PhotoProducts";
 import { InventoryRows } from "./InventoryRows";
@@ -9,6 +10,24 @@ export function StaffInventoryWorkspace({ products, total, search, actorId, cate
   categories: Array<{ id: string; name: string }>; brands: Array<{ id: string; name: string }>; children: ReactNode;
 }) {
   const [recent, setRecent] = useState<StaffProductRow[]>([]);
+  const router = useRouter();
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      // Keep drafts and active edits intact while fetching the shared inventory.
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && (active.matches("input, textarea, select") || active.isContentEditable)) return;
+      router.refresh();
+    };
+    const timer = window.setInterval(refresh, 30000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [router]);
   const additions = recent.filter((row) => !products.some((product) => product.id === row.id));
   const rows = [...additions, ...products];
   return <>

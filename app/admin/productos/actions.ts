@@ -101,6 +101,7 @@ function readInTransit(formData: FormData, catalogType: "ON_DEMAND" | "IMMEDIATE
 }
 
 function revalidateCatalog() {
+  revalidatePath("/empleado/inventario", "layout");
   revalidatePath("/admin/productos");
   revalidatePath("/admin/productos/entrega-inmediata");
   revalidatePath("/admin/productos/en-camino");
