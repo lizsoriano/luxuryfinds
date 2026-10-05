@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import "./globals.css";
 import { CartProvider } from "../lib/cart/CartContext";
 import { FavoritesProvider } from "../lib/favorites/FavoritesContext";
+import { readSiteContent } from "../lib/supabase/site-content";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -12,16 +13,18 @@ const inter = Inter({
 });
 
 export async function generateMetadata(): Promise<Metadata> {
+  const content = await readSiteContent();
   const incomingHeaders = await headers();
   const host = incomingHeaders.get("x-forwarded-host") ?? incomingHeaders.get("host") ?? "luxuryfinds.mx";
   const protocol = incomingHeaders.get("x-forwarded-proto") ?? (host.includes("localhost") ? "http" : "https");
   const origin = `${protocol}://${host}`;
   return {
     title: { default: "Luxury Finds", template: "%s | Luxury Finds" },
-    description: "Moda, belleza y productos especiales en La Paz.",
+    description: content.seoDescription,
+    metadataBase: new URL(content.canonicalOrigin),
     icons: { icon: "/favicon.png", shortcut: "/favicon.png", apple: "/favicon.png" },
-    openGraph: { title: "Luxury Finds", description: "Encuentra algo que te encante.", images: [`${origin}/og.png`] },
-    twitter: { card: "summary_large_image", title: "Luxury Finds", description: "Encuentra algo que te encante.", images: [`${origin}/og.png`] },
+    openGraph: { title: content.seoTitle, description: content.seoDescription, images: [`${origin}/og.png`] },
+    twitter: { card: "summary_large_image", title: content.seoTitle, description: content.seoDescription, images: [`${origin}/og.png`] },
   };
 }
 

@@ -35,6 +35,8 @@ export const STAFF_FORBIDDEN_FIELDS = [
 ] as const;
 
 export const STAFF_SELECTS = {
+  shipments: "id, shipment_number, carrier, tracking_number, estimated_arrival, status, created_at",
+  shipmentLines: "id, shipment_id, position, assignment_id, expected_quantity, received_good_quantity, received_damaged_quantity, missing_quantity, status, name, variant_label, ticket_number, client_name",
   /** Inventario en La Paz: list + detail. Sale price only. */
   products:
     "id, name, is_public, is_active, catalog_type, product_kind, created_by_admin_id, created_at, categories(name), product_variants(id, name, price_cents, unit_label, is_active), product_images(storage_key, sort_order)",

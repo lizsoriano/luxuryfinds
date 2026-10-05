@@ -56,7 +56,7 @@ function render(image: Drawable, maxSide: number, quality: number): Promise<Blob
   );
 }
 
-export async function compressPhoto(file: File): Promise<File> {
+export async function compressPhoto(file: File, targetBytes = TARGET_PHOTO_BYTES): Promise<File> {
   if (!file.type.startsWith("image/")) throw new Error("Elige una foto (imagen).");
   let image: Drawable;
   try {
@@ -68,9 +68,9 @@ export async function compressPhoto(file: File): Promise<File> {
     let blob: Blob | null = null;
     for (const [maxSide, quality] of ATTEMPTS) {
       blob = await render(image, maxSide, quality);
-      if (blob.size <= TARGET_PHOTO_BYTES) break;
+      if (blob.size <= targetBytes) break;
     }
-    if (!blob || blob.size > TARGET_PHOTO_BYTES) throw new Error("La foto sigue siendo muy pesada. Intenta con otra.");
+    if (!blob || blob.size > targetBytes) throw new Error("La foto sigue siendo muy pesada. Intenta con otra.");
     return new File([blob], `foto-${Date.now()}.jpg`, { type: "image/jpeg" });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("La foto")) throw error;

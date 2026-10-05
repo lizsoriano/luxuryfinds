@@ -8,6 +8,7 @@ import { Input, Select, Textarea } from "../../../components/ui/Fields";
 import { emptyActionState } from "../../../lib/actions";
 import { centsToInput, formatQuantity } from "../../../lib/format";
 import { createProductAction, updateProductAction } from "./actions";
+import { compressPhoto } from "../compras/compress-photo";
 
 const MAX_IMAGES = 3;
 
@@ -136,7 +137,7 @@ function ImagePicker({ remaining }: { remaining: number }) {
       <p className="admin-hint">
         {remaining <= 0
           ? `Este producto ya tiene ${MAX_IMAGES} imágenes. Elimina alguna para subir otra.`
-          : `Puedes agregar ${remaining} imagen(es) más. JPG, PNG, WEBP o AVIF de hasta 5 MB cada una.`}
+          : `Puedes agregar ${remaining} imagen(es) más. JPG, PNG, WEBP o AVIF de hasta 5 MB cada una. Se reducen automáticamente antes de guardar.`}
       </p>
       {previews.length ? (
         <div className="admin-image-row">
@@ -263,7 +264,20 @@ export function ProductForm({
 }) {
   const isEdit = Boolean(product);
   const [state, action, pending] = useActionState(
-    isEdit ? updateProductAction : createProductAction,
+    async (previous: typeof emptyActionState, data: FormData) => {
+      try {
+        const images = data.getAll("images").filter((value): value is File => value instanceof File && value.size > 0);
+        if (images.length > MAX_IMAGES - existingImageCount) return { ...emptyActionState, error: "Se excedió el máximo de imágenes." };
+        if (images.some((image) => image.size > 5 * 1024 * 1024)) return { ...emptyActionState, error: "Cada imagen debe pesar como máximo 5 MB." };
+        data.delete("images");
+        // The budget is for the entire request, including all three photos.
+        for (const image of images) data.append("images", await compressPhoto(image, Math.floor(800 * 1024 / images.length)));
+        if ((await new Response(data).arrayBuffer()).byteLength > 950 * 1024) return { ...emptyActionState, error: "El formulario completo pesa demasiado. Reduce las imágenes o guarda menos variantes a la vez." };
+        return await (isEdit ? updateProductAction : createProductAction)(previous, data);
+      } catch (error) {
+        return { ...emptyActionState, error: error instanceof Error ? error.message : "No pudimos preparar las fotos." };
+      }
+    },
     emptyActionState,
   );
   const [kind, setKind] = useState<EditableProduct["product_kind"]>(product?.product_kind ?? "SIMPLE");
