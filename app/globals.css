@@ -560,3 +560,10 @@ body{font-weight:400}
 .staff-photo-fields .input[aria-invalid="true"]{border-color:var(--danger);background:#fff5f5;box-shadow:0 0 0 1px var(--danger)}
 .staff-photo-fields .input[aria-invalid="true"]:focus{box-shadow:0 0 0 3px rgba(184,87,98,.18)}
 .staff-field-error{color:var(--danger);font-size:12px;font-weight:500;line-height:1.4}
+
+.incoming-catalog-grid{margin-top:28px;row-gap:30px}
+.incoming-catalog-card{min-width:0}.incoming-catalog-card .product-plain-name{font-weight:400;margin:14px 0 8px}
+.incoming-card-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-height:28px}
+.incoming-card-status{display:inline-flex;align-items:center;gap:5px;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--rose);font-size:11px;line-height:1.2}
+.incoming-card-variant{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.incoming-catalog-card .product-plain-price{margin-top:auto;padding-top:12px}
