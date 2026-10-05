@@ -1,9 +1,8 @@
 import Link from "next/link";
 
 import { listLaPazProducts, listStaffCategories } from "../../../lib/supabase/staff-inventory";
-import { PhotoProducts } from "./PhotoProducts";
+import { StaffInventoryWorkspace } from "./StaffInventoryWorkspace";
 import { requireStaffActor } from "../../../lib/supabase/business";
-import { InventoryRows } from "./InventoryRows";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +50,7 @@ export default async function StaffInventoryPage({ searchParams }: { searchParam
         </Link>
       </div>
 
-      <PhotoProducts categories={categories} />
+      <StaffInventoryWorkspace products={result.products} total={result.total} search={search} actorId={actor.id} categories={categories}>
 
       <form className="staff-search" method="get" action="/empleado/inventario" role="search">
         <label htmlFor="staff-inventory-search" className="sr-only">
@@ -64,18 +63,7 @@ export default async function StaffInventoryPage({ searchParams }: { searchParam
       </form>
 
       <h2 id="staff-saved-products" className="staff-saved-title">Productos guardados</h2>
-      <p className="staff-count">
-        {result.total} producto(s){search ? ` con “${search}”` : ""}. Edita existencia y precio directamente en la fila.
-      </p>
-
-      {result.products.length ? (
-        <InventoryRows products={result.products} actorId={actor.id} categories={categories} />
-      ) : (
-        <div className="staff-empty">
-          <strong>{search ? "Sin resultados" : "Todavía no hay productos en La Paz"}</strong>
-          <p>{search ? "Prueba con otra palabra." : "Da de alta el primero con “Añadir producto”."}</p>
-        </div>
-      )}
+      </StaffInventoryWorkspace>
 
       {result.page > 1 || result.hasNextPage ? (
         <nav className="staff-pagination" aria-label="Páginas">

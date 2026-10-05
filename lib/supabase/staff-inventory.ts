@@ -148,6 +148,16 @@ export async function listLaPazProducts(query: { search?: string; page?: number;
   };
 }
 
+/** Read back a creation with the staff-safe projection, including its actual image and stock. */
+export async function readCreatedStaffProduct(productId: string, adminId: string): Promise<StaffProductRow | undefined> {
+  const { data, error } = await laPazQuery(true).eq("id", productId).eq("created_by_admin_id", adminId).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return undefined;
+  const row = data as unknown as ProductRowRaw;
+  const stock = await getStockFor((row.product_variants ?? []).map((variant) => variant.id));
+  return toStaffProduct(row, stock);
+}
+
 export type StaffMovement = {
   id: string;
   variantId: string;
