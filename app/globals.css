@@ -557,3 +557,6 @@ body{font-weight:400}
   .nav-icon-button,.menu-button{min-width:44px;min-height:44px}
   .admin-badge-button{min-height:44px;padding-inline:12px}
 }
+.staff-photo-fields .input[aria-invalid="true"]{border-color:var(--danger);background:#fff5f5;box-shadow:0 0 0 1px var(--danger)}
+.staff-photo-fields .input[aria-invalid="true"]:focus{box-shadow:0 0 0 3px rgba(184,87,98,.18)}
+.staff-field-error{color:var(--danger);font-size:12px;font-weight:500;line-height:1.4}
