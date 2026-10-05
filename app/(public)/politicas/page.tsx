@@ -6,7 +6,7 @@ export const metadata = { title: "Políticas | Luxury Finds" };
 const sections = [
   {
     title: "Modalidades de pago",
-    body: "Puedes pagar de tres formas: pago completo, plan semanal (de 4 a 16 semanas) o apartado. El apartado solo aplica para productos de entrega inmediata y requiere un mínimo del 30% del precio total.",
+    body: "Puedes pagar de tres formas: pago completo, plan semanal (de 4 a 16 semanas) o apartado. El apartado se registra con Luxury Finds para productos de entrega inmediata o en camino, con un anticipo del 50% y un mes para liquidar, salvo otro monto acordado. Si no se liquida a tiempo, el producto se libera y pasa a disponible.",
   },
   {
     title: "Métodos de pago",

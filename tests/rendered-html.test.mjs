@@ -27,6 +27,18 @@ before(async () => {
 
 after(() => server?.kill());
 
+test("renders Luxury Finds FAQs and policy links", async () => {
+  const response = await fetch(`${origin}/como-comprar`);
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /Preguntas frecuentes/);
+  assert.match(html, /20 a 30 días hábiles/);
+  assert.match(html, /anticipo del 50%/);
+  assert.match(html, /href="#entregas"/);
+  assert.match(html, /<details/);
+  assert.doesNotMatch(html, /Oskin|Kueski|Paypal|help@oskin/);
+});
+
 test("redirects duplicate coming-soon section to incoming products", async () => {
   const response = await fetch(`${origin}/proximamente`, { redirect: "manual" });
   assert.equal(response.status, 308);
