@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { InventoryPagination } from "./InventoryPagination";
 
 import { listLaPazProducts, listStaffBrands, listStaffCategories } from "../../../lib/supabase/staff-inventory";
 import { StaffInventoryWorkspace } from "./StaffInventoryWorkspace";
@@ -33,14 +34,6 @@ export default async function StaffInventoryPage({ searchParams }: { searchParam
     );
   }
 
-  const pageHref = (target: number) => {
-    const params = new URLSearchParams();
-    if (search) params.set("q", search);
-    if (target > 1) params.set("pagina", String(target));
-    const query = params.toString();
-    return `/empleado/inventario${query ? `?${query}` : ""}`;
-  };
-
   return (
     <main className="staff-content staff-inventory-content">
       <div className="staff-heading">
@@ -68,25 +61,7 @@ export default async function StaffInventoryPage({ searchParams }: { searchParam
       <h2 id="staff-saved-products" className="staff-saved-title">Productos guardados</h2>
       </StaffInventoryWorkspace>
 
-      {result.page > 1 || result.hasNextPage ? (
-        <nav className="staff-pagination" aria-label="Páginas">
-          {result.page > 1 ? (
-            <Link className="button button-secondary" href={pageHref(result.page - 1)}>
-              ← Anterior
-            </Link>
-          ) : (
-            <span />
-          )}
-          <span>Página {result.page}</span>
-          {result.hasNextPage ? (
-            <Link className="button button-secondary" href={pageHref(result.page + 1)}>
-              Siguiente →
-            </Link>
-          ) : (
-            <span />
-          )}
-        </nav>
-      ) : null}
+      <InventoryPagination page={result.page} totalPages={Math.max(1, Math.ceil(result.total / result.pageSize))} search={search} />
     </main>
   );
 }
