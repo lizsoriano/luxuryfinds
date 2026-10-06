@@ -27,6 +27,20 @@ before(async () => {
 
 after(() => server?.kill());
 
+test("serves banner sharing metadata in the initial head for WhatsApp", async () => {
+  for (const pathname of ["/entrega-inmediata", "/productos-en-camino"]) {
+    const response = await fetch(`${origin}${pathname}`, { headers: { "User-Agent": "WhatsApp/2.25" } });
+    const html = await response.text();
+    const head = html.slice(0, html.indexOf("</head>"));
+    assert.match(head, /property="og:image" content="https:\/\/www\.luxuryfinds\.com\.mx\/og-banner\.jpg"/);
+    assert.match(head, /property="og:image:type" content="image\/jpeg"/);
+    assert.match(head, /property="og:title"/);
+  }
+  const image = await fetch(`${origin}/og-banner.jpg`);
+  assert.equal(image.status, 200);
+  assert.match(image.headers.get("content-type") ?? "", /^image\/jpeg/);
+});
+
 test("renders Luxury Finds FAQs and policy links", async () => {
   const response = await fetch(`${origin}/como-comprar`);
   assert.equal(response.status, 200);

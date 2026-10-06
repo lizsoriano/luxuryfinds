@@ -1,6 +1,5 @@
   import type { Metadata } from "next";
 import { Inter } from "next/font/google";
-import { headers } from "next/headers";
 import "./globals.css";
 import { CartProvider } from "../lib/cart/CartContext";
 import { FavoritesProvider } from "../lib/favorites/FavoritesContext";
@@ -14,17 +13,14 @@ const inter = Inter({
 
 export async function generateMetadata(): Promise<Metadata> {
   const content = await readSiteContent();
-  const incomingHeaders = await headers();
-  const host = incomingHeaders.get("x-forwarded-host") ?? incomingHeaders.get("host") ?? "luxuryfinds.mx";
-  const protocol = incomingHeaders.get("x-forwarded-proto") ?? (host.includes("localhost") ? "http" : "https");
-  const origin = `${protocol}://${host}`;
+  const origin = content.canonicalOrigin.replace(/\/$/, "");
   return {
     title: { default: "Luxury Finds", template: "%s | Luxury Finds" },
     description: content.seoDescription,
     metadataBase: new URL(content.canonicalOrigin),
     icons: { icon: "/favicon.png", shortcut: "/favicon.png", apple: "/favicon.png" },
-    openGraph: { title: content.seoTitle, description: content.seoDescription, images: [{ url: `${origin}/og-logo.png`, width: 1200, height: 630, alt: "Logo de Luxury Finds" }] },
-    twitter: { card: "summary_large_image", title: content.seoTitle, description: content.seoDescription, images: [{ url: `${origin}/og-logo.png`, width: 1200, height: 630, alt: "Logo de Luxury Finds" }] },
+    openGraph: { type: "website", siteName: "Luxury Finds", url: origin, title: content.seoTitle, description: content.seoDescription, images: [{ url: `${origin}/og-banner.jpg`, width: 1920, height: 900, alt: "Banner de Rare Beauty en Luxury Finds", type: "image/jpeg" }] },
+    twitter: { card: "summary_large_image", title: content.seoTitle, description: content.seoDescription, images: [{ url: `${origin}/og-banner.jpg`, width: 1920, height: 900, alt: "Banner de Rare Beauty en Luxury Finds", type: "image/jpeg" }] },
   };
 }
 
