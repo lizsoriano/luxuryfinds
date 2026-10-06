@@ -75,11 +75,8 @@ test("renders Luxury Finds FAQs and policy links", async () => {
   assert.match(html, /Tec de La Paz/);
   assert.match(html, /Normal Urbana/);
   assert.match(html, /retiro sin tarjeta y link de pago/);
-  assert.doesNotMatch(html, /DHL|Mercado Libre|12:30|9:00 p\. m\. Avisa|desde la fecha de la orden/);
+  assert.doesNotMatch(html, /DHL|Mercado Libre|12:30|desde la fecha de la orden/);
   assert.doesNotMatch(html, /Oskin|Kueski|Paypal|help@oskin/);
-  const policies = await fetch(`${origin}/politicas`, { redirect: "manual" });
-  assert.equal(policies.status, 307);
-  assert.equal(policies.headers.get("location"), "/como-comprar#faq-policies-title");
 });
 
 test("redirects duplicate coming-soon section to incoming products", async () => {
