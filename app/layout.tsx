@@ -23,8 +23,8 @@ export async function generateMetadata(): Promise<Metadata> {
     description: content.seoDescription,
     metadataBase: new URL(content.canonicalOrigin),
     icons: { icon: "/favicon.png", shortcut: "/favicon.png", apple: "/favicon.png" },
-    openGraph: { title: content.seoTitle, description: content.seoDescription, images: [`${origin}/og.png`] },
-    twitter: { card: "summary_large_image", title: content.seoTitle, description: content.seoDescription, images: [`${origin}/og.png`] },
+    openGraph: { title: content.seoTitle, description: content.seoDescription, images: [{ url: `${origin}/og-logo.png`, width: 1200, height: 630, alt: "Logo de Luxury Finds" }] },
+    twitter: { card: "summary_large_image", title: content.seoTitle, description: content.seoDescription, images: [{ url: `${origin}/og-logo.png`, width: 1200, height: 630, alt: "Logo de Luxury Finds" }] },
   };
 }
 
