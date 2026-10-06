@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { request } from "node:http";
 import { after, before, test } from "node:test";
 
 const port = 3219;
@@ -26,6 +27,21 @@ before(async () => {
 });
 
 after(() => server?.kill());
+
+test("redirects Vercel alias to canonical domain preserving inventory and query", async () => {
+  const response = await new Promise((resolve, reject) => {
+    const req = request(`${origin}/empleado/inventario?pagina=2&q=Owala`, { headers: { Host: "luxuryfinds.vercel.app" } }, res => {
+      res.resume(); resolve({ status: res.statusCode, location: res.headers.location });
+    });
+    req.on("error", reject); req.end();
+  });
+  assert.equal(response.status, 308);
+  const target = new URL(response.location);
+  assert.equal(target.origin, "https://www.luxuryfinds.com.mx");
+  assert.equal(target.pathname, "/empleado/inventario");
+  assert.equal(target.searchParams.get("pagina"), "2");
+  assert.equal(target.searchParams.get("q"), "Owala");
+});
 
 test("serves banner sharing metadata in the initial head for WhatsApp", async () => {
   for (const pathname of ["/entrega-inmediata", "/productos-en-camino"]) {
