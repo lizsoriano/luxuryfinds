@@ -66,6 +66,16 @@ test("renders Luxury Finds FAQs and policy links", async () => {
   assert.match(html, /anticipo del 50%/);
   assert.match(html, /href="#entregas"/);
   assert.match(html, /<details/);
+  assert.match(html, /3 días naturales/);
+  assert.match(html, /dos semanas de atraso/);
+  assert.match(html, /mínimo del 30%/);
+  assert.match(html, /monto total pagado, sin reembolso ni excepciones/);
+  assert.match(html, /desde que te avisemos que está listo para entrega/);
+  assert.match(html, /Estafeta/);
+  assert.match(html, /Tec de La Paz/);
+  assert.match(html, /Normal Urbana/);
+  assert.match(html, /retiro sin tarjeta y link de pago/);
+  assert.doesNotMatch(html, /DHL|Mercado Libre|12:30|desde la fecha de la orden/);
   assert.doesNotMatch(html, /Oskin|Kueski|Paypal|help@oskin/);
 });
 
