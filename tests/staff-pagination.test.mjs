@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import vm from 'node:vm';
+import { test } from 'node:test';
+import ts from 'typescript';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+const require=createRequire(import.meta.url);
+const source=readFileSync('app/empleado/inventario/InventoryPagination.tsx','utf8');
+const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;
+const module={exports:{}};
+vm.runInNewContext(js,{module,exports:module.exports,URLSearchParams,require:(name)=>name==='next/link'?{__esModule:true,default:({children,...props})=>React.createElement('a',props,children)}:require(name)});
+const {InventoryPagination}=module.exports;
+const render=props=>renderToStaticMarkup(React.createElement(InventoryPagination,props));
+test('four page index marks current page and preserves search in arrows',()=>{
+ const html=render({page:2,totalPages:4,search:'Owala rosa'});
+ for(const n of [1,2,3,4])assert.match(html,new RegExp(`aria-label="Página ${n}"`));
+ assert.match(html,/aria-current="page">2/);
+ assert.match(html,/q=Owala\+rosa&amp;pagina=3/);
+ assert.match(html,/aria-label="Página anterior"/);
+});
+test('index disables boundary arrows and advances through longer inventories',()=>{
+ assert.match(render({page:1,totalPages:4}),/aria-disabled="true" aria-label="Página anterior"/);
+ const last=render({page:9,totalPages:9});
+ assert.match(last,/aria-label="Página 6"/);
+ assert.match(last,/aria-current="page">9/);
+ assert.match(last,/aria-disabled="true" aria-label="Página siguiente"/);
+ assert.equal(render({page:1,totalPages:1}),'');
+});
