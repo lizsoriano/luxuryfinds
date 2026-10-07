@@ -1,7 +1,7 @@
 import { Card } from "../../../components/ui/Card";
 import { PageHeader } from "../../../components/ui/PageHeader";
 import { businessToday } from "../../../lib/format";
-import { listSellableVariants } from "../../../lib/supabase/admin-catalog";
+import { listPosVariants } from "../../../lib/supabase/admin-catalog";
 import { getOpenCashSession } from "../../../lib/supabase/admin-commerce";
 import { listClientOptions, listSupplierOptions } from "../../../lib/supabase/admin-contacts";
 import { SellTerminal } from "./SellTerminal";
@@ -16,7 +16,7 @@ export default async function SellPage() {
 
   try {
     [variants, clients, suppliers, session] = await Promise.all([
-      listSellableVariants(),
+      listPosVariants(),
       listClientOptions(),
       listSupplierOptions(),
       getOpenCashSession(),
