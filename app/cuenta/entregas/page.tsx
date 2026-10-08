@@ -7,7 +7,7 @@ import { EmptyState } from "../../../components/ui/EmptyState";
 import { CLIENT_CHANGE_RULE, capitalize, PICKUP_REMINDER, formatDayLong, formatDayShort, formatTimeOnly, moneyText, statusPhrase } from "../../../lib/account-view";
 import { LOGISTICS_STATUS_LABELS } from "../../../lib/format";
 import { getAccountOverview } from "../../../lib/supabase/account";
-import { CLIENT_BOOKING_MIGRATION, POLICY_DELIVERY_POINTS, getDeliveryPoints, isClientBookingAvailable, type DeliveryPoint } from "../../../lib/supabase/account-delivery";
+import { CLIENT_BOOKING_MIGRATION, POLICY_DELIVERY_POINTS, getDeliveryPoints, isClientBookingAvailable, isDeliveryRequestsAvailable, type DeliveryPoint } from "../../../lib/supabase/account-delivery";
 
 export const dynamic = "force-dynamic";
 
@@ -26,9 +26,11 @@ function windows(day: DeliveryPoint["days"][number]) {
 
 export default async function DeliveriesPage({ searchParams }: { searchParams: Promise<{ cambiar?: string }> }) {
   const { cambiar } = await searchParams;
-  const [data, bookingAvailable, delivery] = await Promise.all([
+  const [data, bookingAvailable, requestsAvailable, delivery] = await Promise.all([
     getAccountOverview(),
     isClientBookingAvailable(),
+    // Migration 020: one 10-minute window per visit, confirmed by the owner. Without it, 019 as before.
+    isDeliveryRequestsAvailable(),
     getDeliveryPoints().catch((error) => { console.error("[cuenta/entregas]", error); return { points: [] as DeliveryPoint[], noticeDays: 1 }; }),
   ]);
   const overview = data.overview;
@@ -48,27 +50,42 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
   return <main className="account-content acc-content">
     <header className="acc-page-head"><h1>Entregas</h1><p>Agenda tu entrega, revisa tus citas y conoce dónde entregamos.</p></header>
 
-    {overview.appointments.length > 0 && <section className="acc-section">
-      <SectionHead eyebrow="Mis citas" title={overview.appointments.length === 1 ? "Tu cita de entrega" : "Tus citas de entrega"} />
-      <div className="acc-stack">{overview.appointments.map((a) => <article key={a.key} className="acc-card acc-pad acc-appointment-card">
+    {overview.appointments.length > 0 && <section className="acc-section" id="citas">
+      <SectionHead eyebrow="Mis citas" title={overview.appointments.some((a) => a.pending) ? (overview.appointments.length === 1 ? "Tu solicitud de entrega" : "Tus citas y solicitudes") : overview.appointments.length === 1 ? "Tu cita de entrega" : "Tus citas de entrega"} />
+      <div className="acc-stack">{overview.appointments.map((a) => <article key={a.key} className={`acc-card acc-pad acc-appointment-card${a.pending ? " is-pending" : " is-confirmed"}`}>
+        {a.pending
+          ? <div className="acc-request-state is-pending"><Icon name="clock" size={20} /><div><strong>Solicitud enviada · esperando confirmación</strong><p>Apartamos este horario para ti, pero todavía no es una cita: te avisamos (campanita y Telegram) cuando la confirmemos para que puedas pasar.</p></div></div>
+          : <div className="acc-request-state is-confirmed"><Icon name="check" size={20} /><div><strong>Cita confirmada · puedes pasar</strong><p>{a.deliveryType === "DIDI" ? "Ten tu dirección al día para el envío por DiDi." : `Te esperamos en ${a.locationName}. ${PICKUP_REMINDER}`}</p></div></div>}
         <div className="acc-appointment"><Icon name="calendar" size={24} /><div><strong><AppointmentWhen startsAt={a.startsAt} endsAt={a.endsAt} /></strong><span>{a.locationName} · {a.deliveryType === "DIDI" ? "Envío por DiDi" : "Recoges en el punto"}</span>{a.locationAddress && <a className="acc-inline-link" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${a.locationName}, ${a.locationAddress}, La Paz, B.C.S.`)}`} target="_blank" rel="noreferrer">{a.locationAddress} · Ver mapa</a>}</div></div>
         <ul className="acc-mini-lines">{a.lines.map((l, i) => <li key={`${l.ticketNumber}-${i}`}><ProductThumb src={l.imageUrl} name={l.name} size="sm" /><span>{l.name}{l.balanceCents > 0 ? <small>Saldo a pagar al recibir: {moneyText(l.balanceCents)}</small> : <small>Pagado</small>}</span></li>)}</ul>
         {a.canChange && bookingAvailable
-          ? <div className="acc-appointment-actions"><Link className="button button-secondary acc-btn" href={`/cuenta/entregas?cambiar=${a.key}#agendar`}>Cambiar horario</Link><CancelAppointment bookingIds={a.bookingIds} /></div>
+          ? <div className="acc-appointment-actions"><Link className="button button-secondary acc-btn" href={`/cuenta/entregas?cambiar=${a.key}#agendar`}>Cambiar horario</Link><CancelAppointment bookingIds={a.bookingIds} request={a.pending} /></div>
           : <p className="acc-muted">{a.canChange ? "Para cambiarla escríbenos." : "Tu cita es hoy: si necesitas cambiarla, escríbenos."} <Link className="acc-inline-link" href="/contacto">Contactar</Link></p>}
-        <p className="acc-muted">{CLIENT_CHANGE_RULE}</p>
+        <p className="acc-muted">{a.pending ? "Puedes cambiar o cancelar tu solicitud cuando quieras. Una vez confirmada, puedes cambiarla hasta un día antes." : CLIENT_CHANGE_RULE}</p>
       </article>)}</div>
     </section>}
 
+    {!toReschedule && overview.rejections.length > 0 && <section className="acc-section" aria-label="Horarios que no pudimos confirmar">
+      <div className="acc-stack">{overview.rejections.map((r) => <div key={r.key} className="acc-request-state is-rejected" role="status">
+        <Icon name="alert" size={20} />
+        <div>
+          <strong>No pudimos confirmar tu horario{r.startsAt ? ` del ${formatDayLong(r.startsAt)} a las ${formatTimeOnly(r.startsAt)}` : ""}</strong>
+          <p>{r.reason ? `Motivo: ${r.reason}. ` : ""}Lo sentimos. Tu pedido ({r.lines.map((l) => l.name).join(", ")}) sigue listo: elige otro horario abajo.</p>
+          <a className="button button-primary acc-btn" href="#agendar">Elegir otro horario</a>
+        </div>
+      </div>)}</div>
+    </section>}
+
     <section className="acc-section" id="agendar">
-      <SectionHead eyebrow={toReschedule ? "Cambiar horario" : "Agendar"} title={toReschedule ? "Elige tu nuevo horario" : "Agendar mi entrega"} />
+      <SectionHead eyebrow={toReschedule ? "Cambiar horario" : "Agendar"} title={toReschedule ? "Elige tu nuevo horario" : requestsAvailable ? "Solicitar mi entrega" : "Agendar mi entrega"} />
+      {requestsAvailable && bookingAvailable && tickets.length > 0 && points.length > 0 && <p className="acc-muted acc-request-intro">Eliges lugar, día y hora; reservas <b>10 minutos</b> para pasar por todo lo que elijas. Te confirmamos tu cita y solo entonces puedes pasar.</p>}
       {!bookingAvailable
         ? <Notice tone="warning"><strong>El agendado en línea se activa muy pronto.</strong><p>Mientras tanto, escríbenos para elegir día y hora. <Link className="acc-inline-link" href="/contacto">Contactar</Link></p><small className="acc-tech">Pendiente aplicar {CLIENT_BOOKING_MIGRATION}.</small></Notice>
         : !tickets.length
           ? <div className="acc-card acc-pad acc-muted">{coming.length ? "Cuando uno de tus pedidos esté listo en La Paz, aquí podrás elegir lugar, día y hora." : "No tienes pedidos listos para entrega por ahora."}</div>
           : !points.length
             ? <Notice>Tu pedido está listo, pero aún no hay horarios publicados. Te avisaremos en cuanto los haya, o escríbenos para coordinar. <Link className="acc-inline-link" href="/contacto">Contactar</Link></Notice>
-            : <div className="acc-card acc-pad"><ScheduleDelivery tickets={tickets} blocked={toReschedule ? [] : blocked} points={points} reschedule={Boolean(toReschedule)} /><p className="acc-muted">{PICKUP_REMINDER} Agenda con al menos {delivery.noticeDays} día(s) de anticipación.</p></div>}
+            : <div className="acc-card acc-pad"><ScheduleDelivery tickets={tickets} blocked={toReschedule ? [] : blocked} points={points} reschedule={Boolean(toReschedule)} requests={requestsAvailable} /><p className="acc-muted">{PICKUP_REMINDER} Agenda con al menos {delivery.noticeDays} día(s) de anticipación.</p></div>}
     </section>
 
     {byMessage.length > 0 && <section className="acc-section">

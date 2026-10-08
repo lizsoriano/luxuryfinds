@@ -8,6 +8,13 @@ import { related } from "./sales";
 
 export const CLIENT_BOOKING_MIGRATION = "database/migrations/019_client_delivery_booking.sql";
 
+// Migration 020 ("Solicitudes por confirmar"): when applied, what she books is a
+// REQUEST for ONE 10-minute window per visit that only the owner confirms.
+// While it is missing, 019 keeps working exactly as before (confirmed at once,
+// one consecutive 10-minute slot per product) and the owner's Agenda shows a
+// notice naming the file. See lib/supabase/delivery-requests.ts.
+export { DELIVERY_REQUESTS_MIGRATION, isDeliveryRequestsAvailable } from "./delivery-requests";
+
 export type DeliveryDay = { date: string; slots: Array<SchedulerSlot & { pickup: boolean; didi: boolean }> };
 export type DeliveryPoint = { id: string; name: string; address: string; mapUrl: string; days: DeliveryDay[]; pickup: boolean; didi: boolean };
 

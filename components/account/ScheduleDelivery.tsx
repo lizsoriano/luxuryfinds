@@ -10,7 +10,13 @@ export type SchedulerTicket = { id: string; name: string; detail: string; imageU
 export type SchedulerSlotView = { id: string; availabilityId: string; startsAt: string; free: boolean; pickup: boolean; didi: boolean; timeLabel: string };
 export type SchedulerPoint = { id: string; name: string; address: string; mapUrl: string; days: Array<{ date: string; label: string; slots: SchedulerSlotView[] }> };
 
-export function ScheduleDelivery({ tickets, blocked = [], points, reschedule = false }: { tickets: SchedulerTicket[]; blocked?: SchedulerTicket[]; points: SchedulerPoint[]; reschedule?: boolean }) {
+/**
+ * `requests` = migration 020 is applied: she reserves ONE 10-minute window for
+ * everything she picked and it stays as a request until the owner confirms it.
+ * Without it (019) each product still takes its own consecutive 10 minutes and
+ * the appointment is confirmed right away.
+ */
+export function ScheduleDelivery({ tickets, blocked = [], points, reschedule = false, requests = false }: { tickets: SchedulerTicket[]; blocked?: SchedulerTicket[]; points: SchedulerPoint[]; reschedule?: boolean; requests?: boolean }) {
   const [selected, setSelected] = useState<string[]>(tickets.map((t) => t.id));
   const [pointId, setPointId] = useState(points.length === 1 ? points[0].id : "");
   const [date, setDate] = useState("");
@@ -18,7 +24,7 @@ export function ScheduleDelivery({ tickets, blocked = [], points, reschedule = f
   const [mode, setMode] = useState("");
   const [state, action, pending] = useActionState(bookDeliveryAction, emptyActionState);
 
-  const count = Math.max(1, selected.length);
+  const count = requests ? 1 : Math.max(1, selected.length);
   const point = points.find((p) => p.id === pointId) ?? null;
   const days = useMemo(() => (point?.days ?? []).map((day) => ({ ...day, starts: bookableStarts(day.slots, count) as SchedulerSlotView[] })).filter((day) => day.starts.length), [point, count]);
   const day = days.find((d) => d.date === date) ?? null;
@@ -28,7 +34,18 @@ export function ScheduleDelivery({ tickets, blocked = [], points, reschedule = f
   const ready = selected.length > 0 && slot && modes.includes(chosenMode);
 
   if (state.success) {
-    return <div className="acc-success" role="status"><Icon name="check" size={22} /><div><strong>{state.success}</strong><p>Te enviamos la confirmación a tus avisos{reschedule ? "" : " y, si lo vinculaste, a Telegram"}.</p></div></div>;
+    return requests ? (
+      <div className="acc-request-state is-pending" role="status">
+        <Icon name="clock" size={22} />
+        <div>
+          <strong>Solicitud enviada · esperando confirmación</strong>
+          <p>{state.success}</p>
+          <p>Te avisamos en tus avisos y, si lo vinculaste, por Telegram cuando la confirmemos. Hasta entonces el horario queda apartado para ti.</p>
+        </div>
+      </div>
+    ) : (
+      <div className="acc-success" role="status"><Icon name="check" size={22} /><div><strong>{state.success}</strong><p>Te enviamos la confirmación a tus avisos{reschedule ? "" : " y, si lo vinculaste, a Telegram"}.</p></div></div>
+    );
   }
 
   const toggle = (id: string) => { setSelected((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]); setSlotId(""); };
@@ -104,7 +121,9 @@ export function ScheduleDelivery({ tickets, blocked = [], points, reschedule = f
               <button key={s.id} type="button" role="radio" aria-checked={slotId === s.id} className={`acc-chip${slotId === s.id ? " is-on" : ""}`} onClick={() => { setSlotId(s.id); setMode(""); }}>{s.timeLabel}</button>
             ))}
           </div>
-          {count > 1 && <p className="acc-muted">Reservamos {count * 10} minutos para tus {count} productos.</p>}
+          {requests
+            ? <p className="acc-muted acc-window-note"><Icon name="clock" size={15} /> Reservas 10 minutos para pasar por {selected.length > 1 ? `los ${selected.length} productos que elegiste` : "tu producto"}.</p>
+            : count > 1 && <p className="acc-muted">Reservamos {count * 10} minutos para tus {count} productos.</p>}
         </fieldset>
       )}
 
@@ -120,11 +139,14 @@ export function ScheduleDelivery({ tickets, blocked = [], points, reschedule = f
 
       {ready && (
         <div className="acc-scheduler-summary">
-          <p><Icon name="calendar" size={18} /><span><strong>{day?.label}, {slot?.timeLabel}</strong> · {point?.name}<br /><small>{chosenMode === "DIDI" ? "Envío por DiDi" : "Recoges en el punto"} · {selected.length} producto(s)</small></span></p>
+          <p><Icon name="calendar" size={18} /><span><strong>{day?.label}, {slot?.timeLabel}</strong> · {point?.name}<br /><small>{chosenMode === "DIDI" ? "Envío por DiDi" : "Recoges en el punto"} · {selected.length} producto(s){requests ? " · 10 minutos" : ""}</small></span></p>
+          {requests && <p className="acc-muted">Tu horario queda apartado mientras lo revisamos. Podrás pasar cuando lo confirmemos: te avisamos.</p>}
         </div>
       )}
       {state.error && <p className="form-message form-error" role="alert">{state.error}</p>}
-      <button type="submit" className="button button-primary acc-btn acc-btn-full" disabled={!ready || pending}>{pending ? "Agendando…" : reschedule ? "Confirmar nuevo horario" : "Confirmar mi entrega"}</button>
+      <button type="submit" className="button button-primary acc-btn acc-btn-full" disabled={!ready || pending}>
+        {pending ? (requests ? "Enviando…" : "Agendando…") : requests ? (reschedule ? "Solicitar nuevo horario" : "Solicitar este horario") : reschedule ? "Confirmar nuevo horario" : "Confirmar mi entrega"}
+      </button>
     </form>
   );
 }

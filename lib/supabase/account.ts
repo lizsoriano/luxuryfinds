@@ -1,5 +1,6 @@
 import { buildAccountOverview, type AccountRaw, type RawBooking, type RawFee, type RawInstallment, type RawNotification, type RawOrder, type RawPlan, type RawProof, type RawSlotInfo, type RawTicket } from "../account-view";
 import { getClientProfile } from "./auth";
+import { getBookingRequestStates } from "./delivery-requests";
 import { adminDb, adminStorage, PRODUCT_IMAGE_BUCKET } from "./business";
 import { getClientReservations } from "./incoming-reservations";
 import { getSaleItemFulfillment, related } from "./sales";
@@ -100,7 +101,16 @@ export async function getAccountOverview() {
   ]);
   const ownSales = sales.filter((s) => s.client_id === user.id);
   const saleItems = await related<AccountRaw["saleItems"][number]>("sale_items", "id,sale_id,product_id,product_name_snapshot,variant_name_snapshot,quantity,unit_price_cents,total_cents,unit_label", "sale_id", ownSales.map((s) => s.id));
-  const bookingRows = rows<RawBooking>("tus entregas", bookings as Result<RawBooking>).filter((b) => ownTicketIds.has(b.ticket_id));
+  const ownBookings = rows<RawBooking>("tus entregas", bookings as Result<RawBooking>).filter((b) => ownTicketIds.has(b.ticket_id));
+  // Request state (migration 020), read with the service role but only for HER booking ids.
+  // null = 020 not applied: the rows stay as they are and read as confirmed appointments.
+  const requestStates = await getBookingRequestStates(ownBookings.map((b) => b.id)).catch((error) => { console.error("[cuenta] solicitudes", error); return null; });
+  const bookingRows: RawBooking[] = requestStates
+    ? ownBookings.map((b) => {
+      const state = requestStates.get(b.id);
+      return state ? { ...b, visit_id: state.visitId, confirmed_at: state.confirmedAt, rejected_at: state.rejectedAt } : b;
+    })
+    : ownBookings;
   const productIds = [...new Set([...ticketRows, ...orderItems, ...saleItems].flatMap((row) => row.product_id ? [row.product_id] : []))];
   const [fulfillment, images, slots, etaByTicket] = await Promise.all([
     getSaleItemFulfillment(saleItems.map((i) => i.id)),

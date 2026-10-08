@@ -1,4 +1,5 @@
 import { adminDb } from "./business";
+import { getBookingRequestStates } from "./delivery-requests";
 
 // ---------------------------------------------------------------------------
 // Agenda = delivery_locations/delivery_availabilities/delivery_slots/
@@ -6,8 +7,10 @@ import { adminDb } from "./business";
 // Availabilities are the admin-published windows ("Tuesdays 10am-2pm at the
 // showroom"); slots are the 10-minute increments schema.sql requires
 // (CHECK ends_at = starts_at + interval '10 minutes') generated from them.
-// Clients have no self-service booking UI yet, so admin books a ticket into a
-// slot on their behalf (over WhatsApp/phone), same pattern as Pedidos manuales.
+// The owner books a ticket into a slot on a client's behalf (born confirmed);
+// clients send requests from /cuenta/entregas. With migration 020 one visit =
+// one slot (one or more tickets) and a client's visit stays "Por confirmar"
+// until the owner confirms it (lib/supabase/delivery-requests.ts).
 // ---------------------------------------------------------------------------
 
 function relation<T>(value: T | T[] | null | undefined): T | null {
@@ -30,6 +33,9 @@ export type SlotBooking = {
   ticketNumber: string;
   productName: string;
   clientName: string;
+  visitId: string;
+  /** BOOKED but not confirmed yet (migration 020): a client's request. */
+  pending: boolean;
 };
 
 export type SlotRow = {
@@ -37,7 +43,10 @@ export type SlotRow = {
   starts_at: string;
   ends_at: string;
   is_enabled: boolean;
+  /** First booking of the slot. */
   booking: SlotBooking | null;
+  /** Every booking of the slot: one visit, one or more tickets. */
+  bookings: SlotBooking[];
 };
 
 /** `day` is a business-local (America/Mazatlan, fixed UTC-7) YYYY-MM-DD calendar date. */
@@ -59,7 +68,7 @@ export async function listSlotsForDay(locationId: string, day: string): Promise<
   if (error) throw new Error(error.message);
 
   const slotIds = (slots ?? []).map((slot) => slot.id as string);
-  const bookingBySlot = new Map<string, SlotBooking>();
+  const bookingsBySlot = new Map<string, SlotBooking[]>();
   if (slotIds.length) {
     const { data: bookings, error: bookingsError } = await db
       .from("delivery_bookings")
@@ -67,16 +76,22 @@ export async function listSlotsForDay(locationId: string, day: string): Promise<
       .in("slot_id", slotIds)
       .in("status", ["BOOKED", "COMPLETED"]);
     if (bookingsError) throw new Error(bookingsError.message);
+    const states = await getBookingRequestStates((bookings ?? []).map((row) => row.id as string));
     for (const row of bookings ?? []) {
       const ticket = relation(row.tickets as unknown as { ticket_number: string; product_name_snapshot: string }[]);
       const client = relation(row.clients as unknown as { first_name: string; last_name: string }[]);
-      bookingBySlot.set(row.slot_id as string, {
+      const state = states?.get(row.id as string);
+      const list = bookingsBySlot.get(row.slot_id as string) ?? [];
+      bookingsBySlot.set(row.slot_id as string, list);
+      list.push({
         bookingId: row.id as string,
         status: row.status as string,
         deliveryType: row.delivery_type as string,
         ticketNumber: ticket?.ticket_number ?? "—",
         productName: ticket?.product_name_snapshot ?? "Producto eliminado",
         clientName: client ? `${client.first_name} ${client.last_name}`.trim() : "Clienta eliminada",
+        visitId: state?.visitId ?? (row.id as string),
+        pending: row.status === "BOOKED" && Boolean(state) && state?.confirmedAt === null,
       });
     }
   }
@@ -86,6 +101,7 @@ export async function listSlotsForDay(locationId: string, day: string): Promise<
     starts_at: slot.starts_at as string,
     ends_at: slot.ends_at as string,
     is_enabled: slot.is_enabled as boolean,
-    booking: bookingBySlot.get(slot.id as string) ?? null,
+    booking: bookingsBySlot.get(slot.id as string)?.[0] ?? null,
+    bookings: bookingsBySlot.get(slot.id as string) ?? [],
   }));
 }

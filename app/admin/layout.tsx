@@ -3,6 +3,7 @@ import { AdminSidebar } from "../../components/navigation/AdminSidebar";
 import { AdminTopbar } from "../../components/navigation/AdminTopbar";
 import { Card } from "../../components/ui/Card";
 import { getAdminSession } from "../../lib/supabase/auth";
+import { countPendingRequests } from "../../lib/supabase/delivery-requests";
 
 export const dynamic = "force-dynamic";
 
@@ -17,5 +18,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     return <main className="simple-page"><div className="shell narrow-shell"><Card className="empty-state"><span aria-hidden>LF</span><h3>Acceso no autorizado</h3><p>Tu sesión es válida, pero no tienes un perfil administrativo activo.</p><form action="/auth/signout" method="post"><button className="button button-secondary button-small" type="submit">Cerrar sesión</button></form></Card></div></main>;
   }
 
-  return <div className="admin-shell"><AdminSidebar/><div className="admin-main"><AdminTopbar displayName={session.admin.display_name} businessName="Luxury Finds"/>{children}</div></div>;
+  // Delivery requests waiting for the owner (migration 020); 0 without it or on any error.
+  const pendingRequests = await countPendingRequests();
+  return <div className="admin-shell"><AdminSidebar counts={{ "/admin/agenda": pendingRequests }}/><div className="admin-main"><AdminTopbar displayName={session.admin.display_name} businessName="Luxury Finds"/>{children}</div></div>;
 }

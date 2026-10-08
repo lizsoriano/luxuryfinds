@@ -33,7 +33,15 @@ export type RawInstallment = { id: string; payment_plan_id: string; installment_
 export type RawFee = { id: string; ticket_id: string; amount_cents: number; paid_cents: number; status: string };
 export type RawPayment = { id: string; ticket_id: string; amount_cents: number; method: string; effective_paid_at: string };
 export type RawProof = { id: string; ticket_id: string; reported_amount_cents: number; payment_method: string; status: string; rejection_reason: string | null; uploaded_at: string };
-export type RawBooking = { id: string; ticket_id: string; slot_id: string; delivery_type: string; status: string; booked_at: string; cancellation_reason: string | null };
+/**
+ * visit_id / confirmed_at / rejected_at come from migration 020 and are left
+ * undefined without it: then every BOOKED row is a confirmed appointment (019).
+ * BOOKED + confirmed_at === null = a request waiting for the owner.
+ */
+export type RawBooking = {
+  id: string; ticket_id: string; slot_id: string; delivery_type: string; status: string; booked_at: string; cancellation_reason: string | null;
+  visit_id?: string; confirmed_at?: string | null; rejected_at?: string | null;
+};
 export type RawSlotInfo = { id: string; starts_at: string; ends_at: string; location_name: string; location_address: string };
 export type RawNotification = { id: string; ticket_id: string | null; type: string; title: string; body: string; read_at: string | null; created_at: string };
 export type RawReservation = { id: string; ticket_id: string; status: string; expires_at: string };
@@ -60,7 +68,14 @@ export type BadgeTone = "neutral" | "rose" | "success" | "warning" | "danger";
 export type AccountBooking = {
   id: string; ticketId: string; status: string; deliveryType: string; bookedAt: string; cancellationReason: string | null;
   startsAt: string | null; endsAt: string | null; locationName: string | null; locationAddress: string | null;
+  visitId: string;
+  /** BOOKED but the owner has not confirmed it yet (migration 020). */
+  pending: boolean;
+  rejectedAt: string | null;
 };
+
+/** Where her delivery stands: request sent, confirmed ("puedes pasar"), or rejected (pick another time). */
+export type DeliveryRequestState = "PENDING" | "CONFIRMED" | "REJECTED";
 
 export type AccountLine = {
   key: string;
@@ -83,6 +98,10 @@ export type AccountLine = {
   hasIncident: boolean;
   eta: string | null;
   booking: AccountBooking | null;
+  /** Her delivery request for this ticket, when there is one to show. */
+  requestState: DeliveryRequestState | null;
+  /** The owner's last rejection, while the ticket waits for a new time. */
+  rejection: { reason: string | null; startsAt: string | null; locationName: string | null } | null;
   /** A ticket in READY_FOR_DELIVERY without an active appointment: she can book it herself. */
   canSchedule: boolean;
   /** A counter-sale item ready in La Paz: delivery_bookings only holds tickets, so it is coordinated by message. */
@@ -119,7 +138,16 @@ export type AccountAppointment = {
   key: string; bookingIds: string[]; ticketIds: string[]; startsAt: string; endsAt: string;
   locationName: string; locationAddress: string; deliveryType: string;
   lines: Array<{ name: string; imageUrl: string | null; ticketNumber: string | null; balanceCents: number }>;
+  /** Cancel / change online: a request always; a confirmed appointment until the day before. */
   canChange: boolean;
+  /** A request waiting for the owner ("Solicitud enviada · esperando confirmación"). */
+  pending: boolean;
+};
+
+/** A request the owner rejected whose products still wait for a new time. */
+export type AccountRejection = {
+  key: string; ticketIds: string[]; startsAt: string | null; locationName: string | null; reason: string | null; rejectedAt: string;
+  lines: Array<{ name: string; imageUrl: string | null }>;
 };
 
 export type AccountMoney = {
@@ -127,12 +155,13 @@ export type AccountMoney = {
   nextDue: { amountCents: number; dueAt: string; overdue: boolean } | null;
 };
 
-export type AccountAction = { tone: "urgent" | "ready" | "info" | "ok"; title: string; body: string; href: string; cta: string };
+export type AccountAction = { tone: "urgent" | "ready" | "pending" | "info" | "ok"; title: string; body: string; href: string; cta: string };
 
 export type AccountOverview = {
   purchases: AccountPurchase[];
   plans: AccountPlan[];
   appointments: AccountAppointment[];
+  rejections: AccountRejection[];
   money: AccountMoney;
   notifications: RawNotification[];
   unreadCount: number;
@@ -183,7 +212,15 @@ export function statusTone(line: Pick<AccountLine, "status" | "hasIncident">): B
 }
 
 /** One human sentence: where it is now and what happens next. */
-export function statusPhrase(line: Pick<AccountLine, "status" | "hasIncident" | "source" | "booking" | "eta">) {
+export function statusPhrase(line: Pick<AccountLine, "status" | "hasIncident" | "source" | "booking" | "eta"> & Partial<Pick<AccountLine, "rejection">>) {
+  if (!line.hasIncident && line.status === "READY_FOR_DELIVERY" && line.booking?.status === "BOOKED" && line.booking.pending) {
+    return line.booking.startsAt
+      ? `Solicitud enviada: apartamos tu horario del ${formatDayLong(line.booking.startsAt)} a las ${formatTimeOnly(line.booking.startsAt)}. Espera la confirmación; te avisamos cuando puedas pasar.`
+      : "Solicitud enviada: espera la confirmación; te avisamos cuando puedas pasar.";
+  }
+  if (!line.hasIncident && line.status === "READY_FOR_DELIVERY" && line.rejection) {
+    return `No pudimos confirmar tu horario${line.rejection.reason ? ` (${line.rejection.reason})` : ""}. Elige otro cuando gustes.`;
+  }
   if (line.status === "CANCELLED" || line.status === "CANCELLED_INCIDENT") return "Esta compra se canceló. Si tienes dudas sobre tus pagos, escríbenos y lo revisamos contigo.";
   if (line.hasIncident && line.status !== "DELIVERED") return "Hubo un detalle con tu producto al recibirlo en La Paz. Te contactaremos para darte opciones (reponerlo, cambiarlo o devolver tu dinero).";
   switch (line.status) {
@@ -194,7 +231,7 @@ export function statusPhrase(line: Pick<AccountLine, "status" | "hasIncident" | 
     case "IN_TRANSIT": return line.eta ? `Tu pedido ya está en paquetería rumbo a La Paz. Llegada estimada: ${formatDayLong(line.eta)}.` : "Tu pedido ya está en paquetería rumbo a La Paz. Te avisamos cuando llegue.";
     case "RECEIVED_LA_PAZ": return "Tu pedido llegó a nuestra sucursal de La Paz. Lo revisamos y te avisamos cuando esté listo para entrega.";
     case "READY_FOR_DELIVERY": return line.source === "SALE_ITEM" ? "¡Ya está listo en La Paz! Escríbenos para coordinar tu entrega." : "¡Ya está listo en La Paz! Agenda tu entrega cuando gustes.";
-    case "DELIVERY_SCHEDULED": return line.booking?.startsAt ? `Tu entrega está agendada para el ${formatDayLong(line.booking.startsAt)} a las ${formatTimeOnly(line.booking.startsAt)}.` : "Tu entrega está agendada.";
+    case "DELIVERY_SCHEDULED": return line.booking?.startsAt ? `Cita confirmada: puedes pasar el ${formatDayLong(line.booking.startsAt)} a las ${formatTimeOnly(line.booking.startsAt)}.` : "Cita confirmada: ya puedes pasar en el horario acordado.";
     case "DELIVERED": return "Entregado. ¡Gracias por tu compra!";
     default: return statusLabel(line.status);
   }
@@ -222,13 +259,16 @@ export function formatDayShort(value: string) { return capitalize(DAY_SHORT.form
 export function formatDateShort(value: string) { return DATE_SHORT.format(toDate(value)).replace(/\./g, ""); }
 export function formatTimeOnly(value: string) { return TIME_ONLY.format(toDate(value)); }
 
-/** Mirrors client_cancel_delivery (migración 019): changeable while the slot is on a later local day. */
+/** Mirrors client_cancel_delivery (019/020): a confirmed appointment is changeable while the slot is on a later local day. */
 export function isChangeable(startsAt: string, now = new Date()) {
   return localDay(startsAt) > localDay(now);
 }
 
 // ---------------------------------------------------------------------------
 // Scheduler helper: start times with `count` consecutive free 10-minute slots.
+// With migration 020 a visit takes ONE slot whatever she brings, so the
+// scheduler asks for count = 1 (= every free slot). Only the 019 flow, while
+// 020 is not applied, still needs one consecutive slot per product.
 // The SQL function re-checks everything; this only decides what to offer.
 // ---------------------------------------------------------------------------
 
@@ -260,14 +300,31 @@ export function buildAccountOverview(raw: AccountRaw, image: (key: string | null
   const slotById = new Map(raw.slots.map((slot) => [slot.id, slot]));
   const bookingView = (b: RawBooking): AccountBooking => {
     const slot = slotById.get(b.slot_id);
-    return { id: b.id, ticketId: b.ticket_id, status: b.status, deliveryType: b.delivery_type, bookedAt: b.booked_at, cancellationReason: b.cancellation_reason, startsAt: slot?.starts_at ?? null, endsAt: slot?.ends_at ?? null, locationName: slot?.location_name ?? null, locationAddress: slot?.location_address ?? null };
+    return {
+      id: b.id, ticketId: b.ticket_id, status: b.status, deliveryType: b.delivery_type, bookedAt: b.booked_at, cancellationReason: b.cancellation_reason,
+      startsAt: slot?.starts_at ?? null, endsAt: slot?.ends_at ?? null, locationName: slot?.location_name ?? null, locationAddress: slot?.location_address ?? null,
+      visitId: b.visit_id ?? b.id,
+      // Strictly null: undefined means migration 020 is not applied (then it is a confirmed appointment).
+      pending: b.status === "BOOKED" && b.confirmed_at === null,
+      rejectedAt: b.rejected_at ?? null,
+    };
   };
   const activeBooking = new Map<string, AccountBooking>();
   const doneBooking = new Map<string, AccountBooking>();
-  for (const b of raw.bookings) {
+  const lastRejection = new Map<string, AccountBooking>();
+  // Newest first, so the first rejection seen per ticket is the latest one.
+  for (const b of [...raw.bookings].sort((x, y) => y.booked_at.localeCompare(x.booked_at))) {
     if (b.status === "BOOKED") activeBooking.set(b.ticket_id, bookingView(b));
     else if (b.status === "COMPLETED" && !doneBooking.has(b.ticket_id)) doneBooking.set(b.ticket_id, bookingView(b));
+    else if (b.status === "CANCELLED" && b.rejected_at && !lastRejection.has(b.ticket_id)) lastRejection.set(b.ticket_id, bookingView(b));
   }
+  // A rejection is news while the ticket is still waiting for a new time (and for two weeks at most).
+  const openRejection = (ticketId: string, ready: boolean) => {
+    const rejected = lastRejection.get(ticketId);
+    if (!rejected?.rejectedAt || !ready || activeBooking.has(ticketId)) return null;
+    if (now.getTime() - new Date(rejected.rejectedAt).getTime() > 14 * 86400000) return null;
+    return rejected;
+  };
   const planByTicket = new Map(raw.plans.map((plan) => [plan.ticket_id, plan]));
   const reservationByTicket = new Map<string, RawReservation>();
   for (const r of raw.reservations) if (!reservationByTicket.has(r.ticket_id)) reservationByTicket.set(r.ticket_id, r);
@@ -283,6 +340,9 @@ export function buildAccountOverview(raw: AccountRaw, image: (key: string | null
     const paid = n(t.paid_principal_cents);
     const booking = activeBooking.get(t.id) ?? doneBooking.get(t.id) ?? null;
     const reservation = reservationByTicket.get(t.id);
+    const rejected = openRejection(t.id, t.logistics_status === "READY_FOR_DELIVERY" && !NO_BALANCE_FINANCIAL.has(t.financial_status));
+    const active = activeBooking.get(t.id);
+    const requestState: DeliveryRequestState | null = active ? (active.pending ? "PENDING" : "CONFIRMED") : rejected ? "REJECTED" : null;
     return {
       key: `t-${t.id}`, source: "TICKET", ticketId: t.id, ticketNumber: t.ticket_number,
       name: t.product_name_snapshot, variant: t.variant_name_snapshot, quantity: n(t.quantity), unitLabel: null,
@@ -293,6 +353,8 @@ export function buildAccountOverview(raw: AccountRaw, image: (key: string | null
       financialStatus: t.financial_status, hasIncident: Boolean(t.incident_reason && t.incident_reason.trim()),
       eta: ["ORDERED", "IN_TRANSIT"].includes(t.logistics_status) ? raw.etaByTicket[t.id] ?? null : null,
       booking,
+      requestState,
+      rejection: rejected ? { reason: rejected.cancellationReason, startsAt: rejected.startsAt, locationName: rejected.locationName } : null,
       canSchedule: t.logistics_status === "READY_FOR_DELIVERY" && !activeBooking.has(t.id) && !NO_BALANCE_FINANCIAL.has(t.financial_status),
       scheduleByMessage: false,
       reservation: reservation ? { status: reservation.status, expiresAt: reservation.expires_at } : null,
@@ -313,7 +375,7 @@ export function buildAccountOverview(raw: AccountRaw, image: (key: string | null
         imageUrl: image(item.product_id ? raw.imageByProduct[item.product_id] : null),
         status: order.status === "CANCELLED" ? "CANCELLED" : "PENDING_CONFIRMATION", statusUpdatedAt: order.created_at,
         unitPriceCents: n(item.unit_price_cents), discountCents: 0, totalCents: total, paidCents: 0, balanceCents: 0,
-        financialStatus: null, hasIncident: false, eta: null, booking: null, canSchedule: false, scheduleByMessage: false, reservation: null, planId: null,
+        financialStatus: null, hasIncident: false, eta: null, booking: null, requestState: null, rejection: null, canSchedule: false, scheduleByMessage: false, reservation: null, planId: null,
       };
     });
     // Tickets whose order_item was not returned (defensive): still hers, still shown.
@@ -355,12 +417,12 @@ export function buildAccountOverview(raw: AccountRaw, image: (key: string | null
         imageUrl: image(item.product_id ? raw.imageByProduct[item.product_id] : null),
         status, statusUpdatedAt: physical?.updated_at ?? sale.sold_at,
         unitPriceCents: n(item.unit_price_cents), discountCents: 0, totalCents: total, paidCents: cancelled ? 0 : total, balanceCents: 0,
-        financialStatus: cancelled ? null : "PAID", hasIncident: false, eta: null, booking: null,
+        financialStatus: cancelled ? null : "PAID", hasIncident: false, eta: null, booking: null, requestState: null, rejection: null,
         canSchedule: false, scheduleByMessage: status === "READY_FOR_DELIVERY", reservation: null, planId: null,
       };
     });
     if (!lines.length) {
-      lines.push({ key: `s-${sale.id}`, source: "SALE_ITEM", ticketId: null, ticketNumber: null, name: sale.concept?.trim() || "Compra en tienda", variant: null, quantity: 1, unitLabel: null, imageUrl: null, status: cancelled ? "CANCELLED" : "DELIVERED", statusUpdatedAt: sale.sold_at, unitPriceCents: n(sale.total_cents), discountCents: 0, totalCents: n(sale.total_cents), paidCents: cancelled ? 0 : n(sale.total_cents), balanceCents: 0, financialStatus: cancelled ? null : "PAID", hasIncident: false, eta: null, booking: null, canSchedule: false, scheduleByMessage: false, reservation: null, planId: null });
+      lines.push({ key: `s-${sale.id}`, source: "SALE_ITEM", ticketId: null, ticketNumber: null, name: sale.concept?.trim() || "Compra en tienda", variant: null, quantity: 1, unitLabel: null, imageUrl: null, status: cancelled ? "CANCELLED" : "DELIVERED", statusUpdatedAt: sale.sold_at, unitPriceCents: n(sale.total_cents), discountCents: 0, totalCents: n(sale.total_cents), paidCents: cancelled ? 0 : n(sale.total_cents), balanceCents: 0, financialStatus: cancelled ? null : "PAID", hasIncident: false, eta: null, booking: null, requestState: null, rejection: null, canSchedule: false, scheduleByMessage: false, reservation: null, planId: null });
     }
     const total = cancelled ? 0 : n(sale.total_cents);
     purchases.push({
@@ -393,20 +455,36 @@ export function buildAccountOverview(raw: AccountRaw, image: (key: string | null
   for (const b of raw.bookings.filter((row) => row.status === "BOOKED")) {
     const view = bookingView(b);
     if (!view.startsAt) continue;
-    const key = `${view.locationName}|${localDay(view.startsAt)}|${b.delivery_type}`;
+    // With 020 one visit = one slot (visit_id); before it, 019 bookings of the same place/day/mode read as one visit.
+    const key = b.visit_id ? `v|${b.visit_id}` : `${view.locationName}|${localDay(view.startsAt)}|${b.delivery_type}`;
     const line = lineByTicket.get(b.ticket_id);
     const existing = appointmentsMap.get(key);
     const entry = { name: line?.name ?? "Tu pedido", imageUrl: line?.imageUrl ?? null, ticketNumber: line?.ticketNumber ?? null, balanceCents: line?.balanceCents ?? 0 };
+    // A request was never confirmed: she can always withdraw or move it.
+    const changeable = view.pending || isChangeable(view.startsAt, now);
     if (existing) {
       existing.bookingIds.push(b.id); existing.ticketIds.push(b.ticket_id); existing.lines.push(entry);
       if (view.startsAt < existing.startsAt) existing.startsAt = view.startsAt;
       if ((view.endsAt ?? "") > existing.endsAt) existing.endsAt = view.endsAt ?? existing.endsAt;
-      existing.canChange = existing.canChange && isChangeable(view.startsAt, now);
+      existing.canChange = existing.canChange && changeable;
+      existing.pending = existing.pending || view.pending;
     } else {
-      appointmentsMap.set(key, { key: b.id, bookingIds: [b.id], ticketIds: [b.ticket_id], startsAt: view.startsAt, endsAt: view.endsAt ?? view.startsAt, locationName: view.locationName ?? "Punto de entrega", locationAddress: view.locationAddress ?? "", deliveryType: b.delivery_type, lines: [entry], canChange: isChangeable(view.startsAt, now) });
+      appointmentsMap.set(key, { key: b.id, bookingIds: [b.id], ticketIds: [b.ticket_id], startsAt: view.startsAt, endsAt: view.endsAt ?? view.startsAt, locationName: view.locationName ?? "Punto de entrega", locationAddress: view.locationAddress ?? "", deliveryType: b.delivery_type, lines: [entry], canChange: changeable, pending: view.pending });
     }
   }
   const appointments = [...appointmentsMap.values()].sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+
+  // Rejected requests whose products still wait for a new time, one card per rejected visit.
+  const rejectionsMap = new Map<string, AccountRejection>();
+  for (const line of allLines) {
+    if (!line.ticketId || !line.rejection) continue;
+    const rejected = lastRejection.get(line.ticketId);
+    if (!rejected?.rejectedAt) continue;
+    const existing = rejectionsMap.get(rejected.visitId);
+    if (existing) { existing.ticketIds.push(line.ticketId); existing.lines.push({ name: line.name, imageUrl: line.imageUrl }); continue; }
+    rejectionsMap.set(rejected.visitId, { key: rejected.visitId, ticketIds: [line.ticketId], startsAt: rejected.startsAt, locationName: rejected.locationName, reason: rejected.cancellationReason, rejectedAt: rejected.rejectedAt, lines: [{ name: line.name, imageUrl: line.imageUrl }] });
+  }
+  const rejections = [...rejectionsMap.values()].sort((a, b) => b.rejectedAt.localeCompare(a.rejectedAt));
 
   const counted = purchases.filter((purchase) => purchase.state === "ACTIVE" || purchase.state === "DELIVERED");
   const nextInstallment = plans.filter((plan) => plan.status === "ACTIVE").flatMap((plan) => plan.installments.filter((i) => i.status !== "PAID")).sort((a, b) => a.dueAt.localeCompare(b.dueAt))[0];
@@ -420,7 +498,7 @@ export function buildAccountOverview(raw: AccountRaw, image: (key: string | null
 
   const notifications = [...raw.notifications].sort((a, b) => b.created_at.localeCompare(a.created_at));
   return {
-    purchases, plans, appointments, money, notifications,
+    purchases, plans, appointments, rejections, money, notifications,
     unreadCount: notifications.filter((item) => !item.read_at).length,
     proofs: raw.proofs.map(proofView).sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt)),
     schedulable: allLines.filter((line) => line.canSchedule),
@@ -444,16 +522,22 @@ export function nextActions(overview: AccountOverview, now = new Date()): Accoun
   }
   const rejected = overview.proofs.find((proof) => proof.status === "REJECTED" && now.getTime() - new Date(proof.uploadedAt).getTime() < 14 * 86400000);
   if (rejected) actions.push({ tone: "urgent", title: "Revisa tu comprobante", body: rejected.rejectionReason ? `No pudimos validarlo: ${rejected.rejectionReason}` : "No pudimos validar tu comprobante. Puedes enviarlo de nuevo.", href: "/cuenta/pagos#comprobantes", cta: "Ver comprobante" });
-  if (overview.schedulable.length) {
+  // Confirmed appointment first ("puedes pasar"), then what she still has to do.
+  const confirmed = overview.appointments.find((a) => !a.pending);
+  if (confirmed) actions.push({ tone: "ready", title: "Cita confirmada · puedes pasar", body: `${capitalize(formatDayLong(confirmed.startsAt))}, ${formatTimeOnly(confirmed.startsAt)} en ${confirmed.locationName}${confirmed.deliveryType === "DIDI" ? " · Envío por DiDi" : ""}.`, href: "/cuenta/entregas", cta: "Ver mi cita" });
+  const rejection = overview.rejections[0];
+  if (rejection) {
+    actions.push({ tone: "ready", title: "Elige otro horario para tu entrega", body: `No pudimos confirmar ${rejection.startsAt ? `tu horario del ${formatDayLong(rejection.startsAt)}` : "tu horario"}${rejection.reason ? `: ${rejection.reason}` : "."} Tu pedido sigue listo.`, href: "/cuenta/entregas#agendar", cta: "Elegir otro horario" });
+  } else if (overview.schedulable.length) {
     const count = overview.schedulable.length;
     actions.push({ tone: "ready", title: count === 1 ? "¡Tu pedido está listo para entrega!" : `¡${count} productos están listos para entrega!`, body: "Elige el lugar, el día y la hora que te queden mejor.", href: "/cuenta/entregas#agendar", cta: "Agendar mi entrega" });
   }
+  const pendingRequest = overview.appointments.find((a) => a.pending);
+  if (pendingRequest) actions.push({ tone: "pending", title: "Solicitud enviada · esperando confirmación", body: `Apartamos tu horario: ${formatDayLong(pendingRequest.startsAt)}, ${formatTimeOnly(pendingRequest.startsAt)} en ${pendingRequest.locationName}. Te avisamos cuando puedas pasar.`, href: "/cuenta/entregas", cta: "Ver mi solicitud" });
   const byMessage = overview.purchases.flatMap((p) => p.lines).filter((line) => line.scheduleByMessage);
   if (byMessage.length) actions.push({ tone: "ready", title: byMessage.length === 1 ? "¡Tu compra está lista en La Paz!" : `¡${byMessage.length} productos están listos en La Paz!`, body: "Escríbenos para coordinar el día y la hora de tu entrega.", href: "/contacto", cta: "Coordinar mi entrega" });
   const reservation = overview.purchases.flatMap((p) => p.lines).filter((line) => line.reservation?.status === "ACTIVE").sort((a, b) => (a.reservation!.expiresAt).localeCompare(b.reservation!.expiresAt))[0];
   if (reservation) actions.push({ tone: "info", title: `Liquida tu apartado antes del ${formatDayLong(reservation.reservation!.expiresAt)}`, body: `${reservation.name}: saldo de ${moneyText(reservation.balanceCents)}.`, href: "/cuenta/pagos", cta: "Ver cómo pagar" });
-  const appointment = overview.appointments[0];
-  if (appointment) actions.push({ tone: "info", title: `Tu entrega: ${formatDayLong(appointment.startsAt)}, ${formatTimeOnly(appointment.startsAt)}`, body: `${appointment.locationName}${appointment.deliveryType === "DIDI" ? " · Envío por DiDi" : ""}.`, href: "/cuenta/entregas", cta: "Ver mi cita" });
   if (!overdue.length && money.nextDue) actions.push({ tone: "info", title: `Tu próximo pago: ${moneyText(money.nextDue.amountCents)}`, body: `Vence el ${formatDayLong(money.nextDue.dueAt)}.`, href: "/cuenta/pagos", cta: "Ver mis pagos" });
   else if (!overdue.length && !money.nextDue && money.owedCents > 0) actions.push({ tone: "info", title: `Saldo pendiente: ${moneyText(money.owedCents)}`, body: "Cuando pagues, sube tu comprobante para registrarlo.", href: "/cuenta/pagos", cta: "Pagar o subir comprobante" });
   if (!actions.length) {

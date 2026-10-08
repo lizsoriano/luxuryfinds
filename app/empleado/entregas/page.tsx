@@ -38,7 +38,10 @@ export default async function StaffDeliveriesPage({ searchParams }: { searchPara
   const tomorrow = addDays(today, 1);
   const day =
     requested === "hoy" ? today : requested === "manana" ? tomorrow : /^\d{4}-\d{2}-\d{2}$/.test(requested) ? requested : null;
-  const deliveries = day ? result.deliveries.filter((delivery) => delivery.day === day) : result.deliveries;
+  const inRange = day ? result.deliveries.filter((delivery) => delivery.day === day) : result.deliveries;
+  // Client requests the owner has not confirmed (migration 020) are listed apart and never delivered.
+  const deliveries = inRange.filter((delivery) => !delivery.pendingConfirmation);
+  const awaitingOwner = inRange.filter((delivery) => delivery.pendingConfirmation && delivery.day >= today);
 
   const byDay = new Map<string, typeof deliveries>();
   for (const delivery of deliveries) byDay.set(delivery.day, [...(byDay.get(delivery.day) ?? []), delivery]);
@@ -112,6 +115,20 @@ export default async function StaffDeliveriesPage({ searchParams }: { searchPara
           <p>Las citas que la dueña agenda en la Agenda aparecen aquí.</p>
         </div>
       )}
+      {awaitingOwner.length ? (
+        <section className="staff-day">
+          <h2 className="staff-day-title">
+            Por confirmar por la dueña
+            <small>{awaitingOwner.length} solicitud(es)</small>
+          </h2>
+          <p className="staff-hint">Horarios que apartaron las clientas. Aparecen arriba, listos para entregar, cuando la dueña los confirme.</p>
+          <div className="staff-list">
+            {awaitingOwner.map((delivery) => (
+              <DeliveryCard key={delivery.id} delivery={delivery} />
+            ))}
+          </div>
+        </section>
+      ) : null}
       {result.capped ? <p className="staff-hint">Se muestran las primeras 500 citas pendientes.</p> : null}
     </main>
   );

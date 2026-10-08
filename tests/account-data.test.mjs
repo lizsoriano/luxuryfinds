@@ -12,6 +12,8 @@ const mocks = {
   "\0auth": "export const getClientProfile = async () => globalThis.__session;",
   "\0business": "export const adminDb = () => globalThis.__admin; export const adminStorage = () => ({ from: () => ({ getPublicUrl: (key) => ({ data: { publicUrl: 'https://img.test/' + key } }) }) }); export const PRODUCT_IMAGE_BUCKET = 'oskinmx-catalog';",
   "\0reservations": "export const getClientReservations = async (id) => globalThis.__reservations(id);",
+  // Migration 020 request states; null (= not applied) unless a test sets globalThis.__requestStates.
+  "\0requests": "export const getBookingRequestStates = async (ids) => globalThis.__requestStates ? new Map(ids.filter((id) => globalThis.__requestStates[id]).map((id) => [id, globalThis.__requestStates[id]])) : null;",
   "\0sales": "export const related = async (table, select, column, ids) => globalThis.__related(table, select, column, ids); export const getSaleItemFulfillment = async (ids) => ({ rows: globalThis.__fulfillment.filter((r) => ids.includes(r.id)), available: true });",
 };
 await build({
@@ -24,6 +26,7 @@ await build({
       if (source === "./business") return "\0business";
       if (source === "./incoming-reservations") return "\0reservations";
       if (source === "./sales") return "\0sales";
+      if (source === "./delivery-requests") return "\0requests";
     },
     load(id) {
       if (id === "\0entry") return `export * from ${JSON.stringify(resolve(root, "lib/supabase/account.ts"))}; export * from ${JSON.stringify(resolve(root, "lib/account-view.ts"))};`;
@@ -171,6 +174,61 @@ test("appointments group her bookings and follow the day-before rule", () => {
   assert.equal(view.appointments[0].canChange, true);
   assert.equal(view.schedulable.length, 0);
   assert.equal(api.isChangeable(now.toISOString(), now), false);
+});
+
+test("delivery requests (migration 020): pending, confirmed and rejected read as three states", () => {
+  const raw = base();
+  raw.orders = [order("o1")];
+  raw.orderItems = [1, 2, 3, 4].map((k) => ({ id: `oi${k}`, order_id: "o1", product_id: null, quantity: 1, unit_price_cents: 1 }));
+  raw.tickets = [
+    ticket(1, { order_item_id: "oi1", logistics_status: "READY_FOR_DELIVERY" }),
+    ticket(2, { order_item_id: "oi2", logistics_status: "READY_FOR_DELIVERY" }),
+    ticket(3, { order_item_id: "oi3", logistics_status: "DELIVERY_SCHEDULED" }),
+    ticket(4, { order_item_id: "oi4", logistics_status: "READY_FOR_DELIVERY" }),
+  ];
+  const start = days(3);
+  const end = new Date(new Date(start).getTime() + 600000).toISOString();
+  raw.slots = [{ id: "s1", starts_at: start, ends_at: end, location_name: "Punto", location_address: "Calle" }, { id: "s2", starts_at: days(4), ends_at: days(4), location_name: "Indeco", location_address: "" }, { id: "s0", starts_at: days(1), ends_at: days(1), location_name: "Tec", location_address: "" }];
+  const row = (id, t, slot, status, extra) => ({ id, ticket_id: t, slot_id: slot, delivery_type: "PICKUP", status, booked_at: days(-1), cancellation_reason: null, ...extra });
+  raw.bookings = [
+    // One visit, two tickets, ONE slot, pending.
+    row("b1", "t1", "s1", "BOOKED", { visit_id: "v1", confirmed_at: null }),
+    row("b2", "t2", "s1", "BOOKED", { visit_id: "v1", confirmed_at: null }),
+    // Confirmed.
+    row("b3", "t3", "s2", "BOOKED", { visit_id: "v3", confirmed_at: days(-1) }),
+    // Rejected by the owner.
+    row("b4", "t4", "s0", "CANCELLED", { visit_id: "v4", confirmed_at: null, rejected_at: days(-0.1), cancellation_reason: "No estaré ese día" }),
+  ];
+  const view = api.buildAccountOverview(raw, img, now);
+  assert.equal(view.appointments.length, 2);
+  const pending = view.appointments.find((a) => a.pending);
+  assert.deepEqual(pending.bookingIds.sort(), ["b1", "b2"]);
+  assert.equal(pending.startsAt, start);
+  assert.equal(pending.endsAt, end, "one 10-minute window for both products");
+  assert.equal(pending.canChange, true);
+  assert.equal(view.appointments.find((a) => !a.pending).bookingIds[0], "b3");
+  const lines = Object.fromEntries(view.purchases[0].lines.map((l) => [l.ticketId, l]));
+  assert.equal(lines.t1.requestState, "PENDING");
+  assert.equal(lines.t3.requestState, "CONFIRMED");
+  assert.equal(lines.t4.requestState, "REJECTED");
+  assert.equal(lines.t4.rejection.reason, "No estaré ese día");
+  assert.equal(lines.t1.canSchedule, false, "a pending ticket is not offered again");
+  assert.equal(lines.t4.canSchedule, true, "a rejected ticket can pick another time");
+  assert.match(api.statusPhrase(lines.t1), /^Solicitud enviada/);
+  assert.match(api.statusPhrase(lines.t3), /^Cita confirmada: puedes pasar/);
+  assert.match(api.statusPhrase(lines.t4), /No pudimos confirmar tu horario \(No estaré ese día\)/);
+  assert.equal(view.rejections.length, 1);
+  const actions = api.nextActions(view, now);
+  assert.ok(actions.some((a) => a.title === "Cita confirmada · puedes pasar" && a.tone === "ready"));
+  assert.ok(actions.some((a) => a.title === "Solicitud enviada · esperando confirmación" && a.tone === "pending"));
+  assert.ok(actions.some((a) => a.cta === "Elegir otro horario"));
+  // Without 020 (no confirmed_at on the rows) a BOOKED row is a confirmed appointment, as with 019.
+  const legacy = base();
+  legacy.orders = raw.orders; legacy.orderItems = raw.orderItems; legacy.tickets = raw.tickets; legacy.slots = raw.slots;
+  legacy.bookings = [row("b1", "t1", "s1", "BOOKED")];
+  const legacyView = api.buildAccountOverview(legacy, img, now);
+  assert.equal(legacyView.appointments[0].pending, false);
+  assert.equal(legacyView.rejections.length, 0);
 });
 
 test("scheduler only offers runs of consecutive free slots", () => {
