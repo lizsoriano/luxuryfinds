@@ -125,7 +125,21 @@ export default async function StaffDeliveryPage({ params }: { params: Promise<{ 
           {delivery.locationAddress ? ` · ${delivery.locationAddress}` : ""}
         </p>
       </div>
-      {detail.confirmAvailable ? (
+      {delivery.pendingConfirmation ? (
+        <>
+          <ul className="staff-card staff-panel staff-delivery-items">
+            {delivery.items.map((item) => (
+              <li key={item.ticketId}>
+                {item.quantity} × {item.productName} · saldo {formatMoney(item.balanceCents)}
+              </li>
+            ))}
+          </ul>
+          <div className="staff-note">
+            <strong>Por confirmar por la dueña.</strong> La clienta apartó este horario, pero todavía no es una cita confirmada: no se
+            entrega hasta que la dueña la confirme en su Agenda.
+          </div>
+        </>
+      ) : detail.confirmAvailable ? (
         <DeliveryFlow delivery={delivery} bookingId={id} />
       ) : (
         <>

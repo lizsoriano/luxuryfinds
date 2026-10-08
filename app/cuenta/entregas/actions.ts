@@ -6,6 +6,7 @@ import { failure, ok, type ActionState } from "../../../lib/actions";
 import { CLIENT_BOOKING_MIGRATION, isClientBookingAvailable } from "../../../lib/supabase/account-delivery";
 import { getClientProfile } from "../../../lib/supabase/auth";
 import { adminDb } from "../../../lib/supabase/business";
+import { getBookingRequestStates, isDeliveryRequestsAvailable } from "../../../lib/supabase/delivery-requests";
 import { sendTelegramMessage } from "../../../lib/telegram/send";
 
 // Client self-service delivery booking. The session is verified first
@@ -33,6 +34,7 @@ function revalidateAll() {
   revalidatePath("/cuenta/entregas");
   revalidatePath("/cuenta/compras");
   revalidatePath("/admin/agenda");
+  revalidatePath("/admin", "layout"); // "Agenda" badge with the requests waiting for the owner
   revalidatePath("/empleado/entregas");
 }
 
@@ -51,6 +53,15 @@ async function notify(clientId: string, type: "DELIVERY_BOOKED" | "DELIVERY_CANC
   }
 }
 
+async function telegramOnly(clientId: string, text: string) {
+  try {
+    const { data } = await adminDb().from("clients").select("telegram_chat_id").eq("id", clientId).maybeSingle();
+    if (data?.telegram_chat_id) await sendTelegramMessage(data.telegram_chat_id as string, text);
+  } catch {
+    // Best-effort.
+  }
+}
+
 export async function bookDeliveryAction(_state: ActionState, formData: FormData): Promise<ActionState> {
   const { user, profile } = await getClientProfile();
   if (!profile || profile.status !== "ACTIVE") return failure("Tu cuenta no está activa. Escríbenos para ayudarte.");
@@ -62,6 +73,9 @@ export async function bookDeliveryAction(_state: ActionState, formData: FormData
   if (!UUID.test(slotId)) return failure("Elige un día y un horario.");
   if (!["PICKUP", "DIDI"].includes(deliveryType)) return failure("Elige si recoges o si lo enviamos por DiDi.");
   if (!(await isClientBookingAvailable())) return failure(`El agendado en línea aún no está activo (falta aplicar ${CLIENT_BOOKING_MIGRATION}). Escríbenos para agendar.`);
+  // With 020 the SQL function leaves a REQUEST (one 10-minute window) and writes
+  // the in-app notice itself; without it, 019 confirms right away.
+  const requests = await isDeliveryRequestsAvailable();
 
   const db = adminDb();
   const { data, error } = await db.rpc("client_book_delivery", {
@@ -85,6 +99,14 @@ export async function bookDeliveryAction(_state: ActionState, formData: FormData
   const place = location ? `${location.name} (${location.address})` : "el punto de entrega";
   const mode = deliveryType === "DIDI" ? "Envío por DiDi" : "Recoger";
   const list = (tickets ?? []).map((t) => `${t.ticket_number} · ${t.product_name_snapshot}`);
+  if (requests) {
+    await telegramOnly(
+      user.id,
+      `🕒 <b>${reschedule ? "Nuevo horario solicitado" : "Solicitud recibida"}: espera la confirmación</b>\n${escapeHtml(when)} (10 minutos)\n${escapeHtml(place)} · ${mode}\n${list.map(escapeHtml).join("\n")}\nAún no es una cita confirmada: te avisamos cuando puedas pasar.`,
+    );
+    revalidateAll();
+    return ok(`Apartamos tu horario del ${when} en ${location?.name ?? "el punto elegido"} (10 minutos para ${booked.length === 1 ? "tu producto" : `tus ${booked.length} productos`}).`);
+  }
   await notify(
     user.id,
     "DELIVERY_BOOKED",
@@ -108,16 +130,22 @@ export async function cancelDeliveryAction(_state: ActionState, formData: FormDa
   const { data, error } = await db.rpc("client_cancel_delivery", { p_client_id: user.id, p_booking_ids: bookingIds });
   if (error) return failure(friendly(error, "No pudimos cancelar tu cita. Intenta de nuevo."));
   const cancelled = (data ?? []) as Array<{ r_booking_id: string; r_ticket_id: string }>;
-  const { data: tickets } = await db.from("tickets").select("ticket_number").eq("client_id", user.id).in("id", cancelled.map((row) => row.r_ticket_id));
+  const [{ data: tickets }, states] = await Promise.all([
+    db.from("tickets").select("ticket_number").eq("client_id", user.id).in("id", cancelled.map((row) => row.r_ticket_id)),
+    // Ids returned by the function: already verified as hers.
+    getBookingRequestStates(cancelled.map((row) => row.r_booking_id)).catch(() => null),
+  ]);
+  const wasRequest = Boolean(states && cancelled.some((row) => states.get(row.r_booking_id)?.confirmedAt === null));
   const numbers = (tickets ?? []).map((t) => t.ticket_number as string).join(", ");
+  const what = wasRequest ? "solicitud de entrega" : "cita de entrega";
   await notify(
     user.id,
     "DELIVERY_CANCELLED",
-    "Cita cancelada",
-    `Cancelaste tu cita de entrega${numbers ? ` (${numbers})` : ""}. Tu pedido sigue listo: agenda otra cuando gustes.`,
-    `⚠️ <b>Cita cancelada por la clienta</b>\n${escapeHtml(numbers)}`,
+    wasRequest ? "Solicitud cancelada" : "Cita cancelada",
+    `Cancelaste tu ${what}${numbers ? ` (${numbers})` : ""}. Tu pedido sigue listo: agenda otra cuando gustes.`,
+    `⚠️ <b>${wasRequest ? "Solicitud cancelada" : "Cita cancelada"} por la clienta</b>\n${escapeHtml(numbers)}`,
     cancelled.length === 1 ? cancelled[0].r_ticket_id : null,
   );
   revalidateAll();
-  return ok("Cancelamos tu cita. Tu pedido sigue listo: agenda otra cuando gustes.");
+  return ok(wasRequest ? "Cancelamos tu solicitud y liberamos el horario. Tu pedido sigue listo: elige otro cuando gustes." : "Cancelamos tu cita. Tu pedido sigue listo: agenda otra cuando gustes.");
 }

@@ -32,7 +32,7 @@ export default async function StaffConfirmPage() {
     );
   }
 
-  const due = deliveries.deliveries.filter((delivery) => delivery.day <= deliveries.today);
+  const due = deliveries.deliveries.filter((delivery) => delivery.day <= deliveries.today && !delivery.pendingConfirmation);
 
   return (
     <main className="staff-content">

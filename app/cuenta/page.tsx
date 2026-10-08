@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Icon } from "../../components/account/AccountIcons";
 import { ActionCard, AppointmentWhen, MoneySummary, PurchaseCard, SectionHead } from "../../components/account/AccountUi";
 import { TelegramCard } from "../../components/account/TelegramCard";
+import { Badge } from "../../components/ui/Badge";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { formatDateShort, nextActions } from "../../lib/account-view";
 import { getAccountOverview } from "../../lib/supabase/account";
@@ -47,10 +48,10 @@ export default async function AccountPage() {
     </section>
 
     {appointment && <section className="acc-section">
-      <SectionHead eyebrow="Entregas" title="Tu próxima cita" href="/cuenta/entregas" linkText="Ver citas" />
-      <div className="acc-card acc-appointment">
-        <Icon name="calendar" size={24} />
-        <div><strong><AppointmentWhen startsAt={appointment.startsAt} endsAt={appointment.endsAt} /></strong><span>{appointment.locationName} · {appointment.deliveryType === "DIDI" ? "Envío por DiDi" : "Recoges en el punto"}</span><small>{appointment.lines.map((l) => l.name).join(", ")}</small></div>
+      <SectionHead eyebrow="Entregas" title={appointment.pending ? "Tu solicitud de entrega" : "Tu próxima cita"} href="/cuenta/entregas" linkText={appointment.pending ? "Ver solicitud" : "Ver citas"} />
+      <div className={`acc-card acc-appointment${appointment.pending ? " is-pending" : " is-confirmed"}`}>
+        <Icon name={appointment.pending ? "clock" : "calendar"} size={24} />
+        <div><Badge tone={appointment.pending ? "warning" : "success"}>{appointment.pending ? "Solicitud enviada · esperando confirmación" : "Cita confirmada · puedes pasar"}</Badge><strong><AppointmentWhen startsAt={appointment.startsAt} endsAt={appointment.endsAt} /></strong><span>{appointment.locationName} · {appointment.deliveryType === "DIDI" ? "Envío por DiDi" : "Recoges en el punto"}</span><small>{appointment.lines.map((l) => l.name).join(", ")}</small></div>
       </div>
     </section>}
 

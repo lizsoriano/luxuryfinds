@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { describeError, failure, ok, type ActionState } from "../../../lib/actions";
 import { adminDb, logActivity, requireAdminActor } from "../../../lib/supabase/business";
+import { confirmDeliveryRequest, rejectDeliveryRequest } from "../../../lib/supabase/delivery-requests";
 import { sendTelegramMessage } from "../../../lib/telegram/send";
 
 function revalidate() {
@@ -226,6 +227,50 @@ export async function completeBookingAction(_state: ActionState, formData: FormD
     return ok("Entrega marcada como completada.");
   } catch (error) {
     return failure(describeError(error, "No fue posible completar la entrega."));
+  }
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function revalidateRequests() {
+  revalidate();
+  revalidatePath("/admin", "layout");
+  revalidatePath("/cuenta");
+  revalidatePath("/cuenta/entregas");
+  revalidatePath("/cuenta/compras");
+  revalidatePath("/empleado/entregas");
+}
+
+/** "Solicitudes por confirmar" (migration 020): the owner lets the client come. */
+export async function confirmDeliveryRequestAction(_state: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const actor = await requireAdminActor();
+    const visitId = String(formData.get("visitId") ?? "");
+    if (!UUID.test(visitId)) return failure("Solicitud no encontrada.");
+    const result = await confirmDeliveryRequest(visitId, actor.id);
+    if (!result.ok) return failure(result.error);
+    // activity_logs (DELIVERY_REQUEST_CONFIRMED) is written by the SQL function, in the same transaction.
+    revalidateRequests();
+    return ok("Cita confirmada. Le avisamos a la clienta que ya puede pasar.");
+  } catch (error) {
+    return failure(describeError(error, "No fue posible confirmar la solicitud."));
+  }
+}
+
+export async function rejectDeliveryRequestAction(_state: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const actor = await requireAdminActor();
+    const visitId = String(formData.get("visitId") ?? "");
+    const reason = String(formData.get("reason") ?? "").trim();
+    if (!UUID.test(visitId)) return failure("Solicitud no encontrada.");
+    if (!reason) return failure("Escribe el motivo para que la clienta sepa por qué.");
+    const result = await rejectDeliveryRequest(visitId, actor.id, reason);
+    if (!result.ok) return failure(result.error);
+    // activity_logs (DELIVERY_REQUEST_REJECTED, with the reason) is written by the SQL function.
+    revalidateRequests();
+    return ok("Solicitud rechazada. El horario quedó libre y la clienta recibió el motivo.");
+  } catch (error) {
+    return failure(describeError(error, "No fue posible rechazar la solicitud."));
   }
 }
 

@@ -8,7 +8,7 @@ const TYPE_LABELS: Record<string, string> = { PICKUP: "Recoge en el lugar", DIDI
 export function DeliveryCard({ delivery, action = "Abrir entrega" }: { delivery: ScheduledDelivery; action?: string }) {
   const units = delivery.items.reduce((sum, item) => sum + item.quantity, 0);
   return (
-    <article className="staff-card staff-delivery-card">
+    <article className={delivery.pendingConfirmation ? "staff-card staff-delivery-card is-pending" : "staff-card staff-delivery-card"}>
       <div className="staff-delivery-when">
         <strong>{formatTime(delivery.startsAt)}</strong>
         <small>a {formatTime(delivery.endsAt)}</small>
@@ -42,9 +42,16 @@ export function DeliveryCard({ delivery, action = "Abrir entrega" }: { delivery:
           <small>{units} pieza(s)</small>
         </div>
       </div>
-      <Link className="button button-primary staff-card-action" href={`/empleado/entregas/${delivery.id}`}>
-        {action}
-      </Link>
+      {delivery.pendingConfirmation ? (
+        <p className="staff-pending-note">
+          <strong>Por confirmar por la dueña</strong>
+          La clienta apartó este horario; no se entrega hasta que la dueña lo confirme.
+        </p>
+      ) : (
+        <Link className="button button-primary staff-card-action" href={`/empleado/entregas/${delivery.id}`}>
+          {action}
+        </Link>
+      )}
     </article>
   );
 }

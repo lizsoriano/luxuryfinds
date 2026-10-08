@@ -44,12 +44,13 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
         {line.eta && <p className="acc-muted"><Icon name="clock" size={15} /> Llegada estimada a La Paz: {formatDayLong(line.eta)}</p>}
         {line.booking?.status === "BOOKED" && line.booking.startsAt && <div className="acc-booking-box">
           <Icon name="calendar" size={20} />
-          <div><strong><AppointmentWhen startsAt={line.booking.startsAt} endsAt={line.booking.endsAt ?? line.booking.startsAt} /></strong>
+          <div><strong>{line.booking.pending ? "Solicitud enviada · esperando confirmación" : "Cita confirmada · puedes pasar"}</strong>
+            <strong><AppointmentWhen startsAt={line.booking.startsAt} endsAt={line.booking.endsAt ?? line.booking.startsAt} /></strong>
             <span>{line.booking.locationName} · {line.booking.deliveryType === "DIDI" ? "Envío por DiDi" : "Recoges en el punto"}</span>
             {line.booking.locationAddress && <a className="acc-inline-link" href={mapUrl(line.booking.locationName ?? "", line.booking.locationAddress)} target="_blank" rel="noreferrer">{line.booking.locationAddress} · Ver mapa</a>}
-            <small>{CLIENT_CHANGE_RULE} <Link className="acc-inline-link" href="/cuenta/entregas">Cambiar o cancelar</Link></small></div>
+            <small>{line.booking.pending ? "Te avisamos cuando la confirmemos; solo entonces puedes pasar." : CLIENT_CHANGE_RULE} <Link className="acc-inline-link" href="/cuenta/entregas">Cambiar o cancelar</Link></small></div>
         </div>}
-        {line.canSchedule && <><Link className="button button-primary acc-btn acc-btn-full" href="/cuenta/entregas#agendar"><Icon name="calendar" size={18} />Agendar mi entrega</Link><p className="acc-muted">{PICKUP_REMINDER}</p></>}
+        {line.canSchedule && <><Link className="button button-primary acc-btn acc-btn-full" href="/cuenta/entregas#agendar"><Icon name="calendar" size={18} />{line.requestState === "REJECTED" ? "Elegir otro horario" : "Agendar mi entrega"}</Link><p className="acc-muted">{PICKUP_REMINDER}</p></>}
         {line.scheduleByMessage && <><Link className="button button-primary acc-btn acc-btn-full" href="/contacto"><Icon name="send" size={18} />Coordinar mi entrega</Link><p className="acc-muted">{PICKUP_REMINDER}</p></>}
         {line.reservation?.status === "ACTIVE" && <p className="acc-muted"><Icon name="clock" size={15} /> Apartado: liquida antes del {formatDayLong(line.reservation.expiresAt)}.</p>}
       </article>)}</div>

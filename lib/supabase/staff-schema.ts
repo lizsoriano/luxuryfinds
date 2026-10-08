@@ -62,6 +62,8 @@ export const STAFF_SELECTS = {
   /** Scheduled deliveries (Agenda bookings that are still BOOKED). */
   bookings:
     "id, slot_id, ticket_id, client_id, delivery_type, status, delivery_slots(starts_at, ends_at, delivery_availabilities(location_id, delivery_locations(id, name, address)))",
+  /** Request state of those bookings (migration 020): pending = confirmed_at NULL. */
+  bookingRequests: "id, visit_id, confirmed_at, rejected_at",
   /** What is handed over and its balance. No cost of any kind. */
   tickets:
     "id, ticket_number, client_id, product_name_snapshot, variant_name_snapshot, image_storage_key_snapshot, quantity, agreed_total_cents, paid_principal_cents, payment_mode, financial_status, logistics_status",

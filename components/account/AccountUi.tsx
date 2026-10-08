@@ -17,9 +17,18 @@ export function ProductThumb({ src, name, size = "md" }: { src: string | null; n
   return <span className={`acc-thumb acc-thumb-${size} acc-thumb-empty`} role="img" aria-label={`${name} (sin foto)`}><Icon name="bag" size={size === "lg" ? 34 : size === "sm" ? 18 : 26} /></span>;
 }
 
-export function StatusBadge({ line }: { line: Pick<AccountLine, "status" | "hasIncident"> }) {
-  const text = line.hasIncident && !["DELIVERED", "CANCELLED", "CANCELLED_INCIDENT"].includes(line.status) ? "Con un detalle" : statusLabel(line.status);
-  return <Badge tone={statusTone(line)}>{text}</Badge>;
+/** Delivery request states (migration 020) shown instead of the plain logistics label. */
+const REQUEST_BADGE: Record<string, [string, "warning" | "success" | "danger"]> = {
+  PENDING: ["Cita por confirmar", "warning"],
+  CONFIRMED: ["Cita confirmada", "success"],
+  REJECTED: ["Elige otro horario", "danger"],
+};
+
+export function StatusBadge({ line }: { line: Pick<AccountLine, "status" | "hasIncident"> & Partial<Pick<AccountLine, "requestState">> }) {
+  const incident = line.hasIncident && !["DELIVERED", "CANCELLED", "CANCELLED_INCIDENT"].includes(line.status);
+  const request = !incident && line.requestState && ["READY_FOR_DELIVERY", "DELIVERY_SCHEDULED"].includes(line.status) ? REQUEST_BADGE[line.requestState] : null;
+  if (request) return <Badge tone={request[1]}>{request[0]}</Badge>;
+  return <Badge tone={statusTone(line)}>{incident ? "Con un detalle" : statusLabel(line.status)}</Badge>;
 }
 
 /** Where the item is now: five business stages, the current one highlighted. */
@@ -29,12 +38,13 @@ export function TrackProgress({ line, showPhrase = true }: { line: AccountLine; 
     return showPhrase ? <p className="acc-track-note is-cancelled"><Icon name="alert" size={16} />{statusPhrase(line)}</p> : null;
   }
   const scheduled = line.status === "DELIVERY_SCHEDULED";
+  const requested = line.requestState === "PENDING";
   return (
     <div className="acc-track">
       <ol className="acc-steps" aria-label={`Estado: ${statusLabel(line.status)}`}>
         {TRACK_STEPS.map((step, i) => {
           const state = i < index ? "done" : i === index ? "current" : "todo";
-          const label = i === 3 && scheduled ? "Agendada" : step.short;
+          const label = i === 3 && scheduled ? "Confirmada" : i === 3 && requested ? "Por confirmar" : step.short;
           return (
             <li key={step.status} className={`is-${state}`} aria-current={state === "current" ? "step" : undefined}>
               <span className="acc-step-dot">{state === "done" || (state === "current" && i === 4) ? <Icon name="check" size={12} /> : null}</span>
@@ -109,7 +119,7 @@ export function PurchaseCard({ purchase, showTrack = true }: { purchase: Account
       </div>
       {purchase.state !== "CANCELLED" && <MoneyRow total={purchase.totalCents} paid={purchase.paidCents} balance={purchase.balanceCents} />}
       <footer className="acc-purchase-actions">
-        {schedulable && <Link className="button button-primary acc-btn" href="/cuenta/entregas#agendar"><Icon name="calendar" size={18} />Agendar mi entrega</Link>}
+        {schedulable && <Link className="button button-primary acc-btn" href="/cuenta/entregas#agendar"><Icon name="calendar" size={18} />{purchase.lines.some((line) => line.requestState === "REJECTED") ? "Elegir otro horario" : "Agendar mi entrega"}</Link>}
         {byMessage && <Link className="button button-primary acc-btn" href="/contacto"><Icon name="send" size={18} />Coordinar mi entrega</Link>}
         {purchase.balanceCents > 0 && !schedulable && <Link className="button button-secondary acc-btn" href={`/cuenta/pagos?ticket=${purchase.lines.find((l) => l.balanceCents > 0)?.ticketId ?? ""}#subir`}><Icon name="wallet" size={18} />Pagar / subir comprobante</Link>}
         <Link className="acc-link" href={`/cuenta/compras/${purchase.key}`}>Ver detalle y recibo <Icon name="arrow" size={16} /></Link>
@@ -119,8 +129,7 @@ export function PurchaseCard({ purchase, showTrack = true }: { purchase: Account
 }
 
 export function ActionCard({ action, primary = false }: { action: AccountAction; primary?: boolean }) {
-  const icon = action.tone === "urgent" ? "alert" : action.tone === "ready" ? "calendar" : action.tone === "ok" ? "check" : "clock";
-  if (!primary) {
+  const icon = action.tone === "urgent" ? "alert" : action.tone === "ready" ? "calendar" : action.tone === "ok" ? "check" : "clock";  if (!primary) {
     return (
       <Link className={`acc-action-row is-${action.tone}`} href={action.href}>
         <span className="acc-action-icon"><Icon name={icon} size={18} /></span>

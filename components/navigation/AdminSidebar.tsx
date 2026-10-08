@@ -184,7 +184,13 @@ function activeChildHref(pathname: string, children: NavItem[]) {
     .reduce<string | null>((best, child) => (!best || child.href.length > best.length ? child.href : best), null);
 }
 
-function NavLink({ item, pathname, onNavigate }: { item: NavItem; pathname: string; onNavigate: () => void }) {
+function NavCount({ value, label }: { value: number | undefined; label: string }) {
+  if (!value) return null;
+  return <span className="admin-nav-count" aria-label={`${value} ${label}`}>{value > 99 ? "99+" : value}</span>;
+}
+
+function NavLink({ item, pathname, onNavigate, counts = {} }: { item: NavItem; pathname: string; onNavigate: () => void; counts?: Record<string, number> }) {
+  const branchCount = (item.children ?? []).reduce((sum, child) => sum + (counts[child.href] ?? 0), counts[item.href] ?? 0);
   const branchActive = isBranchActive(pathname, item);
   // The branch you are standing in is open by default; the toggle is an
   // explicit override on top of that, so navigating re-opens the active branch
@@ -201,6 +207,7 @@ function NavLink({ item, pathname, onNavigate }: { item: NavItem; pathname: stri
       <Link className={active ? "active" : ""} href={item.href} onClick={onNavigate} title={item.title}>
         <NavIcon name={item.icon} />
         {item.label}
+        <NavCount value={counts[item.href]} label="pendientes" />
       </Link>
     );
   }
@@ -211,6 +218,7 @@ function NavLink({ item, pathname, onNavigate }: { item: NavItem; pathname: stri
         <Link className={active ? "active" : ""} href={item.href} onClick={onNavigate}>
           <NavIcon name={item.icon} />
           {item.label}
+          {expanded ? null : <NavCount value={branchCount} label="pendientes" />}
         </Link>
         <button
           type="button"
@@ -234,6 +242,7 @@ function NavLink({ item, pathname, onNavigate }: { item: NavItem; pathname: stri
             >
               <NavIcon name={child.icon} />
               {child.label}
+              <NavCount value={counts[child.href]} label="por confirmar" />
             </Link>
           ))}
         </div>
@@ -279,9 +288,12 @@ function BusinessCard({ businessName, roleLabel }: { businessName: string; roleL
 export function AdminSidebar({
   businessName = "Luxury Finds",
   roleLabel = "Propietario",
+  counts = {},
 }: {
   businessName?: string;
   roleLabel?: string;
+  /** href -> number shown as a small badge (e.g. delivery requests waiting on /admin/agenda). */
+  counts?: Record<string, number>;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -316,6 +328,7 @@ export function AdminSidebar({
                   item={item}
                   pathname={pathname ?? ""}
                   onNavigate={close}
+                  counts={counts}
                   // Entering or leaving a branch remounts it, so a manual
                   // collapse never hides the section you just navigated into.
                   key={`${item.href}:${isBranchActive(pathname ?? "", item)}`}
