@@ -15,7 +15,7 @@ export function trackingError(error: { message: string; code?: string }) {
   return missingRelation(error) ? `Aplica ${SALES_MIGRATION} para activar el seguimiento.` : error.message;
 }
 
-export type PublicTracking = { firstName: string | null; stage: SalesStage; createdAt: string; lines: Array<{ id: string; name: string; variant: string | null; quantity: number; image: string | null; stage: SalesStage; updatedAt: string | null }> };
+export type PublicTracking = { firstName: string | null; stage: SalesStage; createdAt: string; lines: Array<{ id: string; name: string; variant: string | null; quantity: number; image: string | null; stage: SalesStage; logisticsStatus: string | null; updatedAt: string | null }> };
 /** Separate public allowlist. No payment, cost, address, phone or internal notes are read. */
 export async function getPublicTracking(token: string): Promise<PublicTracking | null> {
   if (!TRACKING_TOKEN.test(token)) return null;
@@ -43,7 +43,7 @@ export async function getPublicTracking(token: string): Promise<PublicTracking |
   const lines = items.map(i => {
     const ticket = tickets.find(t => t.order_item_id === i.id);
     const key = ticket?.image_storage_key_snapshot ?? images.filter(image => image.product_id === i.product_id).sort((a,b) => a.sort_order - b.sort_order)[0]?.storage_key;
-    return { id: i.id, name: i.product_name_snapshot ?? ticket?.product_name_snapshot ?? i.products?.name ?? "Artículo", variant: i.variant_name_snapshot ?? ticket?.variant_name_snapshot ?? i.product_variants?.name ?? null, quantity: Number(i.quantity), image: key ? adminStorage().from(PRODUCT_IMAGE_BUCKET).getPublicUrl(key).data.publicUrl : null, stage: stage === "CANCELLED" ? stage : ticket ? orderStage("CONFIRMED", [{ ...ticket, agreed_total_cents: 0, paid_principal_cents: 0 }]) : stage, updatedAt: ticket?.updated_at ?? null };
+    return { id: i.id, name: i.product_name_snapshot ?? ticket?.product_name_snapshot ?? i.products?.name ?? "Artículo", variant: i.variant_name_snapshot ?? ticket?.variant_name_snapshot ?? i.product_variants?.name ?? null, quantity: Number(i.quantity), image: key ? adminStorage().from(PRODUCT_IMAGE_BUCKET).getPublicUrl(key).data.publicUrl : null, stage: stage === "CANCELLED" ? stage : ticket ? orderStage("CONFIRMED", [{ ...ticket, agreed_total_cents: 0, paid_principal_cents: 0 }]) : stage, logisticsStatus: stage === "CANCELLED" ? "CANCELLED_INCIDENT" : sale ? "DELIVERED" : ticket?.logistics_status ?? null, updatedAt: ticket?.updated_at ?? null };
   });
   // Check again after dependent reads: a link revoked during the request is not served.
   const { data: stillActive, error: activeError } = await db.from("sale_tracking_links").select("token").eq("token", token).is("revoked_at", null).maybeSingle();

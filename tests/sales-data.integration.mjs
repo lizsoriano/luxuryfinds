@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { build } from "rolldown";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 const root = process.cwd();
 await mkdir(".tmp", { recursive: true });
 const adapter = `
@@ -60,9 +62,16 @@ export const PRODUCT_IMAGE_BUCKET='test';
 export const requireAdminActor=async()=>{if(!state.authorized)throw new Error('Forbidden');return {id:CLIENT};};
 export const logActivity=async data=>state.logs.push(data);
 `;
-await build({ input: "\0entry", external: id=>id.startsWith("node:"), transform:{jsx:{runtime:"automatic"}}, plugins:[{name:"test-adapter",resolveId(source){if(source==="\0entry"||source==="\0adapter")return source;if(source.endsWith("/business"))return "\0adapter";if(source==="next/cache")return "\0cache";},load(id){if(id==="\0adapter")return adapter;if(id==="\0cache")return "export const revalidatePath=()=>{};";if(id==="\0entry")return `export * from ${JSON.stringify(resolve(root,"lib/supabase/sales.ts"))}; export * from ${JSON.stringify(resolve(root,"lib/supabase/sales-tracking.ts"))}; export * from ${JSON.stringify(resolve(root,"app/admin/vender/sales-actions.ts"))}; export * from '\\0adapter';`.replace("'\\0adapter'",JSON.stringify("\0adapter"));}}],output:{file:resolve(root,".tmp/sales-integration.mjs"),format:"esm"}});
+await build({ input: "\0entry", external: id=>id.startsWith("node:") || id === "react" || id.startsWith("react/"), transform:{jsx:{runtime:"automatic"}}, plugins:[{name:"test-adapter",resolveId(source){if(source==="\0entry"||source==="\0adapter")return source;if(source.endsWith("/business"))return "\0adapter";if(source==="next/cache")return "\0cache";},load(id){if(id==="\0adapter")return adapter;if(id==="\0cache")return "export const revalidatePath=()=>{};";if(id==="\0entry")return `export * from ${JSON.stringify(resolve(root,"lib/supabase/sales.ts"))}; export * from ${JSON.stringify(resolve(root,"lib/supabase/sales-tracking.ts"))}; export * from ${JSON.stringify(resolve(root,"lib/sales-location.ts"))}; export * from ${JSON.stringify(resolve(root,"components/account/AccountPurchases.tsx"))}; export * from ${JSON.stringify(resolve(root,"app/admin/vender/sales-actions.ts"))}; export * from '\\0adapter';`.replace("'\\0adapter'",JSON.stringify("\0adapter"));}}],output:{file:resolve(root,".tmp/sales-integration.mjs"),format:"esm"}});
 const api=await import("../.tmp/sales-integration.mjs");
 const {state,tables,ID,ORDER}=api;
+const accountTickets = ["ORDERED","IN_TRANSIT","RECEIVED_LA_PAZ","IN_TRANSIT","READY_FOR_DELIVERY","DELIVERY_SCHEDULED","CANCELLED_INCIDENT","DELIVERED"].map((status,n) => ({ id:String(n),ticket_number:`TEMP-${n}`,product_name_snapshot:`Product ${n}`,variant_name_snapshot:null,financial_status:"PAID",logistics_status:status,agreed_total_cents:10000,paid_principal_cents:10000 }));
+const accountMarkup = renderToStaticMarkup(createElement(api.AccountPurchases,{tickets:accountTickets}));
+assert.equal((accountMarkup.match(/class="card purchase-row"/g) ?? []).length,6);
+assert.equal((accountMarkup.match(/Favor de agendar pickup/g) ?? []).length,1);
+assert.ok(accountMarkup.includes("Product 4"));
+assert.ok(accountMarkup.includes("En bodega de McAllen") && accountMarkup.includes("En paquetería") && accountMarkup.includes("En sucursal de La Paz") && accountMarkup.includes("Listo para entrega en La Paz"));
+assert.ok(!accountMarkup.includes("Product 6") && !accountMarkup.includes("Product 7"));
 const query={search:"",filter:"todas",ascending:false,page:1};
 let result=await api.listSales(query);
 assert.equal(result.fallback,false);assert.equal(result.total,2);
@@ -78,6 +87,19 @@ const tracking=await api.getPublicTracking("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 assert.equal(tracking.firstName,"María");assert.equal(tracking.lines[0].name,"Shopper perfume");
 assert.ok(!/PRIVATE-|private-note|2500|10000/.test(JSON.stringify(tracking)));
 for(const request of state.requests) assert.ok(!/phone|email|address|last_name|notes|cents|payments|refund/.test(request.columns??""),JSON.stringify(request));
+for (const [status,label] of [["ORDERED","En bodega de McAllen"],["IN_TRANSIT","En paquetería"],["RECEIVED_LA_PAZ","En sucursal de La Paz"],["READY_FOR_DELIVERY","Listo para entrega en La Paz"],["DELIVERY_SCHEDULED","Entrega programada"]]) {
+  tables.tickets[0].logistics_status=status;
+  const live=await api.getPublicTracking("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+  assert.equal(live.lines[0].logisticsStatus,status);
+  assert.equal(api.trackingLocationLabel(live.lines[0]),label);
+  assert.equal(api.trackingSummaryLabel(live),label);
+  assert.equal(api.needsPickup(live.lines[0]),status==="READY_FOR_DELIVERY");
+}
+tables.orders[0].status="CANCELLED";tables.tickets[0].logistics_status="READY_FOR_DELIVERY";
+const cancelledTracking=await api.getPublicTracking("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+assert.equal(api.needsPickup(cancelledTracking.lines[0]),false);
+assert.equal(api.trackingLocationLabel(cancelledTracking.lines[0]),"Cancelado");
+tables.orders[0].status="CONFIRMED";tables.tickets[0].logistics_status="IN_TRANSIT";
 state.revokeAtEnd=true;state.linkReads=0;
 assert.equal(await api.getPublicTracking("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),null);
 state.revokeAtEnd=false;state.authorized=false;state.requests=[];
