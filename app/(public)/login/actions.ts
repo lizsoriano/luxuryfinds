@@ -30,10 +30,8 @@ export async function loginAction(
 
   let employee = false;
   try {
-    const supabase = await createServerSupabaseClient();
-    const credentials = identifier.includes("@")
-      ? { email: identifier, password }
-      : { phone: identifier.replace(/[\s()-]/g, ""), password };
+    const supabase = await createServerSupabaseClient(formData.get("remember") === "on");
+    const credentials = { email: identifier, password };
     const { data, error } = await supabase.auth.signInWithPassword(credentials);
     if (error) return { error: "Los datos de acceso no son correctos." };
     // Staff land on their own panel; the owner and clientas keep the usual
@@ -47,54 +45,33 @@ export async function loginAction(
   redirect(safeReturnPath(formData.get("next")));
 }
 
-/**
- * Passwordless access for clientas: the celular alone is enough, no password
- * and no SMS code. We satisfy Supabase Auth (which only signs in with a
- * password or an OTP it sends itself) by minting a one-time random password
- * server-side, swapping it onto the account, and signing in with it in the
- * same request - the client never sees it. This intentionally trades
- * confidentiality for the low-friction access the owner asked for, so it is
- * scoped tightly: only ACTIVE clients, and never an admin_users account, even
- * though admins authenticate through the separate email+password form above.
- */
+// The phone identifies the profile; Auth checks the submitted password using
+// its existing email identity. This also works when the Phone provider is off.
 export async function phoneLoginAction(
   _previousState: PhoneLoginState,
   formData: FormData,
 ): Promise<PhoneLoginState> {
   const phone = normalizePhone(formData.get("phone"));
-  if (!phone) return { error: "Ingresa tu celular." };
-
+  const password = String(formData.get("password") ?? "");
+  if (!phone || !password) return { error: "Ingresa tu celular y contraseña." };
+  const invalid = { error: "El celular o la contraseña no son correctos." };
   try {
     const admin = createAdminSupabaseClient();
-    const { data: client, error: clientError } = await admin
-      .schema("luxury_finds")
-      .from("clients")
-      .select("id, status")
-      .eq("phone", phone)
-      .maybeSingle();
-    if (clientError) return { error: "No fue posible validar tu celular. Intenta de nuevo." };
-    if (!client || client.status !== "ACTIVE") {
-      return { error: "No encontramos una cuenta activa con ese celular." };
-    }
-
-    const { data: adminRow } = await admin
-      .schema("luxury_finds")
-      .from("admin_users")
-      .select("id")
-      .eq("id", client.id)
-      .maybeSingle();
-    if (adminRow) return { error: "No encontramos una cuenta activa con ese celular." };
-
-    const tempPassword = crypto.randomUUID();
-    const { error: updateError } = await admin.auth.admin.updateUserById(client.id, { password: tempPassword });
-    if (updateError) return { error: "No fue posible iniciar sesión. Intenta de nuevo." };
-
-    const supabase = await createServerSupabaseClient();
-    const { error: signInError } = await supabase.auth.signInWithPassword({ phone, password: tempPassword });
-    if (signInError) return { error: "No fue posible iniciar sesión. Intenta de nuevo." };
+    const { data: client, error } = await admin.schema("luxury_finds")
+      .from("clients").select("id, status").eq("phone", phone).maybeSingle();
+    if (error) return { error: "No fue posible iniciar sesión. Intenta de nuevo." };
+    if (!client || client.status !== "ACTIVE") return invalid;
+    const staff = await admin.schema("luxury_finds").from("admin_users")
+      .select("id").eq("id", client.id).maybeSingle();
+    if (staff.error) return { error: "No fue posible iniciar sesión. Intenta de nuevo." };
+    if (staff.data) return invalid;
+    const { data: account, error: accountError } = await admin.auth.admin.getUserById(client.id);
+    if (accountError || !account.user?.email) return invalid;
+    const supabase = await createServerSupabaseClient(formData.get("remember") === "on");
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email: account.user.email, password });
+    if (signInError) return invalid;
   } catch {
     return { error: "No fue posible iniciar sesión. Intenta de nuevo." };
   }
-
   redirect(safeReturnPath(formData.get("next")));
 }

@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { REMEMBER_COOKIE, sessionCookieOptions } from "./lib/supabase/session-cookies";
 
 export async function proxy(request: NextRequest) {
   const host = (request.headers.get("host") ?? request.nextUrl.hostname).split(":")[0].toLowerCase();
@@ -22,6 +23,7 @@ export async function proxy(request: NextRequest) {
   if (!url || !publishableKey) return NextResponse.next({ request });
 
   let response = NextResponse.next({ request });
+  const remember = request.cookies.get(REMEMBER_COOKIE)?.value !== "session";
   const supabase = createServerClient(url, publishableKey, {
     cookies: {
       getAll: () => request.cookies.getAll(),
@@ -31,7 +33,7 @@ export async function proxy(request: NextRequest) {
         }
         response = NextResponse.next({ request });
         for (const { name, value, options } of cookiesToSet) {
-          response.cookies.set(name, value, options);
+          response.cookies.set(name, value, sessionCookieOptions(options, remember));
         }
       },
     },

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { ProductCard } from "../../../components/ui/ProductCard";
 import { readSiteContent } from "../../../lib/supabase/site-content";
+import { getImmediateCollection, IMMEDIATE_COLLECTIONS } from "../../../lib/immediate-collections";
 import {
   getCatalogProducts,
   getCatalogCategories,
@@ -14,6 +15,7 @@ import {
 export const dynamic = "force-dynamic";
 
 type SearchParams = {
+  coleccion?: string;
   q?: string;
   categoria?: string;
   marca?: string;
@@ -92,6 +94,7 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
   const sp = await searchParams;
   const sort = (sp.orden as CatalogSort) || "recommended";
   const catalogType = sp.tipo === "IMMEDIATE" || sp.tipo === "ON_DEMAND" ? sp.tipo : undefined;
+  const collection = catalogType === "IMMEDIATE" ? getImmediateCollection(sp.coleccion) : undefined;
   const page = Math.max(1, Number(sp.pagina) || 1);
   const minPrice = sp.precio_min ? Number(sp.precio_min) : undefined;
   const maxPrice = sp.precio_max ? Number(sp.precio_max) : undefined;
@@ -108,6 +111,7 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
     const [result, categoryList, brandList] = await Promise.all([
       getCatalogProducts({
         catalogType,
+        immediateCollection: collection?.id,
         categorySlug: sp.categoria,
         brand: sp.marca,
         search: sp.q,
@@ -139,6 +143,7 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
         <h1 className="catalog-title">Catálogo</h1>
 
         <form className="catalog-search" method="get" action="/catalogo">
+          {collection && <input type="hidden" name="coleccion" value={collection.id} />}
           {sp.categoria && <input type="hidden" name="categoria" value={sp.categoria} />}
           {sp.marca && <input type="hidden" name="marca" value={sp.marca} />}
           {catalogType && <input type="hidden" name="tipo" value={catalogType} />}
@@ -159,7 +164,7 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
             return (
               <a
                 key={tab.label}
-                href={buildQuery(sp, { tipo: tab.tipo, marca: tab.marca, categoria: tab.categoria, pagina: undefined })}
+                href={buildQuery(sp, { tipo: tab.tipo, marca: tab.marca, categoria: tab.categoria, coleccion: undefined, pagina: undefined })}
                 className={active ? "active" : ""}
               >
                 {tab.label}
@@ -168,10 +173,16 @@ export default async function CatalogPage({ searchParams }: { searchParams: Prom
           })}
         </div>
 
+        {catalogType === "IMMEDIATE" && <nav className="filter-tabs immediate-filter-tabs" aria-label="Filtrar productos de entrega inmediata">
+          <Link href={buildQuery(sp, { coleccion: undefined, pagina: undefined, marca: undefined, categoria: undefined })} className={!collection ? "active" : ""} aria-current={!collection ? "page" : undefined}>Todo</Link>
+          {IMMEDIATE_COLLECTIONS.map((item) => <Link key={item.id} href={buildQuery(sp, { coleccion: item.id, pagina: undefined, marca: undefined, categoria: undefined })} className={collection?.id === item.id ? "active" : ""} aria-current={collection?.id === item.id ? "page" : undefined}>{item.label}</Link>)}
+        </nav>}
+
         <details className="filter-disclosure">
           <summary>Filtrar{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}</summary>
           <div className="filter-panel">
             <form method="get" action="/catalogo" className="filter-panel-form">
+              {collection && <input type="hidden" name="coleccion" value={collection.id} />}
               {sp.q && <input type="hidden" name="q" value={sp.q} />}
               {catalogType && <input type="hidden" name="tipo" value={catalogType} />}
 

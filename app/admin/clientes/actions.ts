@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { describeError, failure, ok, type ActionState } from "../../../lib/actions";
+import { clientAccessEmail } from "../../../lib/supabase/client-access";
 import { createAdminSupabaseClient } from "../../../lib/supabase/admin";
 import { adminDb, logActivity, requireAdminActor } from "../../../lib/supabase/business";
 
@@ -34,12 +35,16 @@ export async function createClientAction(_state: ActionState, formData: FormData
     if (email && !email.includes("@")) return failure("El correo no es válido.");
 
     const admin = createAdminSupabaseClient();
-    const password = `LF-${crypto.randomUUID()}`;
+    const password = String(formData.get("password") ?? "");
+    if (password.length < 8) return failure("La contraseña debe tener al menos 8 caracteres.");
+    const userId = crypto.randomUUID();
     const { data: created, error: createError } = await admin.auth.admin.createUser({
+      id: userId,
       phone,
       password,
+      email: email || clientAccessEmail(userId),
+      email_confirm: true,
       phone_confirm: true,
-      ...(email ? { email, email_confirm: true } : {}),
     });
 
     if (createError || !created?.user) {
@@ -50,7 +55,7 @@ export async function createClientAction(_state: ActionState, formData: FormData
       return failure(`No fue posible crear la cuenta de acceso: ${message || "error desconocido"}`);
     }
 
-    const userId = created.user.id;
+    // userId is shared by Auth and the client profile.
     const { error: clientError } = await adminDb().from("clients").insert({
       id: userId,
       phone,
@@ -78,7 +83,7 @@ export async function createClientAction(_state: ActionState, formData: FormData
       newData: { firstName, lastName, phone },
     });
     revalidate();
-    return ok(`${firstName} ${lastName} quedó registrada. Ya puede entrar al sitio solo con su celular, sin contraseña.`);
+    return ok(`${firstName} ${lastName} quedó registrada. Ya puede entrar con su celular y la contraseña que asignaste.`);
   } catch (error) {
     return failure(describeError(error, "No fue posible registrar a la clienta."));
   }
@@ -166,5 +171,32 @@ export async function setClientStatusAction(_state: ActionState, formData: FormD
     return ok(status === "ACTIVE" ? "Clienta reactivada." : "Clienta archivada.");
   } catch (error) {
     return failure(describeError(error, "No fue posible cambiar el estado."));
+  }
+}
+
+
+export async function setClientPasswordAction(_state: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const actor = await requireAdminActor();
+    const id = String(formData.get("id") ?? "");
+    const password = String(formData.get("password") ?? "");
+    if (!id || password.length < 8) return failure("La contraseña debe tener al menos 8 caracteres.");
+    const admin = createAdminSupabaseClient();
+    const client = await adminDb().from("clients").select("id, status").eq("id", id).maybeSingle();
+    if (client.error || !client.data) return failure("Clienta no encontrada.");
+    const staff = await adminDb().from("admin_users").select("id").eq("id", id).maybeSingle();
+    if (staff.error || staff.data) return failure("Este formulario solo cambia accesos de clientas, no del personal.");
+    const account = await admin.auth.admin.getUserById(id);
+    if (account.error || !account.data.user) return failure("No fue posible encontrar la cuenta de acceso.");
+    const { error } = await admin.auth.admin.updateUserById(id, {
+      password,
+      ...(!account.data.user.email ? { email: clientAccessEmail(id), email_confirm: true } : {}),
+    });
+    if (error) return failure("No fue posible asignar la contraseña. Intenta de nuevo.");
+    await logActivity({ adminUserId: actor.id, action: "CLIENT_PASSWORD_RESET", entityType: "clients", entityId: id });
+    revalidate(id);
+    return ok("Contraseña asignada. La clienta puede entrar con su celular y cambiarla desde Mi perfil.");
+  } catch {
+    return failure("No fue posible asignar la contraseña. Intenta de nuevo.");
   }
 }
