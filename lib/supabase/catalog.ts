@@ -1,5 +1,6 @@
 import { createAdminSupabaseClient } from "./admin";
 import { isMissingInTransitColumn, withInTransitFallback } from "./in-transit";
+import { getImmediateCollection } from "../immediate-collections";
 
 export type CatalogType = "ON_DEMAND" | "IMMEDIATE";
 export type CatalogSort =
@@ -25,6 +26,7 @@ export type CatalogProduct = {
 };
 
 export type CatalogFilters = {
+  immediateCollection?: string;
   catalogType?: CatalogType;
   categorySlug?: string;
   brand?: string;
@@ -240,6 +242,21 @@ export async function getCatalogProducts(filters: CatalogFilters = {}) {
   const { catalogType, categorySlug, brand, search, sort = "recommended", minPrice, maxPrice, page = 1 } = filters;
   const supabase = createAdminSupabaseClient();
   const db = supabase.schema("luxury_finds");
+  const collection = catalogType === "IMMEDIATE" ? getImmediateCollection(filters.immediateCollection) : undefined;
+  const collectionParts = collection?.terms.map((term) => `name.ilike.%${term}%`) ?? [];
+  if (collection) {
+    const [categories, brands] = await Promise.all([
+      collection.categorySlugs?.length
+        ? db.from("categories").select("id").in("slug", collection.categorySlugs)
+        : Promise.resolve({ data: [], error: null }),
+      collection.brandTerms?.length
+        ? db.from("brands").select("id").or(collection.brandTerms.map((term) => `name.ilike.%${term}%`).join(","))
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (categories.error || brands.error) throw new Error("No fue posible cargar el filtro de entrega inmediata.");
+    if (categories.data?.length) collectionParts.push(`category_id.in.(${categories.data.map((row) => row.id).join(",")})`);
+    if (brands.data?.length) collectionParts.push(`brand_id.in.(${brands.data.map((row) => row.id).join(",")})`);
+  }
 
   let categoryId: string | undefined;
   if (categorySlug) {
@@ -278,6 +295,7 @@ export async function getCatalogProducts(filters: CatalogFilters = {}) {
 
     if (filterInTransit) query = query.eq("in_transit", false);
     if (catalogType) query = query.eq("catalog_type", catalogType);
+    if (collectionParts.length) query = query.or(collectionParts.join(","));
     if (categoryId) query = query.eq("category_id", categoryId);
     if (brandId) query = query.eq("brand_id", brandId);
     if (bestsellerRank) query = query.in("id", bestsellerRank.length ? bestsellerRank : ["00000000-0000-0000-0000-000000000000"]);
