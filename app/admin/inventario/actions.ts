@@ -14,6 +14,7 @@ function revalidate() {
   revalidatePath("/admin/inventario");
   revalidatePath("/admin/productos");
   revalidatePath("/admin/vender");
+  revalidatePath("/admin/vender/nueva");
 }
 
 /**

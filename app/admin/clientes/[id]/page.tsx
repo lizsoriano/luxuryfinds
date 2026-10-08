@@ -173,7 +173,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
             <p className="micro-label">HISTORIAL</p>
             <h2>Ventas directas</h2>
           </div>
-          <Button href="/admin/vender" variant="secondary" size="small">
+          <Button href="/admin/vender/nueva" variant="secondary" size="small">
             Nueva venta
           </Button>
         </div>

@@ -118,8 +118,8 @@ function FreeSaleDialog({ clients, today }: { clients: Option[]; today: string }
   );
 }
 
-function ExpenseDialog({ suppliers, today }: { suppliers: Option[]; today: string }) {
-  const [open, setOpen] = useState(false);
+function ExpenseDialog({ suppliers, today, initialOpen = false }: { suppliers: Option[]; today: string; initialOpen?: boolean }) {
+  const [open, setOpen] = useState(initialOpen);
   const [state, action, pending] = useActionState(closeOnSuccess(createExpenseAction, setOpen), emptyActionState);
 
   return (
@@ -169,8 +169,8 @@ function ExpenseDialog({ suppliers, today }: { suppliers: Option[]; today: strin
   );
 }
 
-function CashDialog({ session }: { session: CashSession }) {
-  const [open, setOpen] = useState(false);
+function CashDialog({ session, initialOpen = false }: { session: CashSession; initialOpen?: boolean }) {
+  const [open, setOpen] = useState(initialOpen);
   const [state, action, pending] = useActionState(
     closeOnSuccess(session ? closeCashSessionAction : openCashSessionAction, setOpen),
     emptyActionState,
@@ -243,12 +243,14 @@ export function SellTerminal({
   suppliers,
   session,
   today,
+  initialAction,
 }: {
   variants: TerminalVariant[];
   clients: Option[];
   suppliers: Option[];
   session: CashSession;
   today: string;
+  initialAction?: string;
 }) {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -362,9 +364,9 @@ export function SellTerminal({
           />
         </label>
         <div className="admin-toolbar-actions">
-          <CashDialog session={session} />
+          <CashDialog session={session} initialOpen={initialAction === "caja"} />
           <FreeSaleDialog clients={clients} today={today} />
-          <ExpenseDialog suppliers={suppliers} today={today} />
+          <ExpenseDialog suppliers={suppliers} today={today} initialOpen={initialAction === "gasto"} />
         </div>
       </div>
 

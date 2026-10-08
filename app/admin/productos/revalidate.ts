@@ -8,6 +8,7 @@ export function revalidateCatalog() {
   revalidatePath("/admin/productos/en-camino");
   revalidatePath("/admin/inventario");
   revalidatePath("/admin/vender");
+  revalidatePath("/admin/vender/nueva");
   revalidatePath("/catalogo");
   revalidatePath("/entrega-inmediata");
   revalidatePath("/por-pedido");

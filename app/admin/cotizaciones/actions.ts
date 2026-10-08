@@ -452,6 +452,7 @@ export async function convertQuoteToSaleAction(_state: ActionState, formData: Fo
       newData: { saleId, sale_number: sale.sale_number, total_cents: subtotalCents },
     });
     revalidatePath("/admin/vender");
+  revalidatePath("/admin/vender/nueva");
     revalidatePath("/admin/balance");
     revalidatePath("/admin/inventario");
     revalidate(quoteId, detail.quote.client_id);
