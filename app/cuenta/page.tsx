@@ -9,12 +9,13 @@ import { StatCard } from "../../components/ui/StatCard";
 import { getAccountData } from "../../lib/supabase/account";
 import { createServerSupabaseClient } from "../../lib/supabase/server";
 import { getTelegramLinkUrl } from "../../lib/telegram/env";
+import { LOGISTICS_STATUS_LABELS } from "../../lib/format";
 
 export const dynamic = "force-dynamic";
 
 const money = (cents: number) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: 0 }).format(cents / 100);
 const date = (value: string) => new Intl.DateTimeFormat("es-MX", { dateStyle: "medium", timeZone: "America/Mazatlan" }).format(new Date(value));
-const logistics: Record<string, string> = { WAITING_TO_ORDER: "Esperando pedido", READY_TO_ORDER: "Listo para ordenar", ORDERED: "Ordenado", IN_TRANSIT: "En camino", RECEIVED_LA_PAZ: "Recibido en La Paz", READY_FOR_DELIVERY: "Listo para entrega", DELIVERY_SCHEDULED: "Entrega programada", DELIVERED: "Entregado", CANCELLED_INCIDENT: "Cancelado" };
+const logistics = LOGISTICS_STATUS_LABELS;
 
 export default async function AccountPage() {
   let data;

@@ -22,14 +22,18 @@ export function AdvanceLogisticsDialog({
   ticketId,
   ticketNumber,
   currentStatus,
+  allowedStatuses,
 }: {
   ticketId: string;
   ticketNumber: string;
   currentStatus: string;
+  allowedStatuses?: string[];
 }) {
   const [open, setOpen] = useState(false);
-  const options = ORDER.filter((status) => status !== currentStatus);
-  const [status, setStatus] = useState(options[0] ?? currentStatus);
+  const sequence = allowedStatuses ?? ORDER;
+  const options = sequence.filter((status) => status !== currentStatus);
+  const next = sequence[sequence.indexOf(currentStatus) + 1];
+  const [status, setStatus] = useState((allowedStatuses ? next : null) ?? options[0] ?? currentStatus);
   const [state, action, pending] = useActionState(
     async (previous: ActionState, formData: FormData) => {
       const result = await advanceLogisticsStatusAction(previous, formData);
