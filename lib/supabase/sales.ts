@@ -3,6 +3,18 @@ import { LOGISTICS_STATUS_LABELS } from "../format";
 import { buildOrderIndexRow, buildSaleIndexRow, countIndexRows, foldSearchText, orderPayment, pageIndexRows, resolveSalesFilter, salePayment, type SalesFeedIndexRow, type SalesFeedCounts, type StageTicket } from "../sales-feed";
 
 export const SALES_MIGRATION = "database/migrations/017_sales_feed_tracking.sql";
+export const FULFILLMENT_MIGRATION = "database/migrations/018_sale_item_fulfillment.sql";
+export type SaleItemFulfillment = { id: string; logistics_status: string; updated_at: string };
+export async function getSaleItemFulfillment(ids: string[]) {
+  const rows: SaleItemFulfillment[] = [];
+  const unique = [...new Set(ids)];
+  for (let start = 0; start < unique.length; start += 150) {
+    const { data, error } = await adminDb().from("sale_item_fulfillment").select("id,logistics_status,updated_at").in("id", unique.slice(start,start+150)).limit(150);
+    if (missingRelation(error)) return { rows: [] as SaleItemFulfillment[], available: false };
+    check(error); rows.push(...(data ?? []) as SaleItemFulfillment[]);
+  }
+  return { rows, available: true };
+}
 export const SALES_PAGE_SIZE = 20;
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function salesTarget(value: string) {
@@ -36,8 +48,8 @@ type Item = { id: string; sale_id?: string; order_id?: string; product_id: strin
 export type Ticket = StageTicket & { id: string; order_item_id: string; ticket_number: string; product_name_snapshot: string; variant_name_snapshot: string | null; financial_status: string; created_at: string; updated_at: string; image_storage_key_snapshot: string | null };
 type Payment = { id: string; ticket_id: string; amount_cents: number; method: string; effective_paid_at: string };
 type Refund = { id: string; refund_request_id: string; amount_cents: number; refunded_at: string; method: string };
-export type SalesLine = { id: string; productId: string | null; name: string; variant: string | null; quantity: number; unitCents: number; totalCents: number; image: string | null };
-export type SalesRecord = { index: SalesFeedIndexRow; client: Client | null; lines: SalesLine[]; totalCents: number; subtotalCents: number; discountCents: number; paidCents: number; refundCents: number; notes: string | null; status: string; channel: string; confirmedAt: string | null; cancelledAt: string | null; tickets: Ticket[]; payments: Payment[]; refunds: Refund[]; payment: ReturnType<typeof salePayment>; };
+export type SalesLine = { id: string; productId: string | null; name: string; variant: string | null; quantity: number; unitCents: number; totalCents: number; image: string | null; logisticsStatus: string | null; statusUpdatedAt: string | null; ticketId: string | null };
+export type SalesRecord = { index: SalesFeedIndexRow; client: Client | null; lines: SalesLine[]; fulfillmentAvailable: boolean; totalCents: number; subtotalCents: number; discountCents: number; paidCents: number; refundCents: number; notes: string | null; status: string; channel: string; confirmedAt: string | null; cancelledAt: string | null; tickets: Ticket[]; payments: Payment[]; refunds: Refund[]; payment: ReturnType<typeof salePayment>; };
 
 const SALE_SELECT = "id,sale_number,sold_at,client_id,status,concept,sale_type,payment_method,subtotal_cents,discount_cents,total_cents,notes,cancelled_at";
 const ORDER_SELECT = "id,client_id,status,created_at,origin,internal_notes,confirmed_at,cancelled_at";
@@ -49,10 +61,11 @@ async function hydrate(sales: Sale[], orders: Order[]): Promise<SalesRecord[]> {
     related<Item>("order_items", "id,order_id,product_id,quantity,unit_price_cents,products(name),product_variants(name)", "order_id", orders.map(o => o.id)),
     related<Client>("clients", "id,first_name,last_name,phone,email,address", "id", [...sales, ...orders].flatMap(r => r.client_id ? [r.client_id] : [])),
   ]);
-  const [tickets, images, plans] = await Promise.all([
+  const [tickets, images, plans, fulfillment] = await Promise.all([
     related<Ticket>("tickets", "id,order_item_id,ticket_number,product_name_snapshot,variant_name_snapshot,financial_status,logistics_status,agreed_total_cents,paid_principal_cents,created_at,updated_at,image_storage_key_snapshot", "order_item_id", orderItems.map(i => i.id)),
     related<{ id: string; product_id: string; storage_key: string; sort_order: number }>("product_images", "id,product_id,storage_key,sort_order", "product_id", [...saleItems, ...orderItems].flatMap(i => i.product_id ? [i.product_id] : [])),
     related<{ id: string; requested_number_of_weeks: number | null }>("orders", "id,requested_number_of_weeks", "id", orders.map(o => o.id)).catch(() => []),
+    getSaleItemFulfillment(saleItems.map(i => i.id)),
   ]);
   const [payments, requests, proofs, ticketPlans] = await Promise.all([
     related<Payment>("payments", "id,ticket_id,amount_cents,method,effective_paid_at", "ticket_id", tickets.map(t => t.id)),
@@ -67,14 +80,15 @@ async function hydrate(sales: Sale[], orders: Order[]): Promise<SalesRecord[]> {
   function lines(items: Item[], liveTickets: Ticket[]) {
     return items.map(i => {
       const ticket = liveTickets.find(t => t.order_item_id === i.id);
-      return { id: i.id, productId: i.product_id, name: i.product_name_snapshot ?? ticket?.product_name_snapshot ?? i.products?.name ?? "Artículo sin producto", variant: i.variant_name_snapshot ?? ticket?.variant_name_snapshot ?? i.product_variants?.name ?? null, quantity: Number(i.quantity), unitCents: Number(i.unit_price_cents), totalCents: Number(i.total_cents ?? Number(i.quantity) * Number(i.unit_price_cents)), image: imageUrl(ticket?.image_storage_key_snapshot ?? (i.product_id ? imageMap.get(i.product_id) : null)) };
+      const physical = fulfillment.rows.find(f => f.id === i.id);
+      return { id: i.id, productId: i.product_id, name: i.product_name_snapshot ?? ticket?.product_name_snapshot ?? i.products?.name ?? "Artículo sin producto", variant: i.variant_name_snapshot ?? ticket?.variant_name_snapshot ?? i.product_variants?.name ?? null, quantity: Number(i.quantity), unitCents: Number(i.unit_price_cents), totalCents: Number(i.total_cents ?? Number(i.quantity) * Number(i.unit_price_cents)), image: imageUrl(ticket?.image_storage_key_snapshot ?? (i.product_id ? imageMap.get(i.product_id) : null)), logisticsStatus: i.sale_id ? physical?.logistics_status ?? "DELIVERED" : ticket?.logistics_status ?? null, statusUpdatedAt: physical?.updated_at ?? ticket?.updated_at ?? null, ticketId: ticket?.id ?? null };
     });
   }
   return [
     ...sales.map(s => {
       const items = saleItems.filter(i => i.sale_id === s.id);
       const client = clientMap.get(s.client_id ?? "") ?? null;
-      return { index: buildSaleIndexRow(s, client, items.map(i => ({ product_name_snapshot: i.product_name_snapshot ?? null, variant_name_snapshot: i.variant_name_snapshot ?? null, sku_snapshot: i.sku_snapshot ?? null }))), client, lines: lines(items, []), totalCents: Number(s.total_cents), subtotalCents: Number(s.subtotal_cents), discountCents: Number(s.discount_cents), paidCents: Number(s.total_cents), refundCents: 0, notes: s.notes, status: s.status, channel: "Mostrador", confirmedAt: null, cancelledAt: s.cancelled_at, tickets: [], payments: [], refunds: [], payment: salePayment(s) };
+      return { index: buildSaleIndexRow(s, client, items.map(i => ({ product_name_snapshot: i.product_name_snapshot ?? null, variant_name_snapshot: i.variant_name_snapshot ?? null, sku_snapshot: i.sku_snapshot ?? null })), lines(items, []).map(i => i.logisticsStatus ?? "DELIVERED")), fulfillmentAvailable: fulfillment.available, client, lines: lines(items, []), totalCents: Number(s.total_cents), subtotalCents: Number(s.subtotal_cents), discountCents: Number(s.discount_cents), paidCents: Number(s.total_cents), refundCents: 0, notes: s.notes, status: s.status, channel: "Mostrador", confirmedAt: null, cancelledAt: s.cancelled_at, tickets: [], payments: [], refunds: [], payment: salePayment(s) };
     }),
     ...orders.map(o => {
       const items = orderItems.filter(i => i.order_id === o.id);
@@ -89,7 +103,7 @@ async function hydrate(sales: Sale[], orders: Order[]): Promise<SalesRecord[]> {
       const index = buildOrderIndexRow(o, client, items.map(i => ({ product_name: i.products?.name ?? null, variant_name: i.product_variants?.name ?? null, ticket: orderTickets.find(t => t.order_item_id === i.id) ?? null })));
       const orderLines = lines(items, orderTickets);
       const totalCents = orderTickets.length ? orderTickets.reduce((n,t) => n + Number(t.agreed_total_cents), 0) : orderLines.reduce((n,i) => n + i.totalCents, 0);
-      return { index, client, lines: orderLines, totalCents, subtotalCents: orderLines.reduce((n,i) => n + i.totalCents, 0), discountCents: 0, paidCents: orderPayments.reduce((n,p) => n + Number(p.amount_cents), 0), refundCents, notes: o.internal_notes, status: o.status, channel: o.origin === "WEBSITE" ? "Web" : "Pedido manual", confirmedAt: o.confirmed_at, cancelledAt: o.cancelled_at, tickets: orderTickets, payments: orderPayments, refunds: orderRefunds, payment: orderPayment({ orderStatus: o.status, stage: index.stage, tickets: orderTickets, refundedCents: refundCents, pendingProofs: proofs.filter(p => ticketIds.has(p.ticket_id) && p.status === "PENDING").length, methods: orderPayments.map(p => p.method), requestedWeeks: plans.find(p => p.id === o.id)?.requested_number_of_weeks ?? null, planWeeks: ticketPlans.find(p => ticketIds.has(p.ticket_id))?.number_of_weeks ?? null }) };
+      return { index, fulfillmentAvailable: true, client, lines: orderLines, totalCents, subtotalCents: orderLines.reduce((n,i) => n + i.totalCents, 0), discountCents: 0, paidCents: orderPayments.reduce((n,p) => n + Number(p.amount_cents), 0), refundCents, notes: o.internal_notes, status: o.status, channel: o.origin === "WEBSITE" ? "Web" : "Pedido manual", confirmedAt: o.confirmed_at, cancelledAt: o.cancelled_at, tickets: orderTickets, payments: orderPayments, refunds: orderRefunds, payment: orderPayment({ orderStatus: o.status, stage: index.stage, tickets: orderTickets, refundedCents: refundCents, pendingProofs: proofs.filter(p => ticketIds.has(p.ticket_id) && p.status === "PENDING").length, methods: orderPayments.map(p => p.method), requestedWeeks: plans.find(p => p.id === o.id)?.requested_number_of_weeks ?? null, planWeeks: ticketPlans.find(p => ticketIds.has(p.ticket_id))?.number_of_weeks ?? null }) };
     }),
   ];
 }
@@ -147,7 +161,7 @@ export async function salesHistory(record: SalesRecord): Promise<HistoryEvent[]>
   for (const log of logs) {
     if (log.entity_type !== (log.entity_id === record.index.id ? (record.index.kind === "SALE" ? "sales" : "orders") : "tickets")) continue;
     const status = log.new_data?.logistics_status;
-    const labels: Record<string, string> = { SALE_CANCELLED: "Cancelada", ORDER_CANCELLED: "Cancelada", TICKET_LOGISTICS_UPDATED: `Estado de entrega: ${status ? LOGISTICS_STATUS_LABELS[status] ?? status : "actualizado"}`, SALES_NOTES_UPDATED: "Notas actualizadas", SALES_TRACKING_CREATED: "Enlace de seguimiento creado", SALES_TRACKING_REVOKED: "Enlace de seguimiento desactivado" };
+    const labels: Record<string, string> = { SALE_ITEM_FULFILLMENT_UPDATED: `Estado del producto: ${status ? LOGISTICS_STATUS_LABELS[status] ?? status : "actualizado"}`, SALE_CANCELLED: "Cancelada", ORDER_CANCELLED: "Cancelada", TICKET_LOGISTICS_UPDATED: `Estado de entrega: ${status ? LOGISTICS_STATUS_LABELS[status] ?? status : "actualizado"}`, SALES_NOTES_UPDATED: "Notas actualizadas", SALES_TRACKING_CREATED: "Enlace de seguimiento creado", SALES_TRACKING_REVOKED: "Enlace de seguimiento desactivado" };
     if (labels[log.action]) events.push({ id: `log-${log.id}`, date: log.created_at, label: `${labels[log.action]}${log.admin_users?.display_name ? ` · Por ${log.admin_users.display_name}` : ""}` });
   }
   for (const m of movements) if (m.movement_type === "RELEASE" && Number(m.quantity_delta) > 0) events.push({ id: `stock-${m.id}`, date: m.created_at, label: `${m.quantity_delta} unidades devueltas al stock` });

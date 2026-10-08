@@ -1,3 +1,4 @@
+import { getSaleItemFulfillment, related } from "./sales";
 import { getClientProfile } from "./auth";
 import { getClientReservations } from "./incoming-reservations";
 
@@ -5,6 +6,15 @@ export async function getAccountData() {
   const { supabase, user, profile } = await getClientProfile();
   if (!profile) return { user, profile: null };
   const reservations = await getClientReservations(user.id);
+  // Service-role reads are scoped to the verified session's client, never a request ID.
+  const ownSales = (await related<{id: string; sale_number: string; status: string}>("sales", "id,sale_number,status", "client_id", [user.id])).filter(s => s.status === "COMPLETED");
+  const saleItems = await related<{ id: string; sale_id: string; product_name_snapshot: string; variant_name_snapshot: string | null }>("sale_items", "id,sale_id,product_name_snapshot,variant_name_snapshot", "sale_id", ownSales.map(s => s.id));
+  const fulfillment = await getSaleItemFulfillment(saleItems.map(i => i.id));
+  const salePurchases = saleItems.flatMap(item => {
+    const state = fulfillment.rows.find(f => f.id === item.id);
+    if (!state || state.logistics_status === "DELIVERED") return [];
+    return [{ id: `sale-${item.id}`, ticket_number: ownSales.find(s => s.id === item.sale_id)?.sale_number ?? "Venta", product_name_snapshot: item.product_name_snapshot, variant_name_snapshot: item.variant_name_snapshot, financial_status: "PAID", logistics_status: state.logistics_status, agreed_total_cents: 0, paid_principal_cents: 0 }];
+  });
 
   const [orders, tickets, plans, installments, payments, fees, notifications, deliveries] = await Promise.all([
     supabase.schema("luxury_finds").from("orders").select("id, status, created_at, order_items(id, quantity)").order("created_at", { ascending: false }),
@@ -25,6 +35,7 @@ export async function getAccountData() {
     user,
     profile,
     reservations,
+    salePurchases,
     orders: orders.data ?? [],
     tickets: tickets.data ?? [],
     plans: plans.data ?? [],

@@ -1,5 +1,5 @@
 import { adminDb, adminStorage, PRODUCT_IMAGE_BUCKET } from "./business";
-import { missingRelation, related, SALES_MIGRATION, salesTarget } from "./sales";
+import { getSaleItemFulfillment, missingRelation, related, SALES_MIGRATION, salesTarget } from "./sales";
 import { orderStage, saleStage, type SalesStage } from "../sales-feed";
 
 export const TRACKING_TOKEN = /^[A-Za-z0-9_-]{43}$/;
@@ -39,11 +39,13 @@ export async function getPublicTracking(token: string): Promise<PublicTracking |
     related<{ id: string; product_id: string; storage_key: string; sort_order: number }>("product_images", "id,product_id,storage_key,sort_order", "product_id", items.flatMap(i => i.product_id ? [i.product_id] : [])),
   ]);
   const rankTickets = tickets.map(t => ({ ...t, agreed_total_cents: 0, paid_principal_cents: 0 }));
-  const stage = sale ? saleStage(row.status) : orderStage(row.status, rankTickets);
+  const physical = sale ? await getSaleItemFulfillment(items.map(i => i.id)) : { rows: [] };
+  const location = (itemId: string) => physical.rows.find(f => f.id === itemId);
+  const stage = sale ? saleStage(row.status, items.map(i => location(i.id)?.logistics_status ?? "DELIVERED")) : orderStage(row.status, rankTickets);
   const lines = items.map(i => {
     const ticket = tickets.find(t => t.order_item_id === i.id);
     const key = ticket?.image_storage_key_snapshot ?? images.filter(image => image.product_id === i.product_id).sort((a,b) => a.sort_order - b.sort_order)[0]?.storage_key;
-    return { id: i.id, name: i.product_name_snapshot ?? ticket?.product_name_snapshot ?? i.products?.name ?? "Artículo", variant: i.variant_name_snapshot ?? ticket?.variant_name_snapshot ?? i.product_variants?.name ?? null, quantity: Number(i.quantity), image: key ? adminStorage().from(PRODUCT_IMAGE_BUCKET).getPublicUrl(key).data.publicUrl : null, stage: stage === "CANCELLED" ? stage : ticket ? orderStage("CONFIRMED", [{ ...ticket, agreed_total_cents: 0, paid_principal_cents: 0 }]) : stage, logisticsStatus: stage === "CANCELLED" ? "CANCELLED_INCIDENT" : sale ? "DELIVERED" : ticket?.logistics_status ?? null, updatedAt: ticket?.updated_at ?? null };
+    return { id: i.id, name: i.product_name_snapshot ?? ticket?.product_name_snapshot ?? i.products?.name ?? "Artículo", variant: i.variant_name_snapshot ?? ticket?.variant_name_snapshot ?? i.product_variants?.name ?? null, quantity: Number(i.quantity), image: key ? adminStorage().from(PRODUCT_IMAGE_BUCKET).getPublicUrl(key).data.publicUrl : null, stage: stage === "CANCELLED" ? stage : sale ? saleStage(row.status, [location(i.id)?.logistics_status ?? "DELIVERED"]) : ticket ? orderStage("CONFIRMED", [{ ...ticket, agreed_total_cents: 0, paid_principal_cents: 0 }]) : stage, logisticsStatus: stage === "CANCELLED" ? "CANCELLED_INCIDENT" : sale ? location(i.id)?.logistics_status ?? "DELIVERED" : ticket?.logistics_status ?? null, updatedAt: location(i.id)?.updated_at ?? ticket?.updated_at ?? null };
   });
   // Check again after dependent reads: a link revoked during the request is not served.
   const { data: stillActive, error: activeError } = await db.from("sale_tracking_links").select("token").eq("token", token).is("revoked_at", null).maybeSingle();

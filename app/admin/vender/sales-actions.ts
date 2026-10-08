@@ -3,10 +3,36 @@ import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { failure, ok, type ActionState } from "../../../lib/actions";
 import { adminDb, logActivity, requireAdminActor } from "../../../lib/supabase/business";
-import { salesTarget } from "../../../lib/supabase/sales";
+import { FULFILLMENT_MIGRATION, missingRelation, salesTarget, UUID } from "../../../lib/supabase/sales";
+import { SALES_LOCATION_STATUSES } from "../../../lib/sales-location";
 import { trackingError } from "../../../lib/supabase/sales-tracking";
 
 function refresh(value: string) { revalidatePath("/admin/vender"); revalidatePath(`/admin/vender/${value}`); }
+export async function changeSaleItemLocation(_state: ActionState, form: FormData): Promise<ActionState> {
+  try {
+    const actor = await requireAdminActor();
+    const value = String(form.get("target") ?? "");
+    const target = salesTarget(value);
+    const itemId = String(form.get("itemId") ?? "");
+    const status = String(form.get("status") ?? "");
+    if (!target || target.kind !== "SALE" || !UUID.test(itemId) || ![...SALES_LOCATION_STATUSES, "DELIVERED"].includes(status)) return failure("Estado o producto no válido.");
+    const db = adminDb();
+    const sale = await db.from("sales").select("id,status").eq("id", target.id).maybeSingle();
+    if (sale.error) throw new Error(sale.error.message);
+    if (!sale.data || sale.data.status !== "COMPLETED") return failure("Esta venta ya no está activa.");
+    const item = await db.from("sale_items").select("id").eq("id", itemId).eq("sale_id", target.id).maybeSingle();
+    if (item.error) throw new Error(item.error.message);
+    if (!item.data) return failure("El producto no pertenece a esta venta.");
+    const previous = await db.from("sale_item_fulfillment").select("logistics_status").eq("id", itemId).maybeSingle();
+    if (missingRelation(previous.error)) return failure(`Aplica ${FULFILLMENT_MIGRATION} en Supabase para guardar estados.`);
+    if (previous.error) throw new Error(previous.error.message);
+    const result = await db.from("sale_item_fulfillment").upsert({ id: itemId, logistics_status: status, updated_at: new Date().toISOString(), updated_by_admin_id: actor.id }, { onConflict: "id" });
+    if (result.error) throw new Error(result.error.message);
+    await logActivity({ adminUserId: actor.id, action: "SALE_ITEM_FULFILLMENT_UPDATED", entityType: "sales", entityId: target.id, previousData: previous.data ?? { logistics_status: "DELIVERED" }, newData: { sale_item_id: itemId, logistics_status: status } });
+    refresh(value); revalidatePath("/cuenta");
+    return ok("Estado guardado. El cliente ya puede consultarlo.");
+  } catch (error) { return failure(error instanceof Error ? error.message : "No pudimos guardar el estado."); }
+}
 export async function saveSalesNotes(_state: ActionState, form: FormData): Promise<ActionState> {
   try {
     const actor = await requireAdminActor();
