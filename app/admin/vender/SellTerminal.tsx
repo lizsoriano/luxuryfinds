@@ -31,6 +31,7 @@ export type TerminalVariant = {
   allowsDecimal: boolean;
   categoryName: string | null;
   imageUrl: string | null;
+  inTransit?: boolean;
 };
 
 type Option = { id: string; label: string };
@@ -413,6 +414,7 @@ export function SellTerminal({
                   <strong>{variant.productName}</strong>
                   <small>
                     {variant.variantName} · {formatQuantity(variant.stock, variant.unitLabel)} disp.
+                    {variant.inTransit ? " · En camino" : ""}
                   </small>
                   <span className="pos-card-price">{formatMoney(variant.priceCents)}</span>
                 </button>

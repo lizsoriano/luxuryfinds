@@ -604,6 +604,123 @@ export async function listSellableVariants(limit = SELLABLE_CAP): Promise<Sellab
   return flattened.map((item) => ({ ...item, stock: stock.get(item.variantId) ?? 0 }));
 }
 
+/**
+ * What the POS (Vender) shows: only variants that have stock to sell right now
+ * plus merchandise still on its way (products.in_transit), flagged so the
+ * counter can see it. Everything else (the ~4,000 catalogue products with no
+ * existence) stays out; the old "first 300 products by name" cut-off hid most
+ * of the real stock. Selling still needs existence: the sale action validates
+ * it, and an in-transit card with nothing on hand stays disabled.
+ */
+export type PosVariant = SellableVariant & { inTransit: boolean };
+
+const POS_SELECT = `id, name, product_kind, is_active,
+         categories(name),
+         product_variants(id, name, sku, barcode, unit_label, price_cents, cost_cents, is_active),
+         product_images(storage_key, sort_order)`;
+
+export async function listPosVariants(): Promise<PosVariant[]> {
+  const db = adminDb();
+
+  // 1) variants with existence, straight from the stock view (a few hundred rows).
+  const stocked = new Map<string, number>();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db
+      .from("variant_stock")
+      .select("variant_id, available_quantity")
+      .gt("available_quantity", 0)
+      .range(from, from + 999);
+    if (error) throw new Error(error.message);
+    for (const row of data ?? []) stocked.set(row.variant_id as string, Number(row.available_quantity));
+    if (!data || data.length < 1000) break;
+  }
+
+  // 2) the products behind those variants.
+  const productIds = new Set<string>();
+  const stockedIds = [...stocked.keys()];
+  for (let i = 0; i < stockedIds.length; i += STOCK_BATCH_SIZE) {
+    const { data, error } = await db
+      .from("product_variants")
+      .select("product_id")
+      .in("id", stockedIds.slice(i, i + STOCK_BATCH_SIZE));
+    if (error) throw new Error(error.message);
+    for (const row of data ?? []) productIds.add(row.product_id as string);
+  }
+
+  // 3) in-transit products. Without migration 008 the column does not exist and
+  // nothing can be in transit.
+  const inTransitIds = new Set<string>();
+  {
+    const { data, error } = await db
+      .from("products")
+      .select("id")
+      .eq("is_active", true)
+      .eq("in_transit", true)
+      .limit(2000);
+    if (error && !isMissingInTransitColumn(error.message)) throw new Error(error.message);
+    for (const row of data ?? []) {
+      inTransitIds.add(row.id as string);
+      productIds.add(row.id as string);
+    }
+  }
+
+  const all = [...productIds];
+  type Row = {
+    id: string;
+    name: string;
+    product_kind: ProductListRow["product_kind"];
+    is_active: boolean;
+    categories: unknown;
+    product_variants: Array<{
+      id: string;
+      name: string;
+      sku: string | null;
+      barcode: string | null;
+      unit_label: string | null;
+      price_cents: number;
+      cost_cents: number;
+      is_active: boolean;
+    }>;
+    product_images: Array<{ storage_key: string; sort_order: number }>;
+  };
+  const rows: Row[] = [];
+  for (let i = 0; i < all.length; i += STOCK_BATCH_SIZE) {
+    const { data, error } = await db
+      .from("products")
+      .select(POS_SELECT)
+      .eq("is_active", true)
+      .in("id", all.slice(i, i + STOCK_BATCH_SIZE));
+    if (error) throw new Error(error.message);
+    rows.push(...((data ?? []) as unknown as Row[]));
+  }
+
+  const variants: PosVariant[] = rows.flatMap((row) => {
+    const image = [...(row.product_images ?? [])].sort((a, b) => a.sort_order - b.sort_order)[0];
+    const categoryName = relationName(row.categories);
+    const inTransit = inTransitIds.has(row.id);
+    return (row.product_variants ?? [])
+      .filter((variant) => variant.is_active)
+      .map((variant) => ({
+        variantId: variant.id,
+        productId: row.id,
+        productName: row.name,
+        variantName: variant.name,
+        sku: variant.sku,
+        barcode: variant.barcode,
+        unitLabel: variant.unit_label,
+        priceCents: variant.price_cents,
+        costCents: variant.cost_cents ?? 0,
+        stock: stocked.get(variant.id) ?? 0,
+        allowsDecimal: (row.product_kind ?? "SIMPLE") === "MEASURED",
+        categoryName,
+        imageUrl: productImageUrl(image?.storage_key),
+        inTransit,
+      }))
+      .filter((variant) => variant.stock > 0 || variant.inTransit);
+  });
+  return variants.sort((a, b) => a.productName.localeCompare(b.productName, "es"));
+}
+
 export type ProductDetail = {
   id: string;
   name: string;
