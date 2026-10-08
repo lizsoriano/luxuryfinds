@@ -129,7 +129,7 @@ export type StockMap = Map<string, number>;
  * enough for Vercel/Supabase's edge to reject it with a bare 400 Bad Request.
  * Batching keeps every request's URL well under that limit.
  */
-const STOCK_BATCH_SIZE = 150;
+export const STOCK_BATCH_SIZE = 150;
 
 /** Available stock comes from the inventory_movements ledger through variant_stock. */
 export async function getStockFor(variantIds: string[]): Promise<StockMap> {
@@ -245,6 +245,25 @@ async function runSegmentQuery<R extends { error: { message: string } | null }>(
   return { result, unavailable: false };
 }
 
+/**
+ * Búsqueda / Categoría / Incluir archivados of the admin product lists. Shared
+ * by listProducts and the bulk "seleccionar todos los resultados" resolver
+ * (lib/supabase/admin-bulk.ts) so both always mean exactly the same rows.
+ */
+export function applyProductFilters<B extends { eq: (column: string, value: unknown) => B; or: (filters: string) => B }>(
+  builder: B,
+  filters: Pick<ProductQuery, "search" | "categoryId" | "includeArchived">,
+): B {
+  let next = builder;
+  if (!filters.includeArchived) next = next.eq("is_active", true);
+  if (filters.categoryId) next = next.eq("category_id", filters.categoryId);
+  if (filters.search) next = next.or(`name.ilike.%${filters.search}%,internal_code.ilike.%${filters.search}%`);
+  return next;
+}
+
+/** Re-exported for the bulk resolver: segment filter + in_transit fallback, as listProducts does. */
+export { applySegment as applyProductSegment, runSegmentQuery as runProductSegmentQuery };
+
 function relationName(value: unknown): string | null {
   if (!value) return null;
   const row = Array.isArray(value) ? value[0] : value;
@@ -269,9 +288,7 @@ export async function listProducts(query: ProductQuery = {}) {
         { count: "exact" },
       );
 
-    if (!includeArchived) builder = builder.eq("is_active", true);
-    if (categoryId) builder = builder.eq("category_id", categoryId);
-    if (search) builder = builder.or(`name.ilike.%${search}%,internal_code.ilike.%${search}%`);
+    builder = applyProductFilters(builder, { search, categoryId, includeArchived });
     builder = applySegment(builder, segment, filterInTransit);
 
     builder =
@@ -936,13 +953,23 @@ const MAX_STORE_COST_USD_CENTS = 100_000_000;
  *  commission -> `value` is 0, 10 or 15. With a USD cost on file the peso cost is
  *                recalculated; without one only the percentage is remembered.
  */
+export const PRICE_CHANGED_MEANWHILE_MESSAGE =
+  "El precio cambió mientras se aplicaba el cambio. Revisa la lista y vuelve a intentarlo.";
+
 export async function updateVariantQuick(input: {
   variantId: string;
   field: QuickEditField;
   value: number | null;
   adminId: string | null;
+  /**
+   * price only, optional (bulk price changes): the price the caller computed
+   * `value` from. The write only happens while the variant still has exactly
+   * that price (compare-and-set), so a concurrent edit or a repeated request
+   * never stacks a second percentage on top of the first.
+   */
+  expectedPriceCents?: number;
 }): Promise<QuickEditResult> {
-  const { variantId, field, value, adminId } = input;
+  const { variantId, field, value, adminId, expectedPriceCents } = input;
   if (!variantId) return { ok: false, error: "Variante no encontrada." };
   if (field !== "price" && field !== "stock" && field !== "store_cost" && field !== "commission") {
     return { ok: false, error: "Campo no válido." };
@@ -982,7 +1009,23 @@ export async function updateVariantQuick(input: {
   if (field === "price") {
     if (!Number.isInteger(value)) return { ok: false, error: "El precio debe ir en centavos enteros." };
     const previous = Number(data.price_cents ?? 0);
+    if (expectedPriceCents !== undefined && previous !== expectedPriceCents) {
+      return { ok: false, error: PRICE_CHANGED_MEANWHILE_MESSAGE };
+    }
     if (previous === value) return { ...base, changed: false, previous, next: value, delta: 0 };
+    if (expectedPriceCents !== undefined) {
+      const { data: written, error: casError } = await db
+        .from("product_variants")
+        .update({ price_cents: value, updated_at: new Date().toISOString() })
+        .eq("id", variantId)
+        .eq("price_cents", expectedPriceCents)
+        .select("id");
+      if (casError) {
+        return { ok: false, error: describeError(new Error(casError.message), "No fue posible guardar el precio.") };
+      }
+      if (!written?.length) return { ok: false, error: PRICE_CHANGED_MEANWHILE_MESSAGE };
+      return { ...base, changed: true, previous, next: value, delta: 0 };
+    }
     const { error: updateError } = await db
       .from("product_variants")
       .update({ price_cents: value, updated_at: new Date().toISOString() })

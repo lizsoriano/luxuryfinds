@@ -9,9 +9,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 const require=createRequire(import.meta.url);
 const source=readFileSync('app/empleado/inventario/InventoryPagination.tsx','utf8');
 const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;
-const module={exports:{}};
-vm.runInNewContext(js,{module,exports:module.exports,URLSearchParams,require:(name)=>name==='next/link'?{__esModule:true,default:({children,...props})=>React.createElement('a',props,children)}:require(name)});
-const {InventoryPagination}=module.exports;
+const sandboxModule={exports:{}};
+vm.runInNewContext(js,{module:sandboxModule,exports:sandboxModule.exports,URLSearchParams,require:(name)=>name==='next/link'?{__esModule:true,default:({children,...props})=>React.createElement('a',props,children)}:require(name)});
+const {InventoryPagination}=sandboxModule.exports;
 const render=props=>renderToStaticMarkup(React.createElement(InventoryPagination,props));
 test('four page index marks current page and preserves search in arrows',()=>{
  const html=render({page:2,totalPages:4,search:'Owala rosa'});

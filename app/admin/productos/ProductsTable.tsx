@@ -1,14 +1,16 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useMemo } from "react";
 import Link from "next/link";
-import { emptyActionState, type ActionState } from "../../../lib/actions";
 import { Badge } from "../../../components/ui/Badge";
 import { ConfirmAction } from "../../../components/admin/ConfirmAction";
 import { IconAction } from "../../../components/admin/IconAction";
 import { formatMoney, formatQuantity } from "../../../lib/format";
+import { BulkActionBar } from "../../../components/admin/bulk/BulkActionBar";
+import { CopyIcon, PencilIcon, ReceivedIcon, RestoreIcon, TrashIcon } from "../../../components/admin/RowIcons";
+import { useBulkSelection } from "../../../components/admin/bulk/useBulkSelection";
+import type { BulkFilter } from "../../../lib/bulk";
 import {
-  bulkArchiveProductsAction,
   duplicateProductAction,
   markProductReceivedAction,
   setProductActiveAction,
@@ -18,76 +20,6 @@ import { InlineVariantField } from "./InlineVariantField";
 import { InlineStoreCostField } from "./InlineStoreCostField";
 import { PublicToggle } from "./PublicToggle";
 import { MISSING_RATE_MESSAGE, STORE_COST_UNAVAILABLE_MESSAGE } from "../../../lib/supabase/store-cost";
-
-const PencilIcon = () => (
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M12 20h9" strokeLinecap="round" />
-    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-const CopyIcon = () => (
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <rect x="9" y="9" width="12" height="12" rx="2" />
-    <path d="M5 15V5a2 2 0 0 1 2-2h10" />
-  </svg>
-);
-const TrashIcon = () => (
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M4 7h16" strokeLinecap="round" />
-    <path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" />
-  </svg>
-);
-const ReceivedIcon = () => (
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M3 7l9-4 9 4-9 4-9-4Z" strokeLinejoin="round" />
-    <path d="M3 7v10l9 4 9-4V7" strokeLinejoin="round" />
-    <path d="m8.5 13.5 2.5 2.5 4.5-5" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-const RestoreIcon = () => (
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M3 12a9 9 0 1 0 3-6.7" strokeLinecap="round" />
-    <path d="M3 4v5h5" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
-function BulkBar({ selected, onClear }: { selected: string[]; onClear: () => void }) {
-  const [state, formAction, pending] = useActionState(
-    async (previous: ActionState, formData: FormData) => {
-      const result = await bulkArchiveProductsAction(previous, formData);
-      if (result.success) onClear();
-      return result;
-    },
-    emptyActionState,
-  );
-
-  if (!selected.length) return null;
-
-  return (
-    <form action={formAction} className="admin-bulk-bar">
-      {selected.map((id) => (
-        <input key={id} type="hidden" name="id" value={id} />
-      ))}
-      <span>
-        <strong>{selected.length}</strong> seleccionado(s)
-      </span>
-      {state.error && (
-        <span className="admin-icon-form-error" role="alert">
-          {state.error}
-        </span>
-      )}
-      <span className="admin-bulk-bar-actions">
-        <button type="button" className="button button-secondary button-small" onClick={onClear}>
-          Cancelar
-        </button>
-        <button type="submit" className="button button-danger button-small" disabled={pending}>
-          {pending ? "Archivando…" : "Archivar seleccionados"}
-        </button>
-      </span>
-    </form>
-  );
-}
 
 /**
  * Stock and Precio are edited in place for single-variant products (one price,
@@ -190,35 +122,45 @@ function StoreCostCell({ product, context }: { product: ProductListRow; context:
   );
 }
 
+/** What the bulk bar needs to know about the list it sits on. */
+export type BulkListContext = {
+  /** sessionStorage key: list path + filters (the selection survives page changes, not filter changes). */
+  storageKey: string;
+  filter: BulkFilter;
+  totalResults: number;
+  morePages: boolean;
+  categories: Array<{ id: string; name: string }>;
+};
+
 export function ProductsTable({
   products,
   segment,
   storeCost = { available: false, hasRate: false },
+  bulk,
 }: {
   products: ProductListRow[];
   segment?: ProductSegment;
   storeCost?: StoreCostContext;
+  bulk: BulkListContext;
 }) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const allSelected = products.length > 0 && products.every((p) => selected.has(p.id));
-
-  function toggle(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  function toggleAll() {
-    setSelected(allSelected ? new Set() : new Set(products.map((p) => p.id)));
-  }
+  const visibleIds = useMemo(() => products.map((product) => product.id), [products]);
+  const selection = useBulkSelection(bulk.storageKey, visibleIds);
+  const allSelected = selection.allVisibleSelected;
+  const toggleAll = () => selection.setVisible(!allSelected);
 
   return (
     <>
-      <BulkBar selected={[...selected]} onClear={() => setSelected(new Set())} />
-      <label className="inventory-mobile-select"><input type="checkbox" checked={allSelected} onChange={toggleAll} disabled={!products.length} /> Seleccionar todos los productos</label>
+      <BulkActionBar
+        scope="products"
+        selection={selection}
+        totalResults={bulk.totalResults}
+        morePages={bulk.morePages}
+        filter={bulk.filter}
+        categories={bulk.categories}
+      />
+      <label className="inventory-mobile-select">
+        <input type="checkbox" checked={allSelected} onChange={toggleAll} disabled={!products.length} /> Seleccionar todo lo visible ({products.length})
+      </label>
       <div className="admin-table-scroll">
         <table className="admin-data-table admin-products-table">
           <thead>
@@ -226,8 +168,12 @@ export function ProductsTable({
               <th style={{ width: 32 }}>
                 <input
                   type="checkbox"
-                  aria-label="Seleccionar todos"
+                  aria-label="Seleccionar todo lo visible"
+                  title="Seleccionar todo lo visible"
                   checked={allSelected}
+                  ref={(element) => {
+                    if (element) element.indeterminate = selection.someVisibleSelected;
+                  }}
                   onChange={toggleAll}
                 />
               </th>
@@ -243,13 +189,13 @@ export function ProductsTable({
           </thead>
           <tbody>
             {products.map((product) => (
-              <tr key={product.id} className={selected.has(product.id) ? "admin-row-selected" : undefined}>
+              <tr key={product.id} className={selection.has(product.id) ? "admin-row-selected" : undefined}>
                 <td>
                   <input
                     type="checkbox"
                     aria-label={`Seleccionar ${product.name}`}
-                    checked={selected.has(product.id)}
-                    onChange={() => toggle(product.id)}
+                    checked={selection.has(product.id)}
+                    onChange={() => selection.toggle(product.id)}
                   />
                 </td>
                 <td>
