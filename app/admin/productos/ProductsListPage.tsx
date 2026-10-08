@@ -190,6 +190,22 @@ export async function ProductsListPage({
                   available: result.storeCostAvailable,
                   hasRate: costSettings.usdMxnRate !== null && !costSettings.error,
                 }}
+                bulk={{
+                  storageKey: `${config.path}?${new URLSearchParams({
+                    q: sp.q?.trim() ?? "",
+                    categoria: sp.categoria ?? "",
+                    archivados: includeArchived ? "1" : "",
+                  }).toString()}`,
+                  filter: {
+                    search: sp.q?.trim() || undefined,
+                    categoryId: sp.categoria || undefined,
+                    includeArchived,
+                    segment,
+                  },
+                  totalResults: result.total,
+                  morePages: result.total > result.pageSize,
+                  categories,
+                }}
               />
             ) : (
               <EmptyState

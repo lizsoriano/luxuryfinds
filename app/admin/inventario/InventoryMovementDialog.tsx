@@ -12,11 +12,14 @@ export function InventoryMovementDialog({
   productName,
   variantName,
   unitLabel,
+  triggerIcon,
 }: {
   variantId: string;
   productName: string;
   variantName: string;
   unitLabel: string | null;
+  /** When set, the trigger is an icon-only button (.admin-icon-btn) labelled "Ajustar stock". */
+  triggerIcon?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [movementType, setMovementType] = useState<"RECEIPT" | "MANUAL_ADJUSTMENT">("RECEIPT");
@@ -31,9 +34,15 @@ export function InventoryMovementDialog({
 
   return (
     <>
-      <Button type="button" variant="secondary" size="small" onClick={() => setOpen(true)}>
-        Ajustar stock
-      </Button>
+      {triggerIcon ? (
+        <button type="button" className="admin-icon-btn" aria-label="Ajustar stock" title="Ajustar stock" onClick={() => setOpen(true)}>
+          {triggerIcon}
+        </button>
+      ) : (
+        <Button type="button" variant="secondary" size="small" onClick={() => setOpen(true)}>
+          Ajustar stock
+        </Button>
+      )}
       <Dialog open={open} title={`Movimiento de inventario · ${productName}`} onClose={() => setOpen(false)}>
         <form action={action} className="dialog-form">
           <input type="hidden" name="variantId" value={variantId} />

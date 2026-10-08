@@ -1,21 +1,18 @@
-import { ConfirmAction } from "../../../components/admin/ConfirmAction";
 import { FilterForm } from "../../../components/admin/FilterForm";
 import { Pagination } from "../../../components/admin/Pagination";
-import { Badge } from "../../../components/ui/Badge";
 import { Button } from "../../../components/ui/Button";
 import { Card } from "../../../components/ui/Card";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { PageHeader } from "../../../components/ui/PageHeader";
 import { StatCard } from "../../../components/ui/StatCard";
-import { formatMoney, formatMoneyCompact, formatQuantity } from "../../../lib/format";
+import { formatMoneyCompact } from "../../../lib/format";
 import {
   getInventoryKpis,
   getStockFor,
   listActiveCategories,
   listProducts,
 } from "../../../lib/supabase/admin-catalog";
-import { setProductActiveAction } from "../productos/actions";
-import { InventoryMovementDialog } from "./InventoryMovementDialog";
+import { InventoryTable } from "./InventoryTable";
 
 export const dynamic = "force-dynamic";
 
@@ -172,101 +169,39 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
 
       <Card className="admin-panel">
         {variantRows.length ? (
-          <div className="admin-table-scroll">
-            <table className="admin-data-table">
-              <thead>
-                <tr>
-                  <th>Producto</th>
-                  <th>SKU</th>
-                  <th>Categoría</th>
-                  <th className="numeric">Stock</th>
-                  <th className="numeric">Mínimo</th>
-                  <th className="numeric">Precio</th>
-                  <th className="numeric">Costo</th>
-                  <th>Estado</th>
-                  <th>Catálogo</th>
-                  <th aria-label="Acciones" />
-                </tr>
-              </thead>
-              <tbody>
-                {variantRows.map(({ product, variant }) => {
-                  const available = stock.get(variant.id) ?? 0;
-                  const minimum = Number(variant.min_quantity ?? 0);
-                  const isOut = available <= 0;
-                  const isLow = !isOut && minimum > 0 && available <= minimum;
-                  return (
-                    <tr key={variant.id}>
-                      <td>
-                        <div className="admin-cell-main">
-                          {product.imageUrl ? (
-                            <img className="admin-thumb" src={product.imageUrl} alt="" />
-                          ) : (
-                            <span className="admin-thumb admin-thumb-fallback" aria-hidden>
-                              LF
-                            </span>
-                          )}
-                          <span>
-                            <strong>{product.name}</strong>
-                            <span className="admin-cell-sub">{variant.name}</span>
-                          </span>
-                        </div>
-                      </td>
-                      <td style={{ color: "var(--admin-muted)" }}>{variant.sku ?? "—"}</td>
-                      <td style={{ color: "var(--admin-muted)" }}>{product.categoryName ?? "—"}</td>
-                      <td className="numeric">{formatQuantity(available, variant.unit_label)}</td>
-                      <td className="numeric">{minimum ? formatQuantity(minimum, variant.unit_label) : "—"}</td>
-                      <td className="numeric">{formatMoney(variant.price_cents)}</td>
-                      <td className="numeric">{formatMoney(variant.cost_cents ?? 0)}</td>
-                      <td>
-                        {isOut ? (
-                          <Badge tone="danger">Sin stock</Badge>
-                        ) : isLow ? (
-                          <Badge tone="warning">Stock bajo</Badge>
-                        ) : (
-                          <Badge tone="success">Disponible</Badge>
-                        )}
-                      </td>
-                      <td>
-                        {!product.is_active ? (
-                          <Badge tone="neutral">Archivado</Badge>
-                        ) : product.is_public ? (
-                          <Badge tone="success">Visible</Badge>
-                        ) : (
-                          <Badge tone="neutral">Oculto</Badge>
-                        )}
-                      </td>
-                      <td>
-                        <div className="admin-row-actions">
-                          <Button href={`/admin/productos/${product.id}`} variant="secondary" size="small">
-                            Editar
-                          </Button>
-                          <InventoryMovementDialog
-                            variantId={variant.id}
-                            productName={product.name}
-                            variantName={variant.name}
-                            unitLabel={variant.unit_label}
-                          />
-                          <ConfirmAction
-                            action={setProductActiveAction}
-                            fields={{ id: product.id, active: product.is_active ? "false" : "true" }}
-                            triggerLabel={product.is_active ? "Archivar" : "Restaurar"}
-                            title={product.is_active ? "Archivar producto" : "Restaurar producto"}
-                            description={
-                              product.is_active
-                                ? `"${product.name}" saldrá del punto de venta y del catálogo público. El historial de movimientos se conserva.`
-                                : `"${product.name}" volverá al inventario activo.`
-                            }
-                            confirmLabel={product.is_active ? "Archivar" : "Restaurar"}
-                            variant={product.is_active ? "danger" : "primary"}
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <InventoryTable
+            rows={variantRows.map(({ product, variant }) => ({
+              productId: product.id,
+              productName: product.name,
+              imageUrl: product.imageUrl,
+              categoryName: product.categoryName,
+              isActive: product.is_active,
+              isPublic: product.is_public,
+              variantId: variant.id,
+              variantName: variant.name,
+              sku: variant.sku,
+              unitLabel: variant.unit_label,
+              available: stock.get(variant.id) ?? 0,
+              minimum: Number(variant.min_quantity ?? 0),
+              priceCents: Number(variant.price_cents ?? 0),
+              costCents: Number(variant.cost_cents ?? 0),
+            }))}
+            storageKey={`/admin/inventario?${new URLSearchParams({
+              q: sp.q?.trim() ?? "",
+              categoria: sp.categoria ?? "",
+              archivados: includeArchived ? "1" : "",
+              estado: stockFilter,
+            }).toString()}`}
+            filter={{
+              search: sp.q?.trim() || undefined,
+              categoryId: sp.categoria || undefined,
+              includeArchived,
+              stockFilter,
+            }}
+            totalResults={result.total}
+            morePages={result.total > result.pageSize}
+            categories={categories}
+          />
         ) : (
           <EmptyState
             title={stockFilter === "all" ? "Aún no tienes productos en inventario" : "Ninguna referencia coincide"}
@@ -292,7 +227,8 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       {stockFilter !== "all" ? (
         <p className="admin-hint" style={{ marginTop: 12 }}>
           Los filtros de stock se aplican sobre la página actual del listado; la paginación sigue contando el
-          total sin filtrar.
+          total sin filtrar. En cambio, “Seleccionar todos los resultados” (acciones masivas) sí aplica el filtro de
+          stock en todas las páginas.
         </p>
       ) : null}
     </main>

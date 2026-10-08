@@ -13,6 +13,7 @@ import {
 } from "../../../lib/supabase/admin-catalog";
 import { IN_TRANSIT_MIGRATION_FILE } from "../../../lib/supabase/in-transit";
 import { parseUsdToCents, type StoreCostActionState } from "../../../lib/supabase/store-cost";
+import { revalidateCatalog } from "./revalidate";
 import {
   MAX_PRODUCT_IMAGES,
   PRODUCT_IMAGE_BUCKET,
@@ -98,18 +99,6 @@ function optionalProductColumns(weeklyPlanEligible: boolean, inTransit: boolean)
 /** Only Entrega inmediata merchandise can be "en camino"; ON_DEMAND is always false. */
 function readInTransit(formData: FormData, catalogType: "ON_DEMAND" | "IMMEDIATE") {
   return catalogType === "IMMEDIATE" && formData.get("inTransit") === "on";
-}
-
-function revalidateCatalog() {
-  revalidatePath("/empleado/inventario", "layout");
-  revalidatePath("/admin/productos");
-  revalidatePath("/admin/productos/entrega-inmediata");
-  revalidatePath("/admin/productos/en-camino");
-  revalidatePath("/admin/inventario");
-  revalidatePath("/admin/vender");
-  revalidatePath("/catalogo");
-  revalidatePath("/entrega-inmediata");
-  revalidatePath("/por-pedido");
 }
 
 type ParsedVariant = {
@@ -518,33 +507,6 @@ export async function setProductActiveAction(_state: ActionState, formData: Form
     return ok(active ? "Producto restaurado." : "Producto archivado.");
   } catch (error) {
     return failure(describeError(error, "No fue posible archivar el producto."));
-  }
-}
-
-export async function bulkArchiveProductsAction(_state: ActionState, formData: FormData): Promise<ActionState> {
-  try {
-    const actor = await requireAdminActor();
-    const ids = formData.getAll("id").map((value) => String(value)).filter(Boolean);
-    if (!ids.length) return failure("Selecciona al menos un producto.");
-
-    const db = adminDb();
-    const { error } = await db
-      .from("products")
-      .update({ is_active: false, is_public: false, updated_at: new Date().toISOString() })
-      .in("id", ids);
-    if (error) return failure(describeError(new Error(error.message), "No fue posible archivar los productos."));
-
-    await logActivity({
-      adminUserId: actor.id,
-      action: "PRODUCT_BULK_ARCHIVED",
-      entityType: "products",
-      entityId: ids.join(","),
-      newData: { count: ids.length },
-    });
-    revalidateCatalog();
-    return ok(`${ids.length} producto(s) archivado(s).`);
-  } catch (error) {
-    return failure(describeError(error, "No fue posible archivar los productos."));
   }
 }
 
