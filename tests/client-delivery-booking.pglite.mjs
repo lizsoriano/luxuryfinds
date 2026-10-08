@@ -1,10 +1,16 @@
 // Migration 019 (client self-service delivery booking) against the real schema.
+// Behaviour as of 019 only: 020 replaces it (see tests/delivery-requests.pglite.mjs).
 // Run with Node 24 after installing PGlite in the ignored .tmp folder only:
 //   npm install --prefix .tmp/pglite --no-package-lock @electric-sql/pglite
 //   node tests/client-delivery-booking.pglite.mjs
+// (or set PGLITE_DIR to any folder where @electric-sql/pglite is installed).
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { PGlite } from "../.tmp/pglite/node_modules/@electric-sql/pglite/dist/index.js";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const pgliteDir = process.env.PGLITE_DIR ?? path.resolve(import.meta.dirname, "../.tmp/pglite");
+const { PGlite } = await import(pathToFileURL(path.join(pgliteDir, "node_modules/@electric-sql/pglite/dist/index.js")).href);
 
 const db = new PGlite();
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
