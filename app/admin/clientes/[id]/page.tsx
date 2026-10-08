@@ -21,6 +21,7 @@ import {
   QUOTE_STATUS_LABELS,
   QUOTE_STATUS_TONES,
 } from "../../../../lib/supabase/admin-quotes";
+import { ClientPasswordDialog } from "../ClientPasswordDialog";
 import { ClientDialog } from "../ClientDialog";
 
 export const dynamic = "force-dynamic";
@@ -84,6 +85,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
             <Button href="/admin/clientes" variant="secondary" size="small">
               Volver
             </Button>
+            <ClientPasswordDialog id={client.id} />
             <ClientDialog
               triggerLabel="Editar ficha"
               client={{

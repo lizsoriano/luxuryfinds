@@ -23,7 +23,7 @@ export function LoginForm({ next }: { next: string }) {
           className={mode === "phone" ? "active" : ""}
           onClick={() => setMode("phone")}
         >
-          Solo mi celular
+          Celular y contraseña
         </button>
         <button
           type="button"
@@ -39,9 +39,10 @@ export function LoginForm({ next }: { next: string }) {
       {mode === "phone" ? (
         <form action={phoneAction}>
           <input type="hidden" name="next" value={next} />
-          <Input id="phone" name="phone" label="Tu celular" placeholder="+52..." autoComplete="tel" required />
+          <Input id="phone" name="phone" label="Tu celular" placeholder="Tu celular registrado" autoComplete="username" inputMode="tel" required />
+          <Input id="phone-password" name="password" label="Contraseña" type="password" autoComplete="current-password" required />
           <p className="login-help" style={{ marginTop: 0, marginBottom: 14 }}>
-            Sin contraseña: entra con el mismo celular con el que te registramos.
+            Usa la contraseña que te dimos o la que elegiste en tu cuenta.
           </p>
           {phoneState.error && (
             <p className="form-message form-error" role="alert">
@@ -57,8 +58,9 @@ export function LoginForm({ next }: { next: string }) {
           <input type="hidden" name="next" value={next} />
           <Input
             id="identifier"
+            type="email"
             name="identifier"
-            label="Correo o número de celular"
+            label="Correo"
             placeholder="correo@ejemplo.com"
             autoComplete="username"
             required

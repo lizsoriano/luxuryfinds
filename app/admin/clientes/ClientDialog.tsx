@@ -61,6 +61,7 @@ export function ClientDialog({
             placeholder="+52..."
             required
           />
+          {!client && <Input id="client-password" name="password" label="Contraseña inicial *" type="password" autoComplete="new-password" minLength={8} required />}
           <Input id="client-email" name="email" label="Correo" type="email" defaultValue={client?.email ?? ""} />
           <Input id="client-instagram" name="instagram" label="Instagram" defaultValue={client?.instagram ?? ""} />
           <Input id="client-address" name="address" label="Dirección" defaultValue={client?.address ?? ""} />
@@ -87,8 +88,8 @@ export function ClientDialog({
           </label>
           {!client ? (
             <p className="admin-hint field-wide">
-              Se crea también su cuenta de acceso. No necesita contraseña: en &quot;Iniciar sesión&quot; puede entrar
-              solo con este celular, en la pestaña &quot;Solo mi celular&quot;.
+              Asigna una contraseña de al menos 8 caracteres y compártela con la clienta.
+              Entrará con su celular y podrá cambiarla desde Mi perfil.
             </p>
           ) : null}
           {state.error && (
