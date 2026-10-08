@@ -23,7 +23,7 @@ export default async function AccountPage() {
 
   const reservationSection = data.reservations.length > 0 && <section className="proof-section"><Card className="proof-card"><p className="micro-label">MIS APARTADOS</p><h2>Fecha límite para liquidar</h2>{data.reservations.slice(0, 8).map((reservation) => { const ticket = data.tickets.find((item) => item.id === reservation.ticket_id); return <div key={reservation.id}><strong>{ticket?.product_name_snapshot ?? "Apartado"}</strong><p>{reservation.status === "ACTIVE" ? `Liquida antes del ${date(reservation.expires_at)}. Si no se liquida, el producto pasa a disponible.` : reservation.status === "PAID" ? "Liquidado: tu apartado permanece reservado." : "Apartado cerrado: el producto pasa a disponible. Consulta con Luxury Finds la resolución de tus abonos."}</p></div>; })}</Card></section>;
   const tickets = data.tickets;
-  const activeTickets = tickets.filter((ticket) => !["DELIVERED", "CANCELLED_INCIDENT"].includes(ticket.logistics_status));
+  const activeTickets = [...tickets, ...data.salePurchases].filter((ticket) => !["DELIVERED", "CANCELLED_INCIDENT"].includes(ticket.logistics_status));
   const nextInstallment = data.installments.find((item) => ["PENDING", "PARTIAL", "OVERDUE"].includes(item.status));
   const unread = data.notifications.filter((item) => !item.read_at).length;
   const activePlan = data.plans.find((plan) => plan.status === "ACTIVE");

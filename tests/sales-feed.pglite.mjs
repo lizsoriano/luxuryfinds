@@ -100,5 +100,18 @@ try {
   assert.equal((await db.query("SELECT * FROM luxury_finds.sales_feed")).rows.length, 32);
   assert.equal((await db.query("SELECT * FROM luxury_finds.sale_tracking_links WHERE revoked_at IS NULL")).rows.length, 1);
   await db.exec("RESET ROLE");
+  const fulfillmentMigration = await readFile(new URL("../database/migrations/018_sale_item_fulfillment.sql",import.meta.url),"utf8");
+  await db.exec(fulfillmentMigration);await db.exec(fulfillmentMigration);
+  assert.equal((await db.query("SELECT stage FROM sales_feed WHERE id=$1",[uuid(100)])).rows[0].stage,"DELIVERED");
+  for(const [status,stage] of [["ORDERED","IN_TRANSIT"],["IN_TRANSIT","IN_TRANSIT"],["RECEIVED_LA_PAZ","IN_TRANSIT"],["READY_FOR_DELIVERY","READY"],["DELIVERED","DELIVERED"]]){
+    await db.query("INSERT INTO sale_item_fulfillment(id,logistics_status) VALUES ($1,$2) ON CONFLICT(id) DO UPDATE SET logistics_status=excluded.logistics_status",[uuid(200),status]);
+    assert.equal((await db.query("SELECT stage FROM sales_feed WHERE id=$1",[uuid(100)])).rows[0].stage,stage);
+    assert.equal(buildSaleIndexRow({id:uuid(100),sale_number:"TEMP",sold_at:new Date().toISOString(),client_id:null,status:"COMPLETED",concept:null},null,[],[status]).stage,stage);
+  }
+  await db.query("INSERT INTO sale_item_fulfillment(id,logistics_status) VALUES ($1,'READY_FOR_DELIVERY')",[uuid(201)]);
+  assert.equal((await db.query("SELECT stage FROM sales_feed WHERE id=$1",[uuid(101)])).rows[0].stage,"CANCELLED");
+  await assert.rejects(db.query("UPDATE sale_item_fulfillment SET logistics_status='INVALID'"));
+  for(const role of ["anon","authenticated"]){await db.exec(`SET ROLE ${role}`);await assert.rejects(db.query("SELECT * FROM luxury_finds.sale_item_fulfillment"));await db.exec("RESET ROLE");}
+  await db.exec("SET ROLE service_role");assert.equal((await db.query("SELECT * FROM luxury_finds.sale_item_fulfillment")).rows.length,2);await db.exec("RESET ROLE");
   console.log("PASS: SQL/TypeScript parity, mixed ordering, pagination, shopper, no client, weekly refund, idempotency, token constraints/revocation and access grants.");
 } finally { await db.close(); }

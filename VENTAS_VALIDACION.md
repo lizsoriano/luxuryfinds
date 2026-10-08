@@ -24,3 +24,11 @@ El detalle de Ventas permite actualizar cada ticket desde el diálogo existente.
 El seguimiento conserva la ubicación exacta por producto y muestra “Favor de agendar pickup” solo para productos listos, sin invitación para cancelaciones ni entregas ya agendadas. El enlace lleva a `/contacto`, los canales actuales del sitio; no registra por sí mismo una cita ni comparte el token con servicios externos. Se probó cada ubicación, la ocultación del aviso al agendar/cancelar y el diseño a 1440/375 px.
 
 El mismo aviso aparece en el panel privado de la clienta (`/cuenta`), junto a cada producto listo. Ambos lugares usan el componente `PickupNotice`. El panel muestra todos los productos activos que ya devuelve su lectura bajo la sesión de la clienta, sin limitarse a los primeros cuatro; no se cambia el acceso ni la lectura de sus datos. Una prueba de renderizado comprueba los cuatro estados, el producto listo después del cuarto, el aviso único y su ausencia en entregas agendadas o canceladas. El panel se revisó a 1440 y 375 px con datos ficticios.
+
+## Semáforo por producto
+
+El detalle muestra botones con colores para McAllen, paquetería, sucursal La Paz y listo para entrega. En ventas de mostrador incluye Entregado. Los pedidos reutilizan su acción logística y mantienen la agenda para entregar. Los cambios actualizan seguimiento público y compras activas del cliente autenticado; las ventas sin cliente solo tienen seguimiento por enlace.
+
+La dueña debe aplicar manualmente `database/migrations/018_sale_item_fulfillment.sql` después de 017. Esta tabla guarda ubicaciones por artículo sin modificar pagos ni inventario; las ventas antiguas conservan Entregado por defecto. Antes de aplicar 018 los botones de mostrador muestran el aviso y están desactivados. SQL probado dos veces en PGlite, incluyendo permisos, estados, cancelaciones y equivalencia de la vista. Acciones probadas con autorización, pertenencia del artículo, falta de migración y sincronización pública; panel probado para impedir productos de otro cliente. QA visual escritorio/móvil con fixtures.
+
+Los clics reales del componente se probaron en Chromium con acciones simuladas: artículo correcto, selección tras guardar, actualización de página, fallo sin cambiar el estado y aviso de pickup solo al estar listo.

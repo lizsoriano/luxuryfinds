@@ -141,8 +141,12 @@ function safeCents(value: bigint) {
   return number;
 }
 
-export function saleStage(status: string): SalesStage {
-  return status === "CANCELLED" ? "CANCELLED" : "DELIVERED";
+export function saleStage(status: string, locations: string[] = []): SalesStage {
+  if (status === "CANCELLED") return "CANCELLED";
+  const rank = locations.length ? Math.min(...locations.map(s => LOGISTICS_RANK[s] ?? 4)) : 4;
+  if (rank === 2) return "IN_TRANSIT";
+  if (rank === 3) return "READY";
+  return "DELIVERED";
 }
 
 /** A pedido is as far along as its least advanced live ticket. */
@@ -174,6 +178,7 @@ export function buildSaleIndexRow(
   sale: { id: string; sale_number: string; sold_at: string; client_id: string | null; status: string; concept: string | null },
   client: ClientNames,
   items: Array<{ product_name_snapshot: string | null; variant_name_snapshot: string | null; sku_snapshot: string | null }>,
+  locations: string[] = [],
 ): SalesFeedIndexRow {
   const names = items.length
     ? items.map((item) => concatWs([item.product_name_snapshot, item.variant_name_snapshot, item.sku_snapshot])).join(" ")
@@ -184,7 +189,7 @@ export function buildSaleIndexRow(
     reference: sale.sale_number,
     occurred_at: sale.sold_at,
     client_id: sale.client_id,
-    stage: saleStage(sale.status),
+    stage: saleStage(sale.status, locations),
     to_collect: false,
     search_text: foldSearchText(
       concatWs([sale.sale_number, sale.concept, client?.first_name, client?.last_name, client?.phone, names]),
