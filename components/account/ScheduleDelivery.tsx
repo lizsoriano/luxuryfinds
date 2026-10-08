@@ -6,11 +6,11 @@ import { emptyActionState } from "../../lib/actions";
 import { bookableStarts } from "../../lib/account-view";
 import { Icon } from "./AccountIcons";
 
-export type SchedulerTicket = { id: string; name: string; detail: string; imageUrl: string | null; balanceText: string | null };
+export type SchedulerTicket = { id: string; name: string; detail: string; imageUrl: string | null; balanceText: string | null; reason?: string };
 export type SchedulerSlotView = { id: string; availabilityId: string; startsAt: string; free: boolean; pickup: boolean; didi: boolean; timeLabel: string };
 export type SchedulerPoint = { id: string; name: string; address: string; mapUrl: string; days: Array<{ date: string; label: string; slots: SchedulerSlotView[] }> };
 
-export function ScheduleDelivery({ tickets, points, reschedule = false }: { tickets: SchedulerTicket[]; points: SchedulerPoint[]; reschedule?: boolean }) {
+export function ScheduleDelivery({ tickets, blocked = [], points, reschedule = false }: { tickets: SchedulerTicket[]; blocked?: SchedulerTicket[]; points: SchedulerPoint[]; reschedule?: boolean }) {
   const [selected, setSelected] = useState<string[]>(tickets.map((t) => t.id));
   const [pointId, setPointId] = useState(points.length === 1 ? points[0].id : "");
   const [date, setDate] = useState("");
@@ -40,7 +40,7 @@ export function ScheduleDelivery({ tickets, points, reschedule = false }: { tick
       <input type="hidden" name="slotId" value={slot?.id ?? ""} />
       <input type="hidden" name="deliveryType" value={chosenMode} />
 
-      {tickets.length > 1 && !reschedule && (
+      {(tickets.length > 1 || (blocked.length > 0 && tickets.length > 0)) && !reschedule && (
         <fieldset className="acc-step">
           <legend><span>{++step}</span>¿Qué vas a recibir?</legend>
           <div className="acc-choice-list">
@@ -52,10 +52,19 @@ export function ScheduleDelivery({ tickets, points, reschedule = false }: { tick
                 <span><strong>{t.name}</strong><small>{t.detail}{t.balanceText ? ` · ${t.balanceText}` : ""}</small></span>
               </label>
             ))}
+            {blocked.map((t) => (
+              <label key={t.id} className="acc-choice acc-choice-product is-blocked" aria-disabled="true">
+                <input type="checkbox" checked={false} disabled readOnly />
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                {t.imageUrl ? <img src={t.imageUrl} alt="" className="acc-thumb acc-thumb-sm" /> : <span className="acc-thumb acc-thumb-sm acc-thumb-empty"><Icon name="bag" size={16} /></span>}
+                <span><strong>{t.name}</strong><small>{t.detail}</small><small className="acc-blocked-note">No disponible todavía · {t.reason ?? "aún no está listo para entrega"}</small></span>
+              </label>
+            ))}
           </div>
+          {blocked.length > 0 && <p className="acc-muted">Solo puedes agendar los productos que ya están listos para entrega en La Paz. Los demás se habilitan cuando lleguen.</p>}
         </fieldset>
       )}
-      {(tickets.length === 1 || reschedule) && (
+      {((tickets.length === 1 && !blocked.length) || reschedule) && (
         <div className="acc-scheduler-items">
           {tickets.map((t) => <p key={t.id}><Icon name="bag" size={16} /><span><strong>{t.name}</strong> · {t.detail}{t.balanceText ? ` · ${t.balanceText}` : ""}</span></p>)}
         </div>

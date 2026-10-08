@@ -5,6 +5,7 @@ import { CancelAppointment } from "../../../components/account/CancelAppointment
 import { ScheduleDelivery, type SchedulerPoint, type SchedulerTicket } from "../../../components/account/ScheduleDelivery";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { CLIENT_CHANGE_RULE, capitalize, PICKUP_REMINDER, formatDayLong, formatDayShort, formatTimeOnly, moneyText, statusPhrase } from "../../../lib/account-view";
+import { LOGISTICS_STATUS_LABELS } from "../../../lib/format";
 import { getAccountOverview } from "../../../lib/supabase/account";
 import { CLIENT_BOOKING_MIGRATION, POLICY_DELIVERY_POINTS, getDeliveryPoints, isClientBookingAvailable, type DeliveryPoint } from "../../../lib/supabase/account-delivery";
 
@@ -41,6 +42,8 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
   const pointsWithDays = delivery.points.filter((p) => p.days.some((d) => d.slots.some((s) => s.free)));
   const byMessage = lines.filter((l) => l.scheduleByMessage);
   const coming = lines.filter((l) => ["WAITING_TO_ORDER", "READY_TO_ORDER", "ORDERED", "IN_TRANSIT", "RECEIVED_LA_PAZ"].includes(l.status));
+  // Her other pending products: shown in the scheduler as disabled options until they are ready for delivery.
+  const blocked: SchedulerTicket[] = coming.filter((l) => l.ticketId && !tickets.some((t) => t.id === l.ticketId)).map((l) => ({ id: l.ticketId!, name: l.name, detail: [l.variant, l.ticketNumber].filter(Boolean).join(" · "), imageUrl: l.imageUrl, balanceText: null, reason: `${(LOGISTICS_STATUS_LABELS as Record<string, string>)[l.status] ?? "en proceso"}` }));
 
   return <main className="account-content acc-content">
     <header className="acc-page-head"><h1>Entregas</h1><p>Agenda tu entrega, revisa tus citas y conoce dónde entregamos.</p></header>
@@ -65,7 +68,7 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
           ? <div className="acc-card acc-pad acc-muted">{coming.length ? "Cuando uno de tus pedidos esté listo en La Paz, aquí podrás elegir lugar, día y hora." : "No tienes pedidos listos para entrega por ahora."}</div>
           : !points.length
             ? <Notice>Tu pedido está listo, pero aún no hay horarios publicados. Te avisaremos en cuanto los haya, o escríbenos para coordinar. <Link className="acc-inline-link" href="/contacto">Contactar</Link></Notice>
-            : <div className="acc-card acc-pad"><ScheduleDelivery tickets={tickets} points={points} reschedule={Boolean(toReschedule)} /><p className="acc-muted">{PICKUP_REMINDER} Agenda con al menos {delivery.noticeDays} día(s) de anticipación.</p></div>}
+            : <div className="acc-card acc-pad"><ScheduleDelivery tickets={tickets} blocked={toReschedule ? [] : blocked} points={points} reschedule={Boolean(toReschedule)} /><p className="acc-muted">{PICKUP_REMINDER} Agenda con al menos {delivery.noticeDays} día(s) de anticipación.</p></div>}
     </section>
 
     {byMessage.length > 0 && <section className="acc-section">
