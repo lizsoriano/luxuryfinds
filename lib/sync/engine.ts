@@ -766,8 +766,9 @@ async function createProduct(context: IngestContext) {
       catalog_type: "ON_DEMAND",
       brand_id: brandId,
       category_id: resolveCategory(categories, product.categories),
-      // Published only when we actually know what to charge for it.
-      is_public: usable.length > 0,
+      // Store imports always start hidden, even when their price is known.
+      // Publishing is an explicit decision made by the owner in Admin.
+      is_public: false,
       is_active: true,
     })
     .select("id")
