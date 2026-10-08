@@ -23,6 +23,8 @@ export type CatalogProduct = {
   availability: "Entrega inmediata" | "Por pedido";
   imageUrl: string | null;
   tone: "rose" | "cream" | "wine" | "beige";
+  /** Uploaded by hand from the panel today (business day, America/Mazatlan): shows the "New!" badge. */
+  isNew?: boolean;
 };
 
 export type CatalogFilters = {
@@ -44,6 +46,8 @@ type ProductRow = {
   slug: string | null;
   name: string;
   catalog_type: CatalogType;
+  created_at: string;
+  created_by_admin_id: string | null;
   categories: Relation<{ name: string }>;
   brands: Relation<{ name: string }>;
   product_variants: Array<{
@@ -63,6 +67,23 @@ function firstRelation<T>(value: Relation<T>): T | null {
 }
 
 const TONES = ["rose", "cream", "wine", "beige"] as const;
+
+/** Calendar day (YYYY-MM-DD) of an instant in the shop's time zone (La Paz, UTC-7, no DST). */
+function businessDay(instant: Date) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mazatlan", year: "numeric", month: "2-digit", day: "2-digit" }).format(instant);
+}
+
+/**
+ * "New!" = a product someone uploaded by hand from the panel (created_by_admin_id is
+ * set; the store syncs and bulk imports leave it empty so they never flood the badge)
+ * on the current business day. Every public page is force-dynamic, so this is
+ * recomputed on each request and the badge disappears by itself at midnight.
+ */
+function isUploadedToday(row: ProductRow) {
+  if (!row.created_by_admin_id || !row.created_at) return false;
+  const created = new Date(row.created_at);
+  return !Number.isNaN(created.getTime()) && businessDay(created) === businessDay(new Date());
+}
 
 function mapProductRow(
   row: ProductRow,
@@ -90,6 +111,7 @@ function mapProductRow(
     availability: row.catalog_type === "IMMEDIATE" ? "Entrega inmediata" : "Por pedido",
     imageUrl,
     tone: TONES[toneIndex % TONES.length],
+    isNew: isUploadedToday(row),
   };
 }
 
@@ -98,6 +120,8 @@ const PRODUCT_SELECT = `
   slug,
   name,
   catalog_type,
+  created_at,
+  created_by_admin_id,
   categories(name),
   brands(name),
   product_variants(id, name, price_cents, is_active),
