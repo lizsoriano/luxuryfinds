@@ -214,9 +214,11 @@ function toDate(value: string) {
   // A bare calendar date is read at local noon so it never shifts a day.
   return new Date(value.length === 10 ? `${value}T12:00:00-07:00` : value);
 }
+/** "sáb 10 oct" -> "Sáb 10 oct" (only the first letter). */
+export function capitalize(text: string) { return text.charAt(0).toUpperCase() + text.slice(1); }
 export function localDay(value: string | Date) { return DAY_KEY.format(typeof value === "string" ? toDate(value) : value); }
 export function formatDayLong(value: string) { return DAY_LONG.format(toDate(value)); }
-export function formatDayShort(value: string) { return DAY_SHORT.format(toDate(value)).replace(/\./g, ""); }
+export function formatDayShort(value: string) { return capitalize(DAY_SHORT.format(toDate(value)).replace(/\./g, "").replace(" de ", " ")); }
 export function formatDateShort(value: string) { return DATE_SHORT.format(toDate(value)).replace(/\./g, ""); }
 export function formatTimeOnly(value: string) { return TIME_ONLY.format(toDate(value)); }
 
@@ -326,8 +328,9 @@ export function buildAccountOverview(raw: AccountRaw, image: (key: string | null
       reference: ticketNumbers.length === 1 ? ticketNumbers[0] : `Pedido ${order.id.slice(0, 8).toUpperCase()}`,
       channel: order.origin === "WEBSITE" ? "Pedido en línea" : "Pedido",
       createdAt: order.created_at, lines,
-      subtotalCents: lines.reduce((sum, line) => sum + line.unitPriceCents * line.quantity, 0),
-      discountCents: lines.reduce((sum, line) => sum + line.discountCents, 0),
+      // A ticket's agreed total already nets its discount (and a weekly plan's own total).
+      subtotalCents: lines.reduce((sum, line) => sum + line.totalCents, 0),
+      discountCents: 0,
       totalCents: (state === "PENDING" ? lines : counted).reduce((sum, line) => sum + line.totalCents, 0),
       paidCents: (counted.length ? counted : lines).reduce((sum, line) => sum + line.paidCents, 0),
       balanceCents: counted.reduce((sum, line) => sum + line.balanceCents, 0),

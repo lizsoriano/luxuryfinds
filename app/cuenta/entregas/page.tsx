@@ -4,7 +4,7 @@ import { AppointmentWhen, LineSummary, Notice, ProductThumb, SectionHead } from 
 import { CancelAppointment } from "../../../components/account/CancelAppointment";
 import { ScheduleDelivery, type SchedulerPoint, type SchedulerTicket } from "../../../components/account/ScheduleDelivery";
 import { EmptyState } from "../../../components/ui/EmptyState";
-import { CLIENT_CHANGE_RULE, PICKUP_REMINDER, formatDayLong, formatDayShort, formatTimeOnly, moneyText, statusPhrase } from "../../../lib/account-view";
+import { CLIENT_CHANGE_RULE, capitalize, PICKUP_REMINDER, formatDayLong, formatDayShort, formatTimeOnly, moneyText, statusPhrase } from "../../../lib/account-view";
 import { getAccountOverview } from "../../../lib/supabase/account";
 import { CLIENT_BOOKING_MIGRATION, POLICY_DELIVERY_POINTS, getDeliveryPoints, isClientBookingAvailable, type DeliveryPoint } from "../../../lib/supabase/account-delivery";
 
@@ -83,7 +83,7 @@ export default async function DeliveriesPage({ searchParams }: { searchParams: P
       {delivery.points.length ? <div className="acc-stack">{delivery.points.map((p) => <article key={p.id} className="acc-card acc-pad acc-point">
         <div className="acc-point-head"><Icon name="pin" size={22} /><div><strong>{p.name}</strong><span>{p.address}</span></div></div>
         <a className="button button-secondary acc-btn" href={p.mapUrl} target="_blank" rel="noreferrer"><Icon name="map" size={18} />Ver en el mapa</a>
-        {p.days.length ? <ul className="acc-point-days">{p.days.slice(0, 6).map((d) => <li key={d.date}><b>{formatDayLong(d.date)}</b>{windows(d).map((w) => <span key={w.text}>{w.text}{w.free === 0 ? " · lleno" : ""}</span>)}</li>)}</ul>
+        {p.days.length ? <ul className="acc-point-days">{p.days.slice(0, 6).map((d) => <li key={d.date}><b>{capitalize(formatDayLong(d.date))}</b>{windows(d).map((w) => <span key={w.text}>{w.text}{w.free === 0 ? " · lleno" : ""}</span>)}</li>)}</ul>
           : <p className="acc-muted">Aún no hay horarios publicados aquí. Te avisaremos cuando los haya.</p>}
         {(p.pickup || p.didi) && <p className="acc-muted">{[p.pickup && "Recoger", p.didi && "Envío por DiDi"].filter(Boolean).join(" · ")}</p>}
       </article>)}{!pointsWithDays.length && <p className="acc-muted">Por ahora no hay horarios libres. Te avisaremos cuando se publiquen nuevos.</p>}</div>

@@ -58,11 +58,12 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
     <section className="acc-section">
       <h2 className="acc-h2">Recibo</h2>
       <div className="acc-card acc-pad acc-receipt">
-        <ul>{purchase.lines.map((line) => <li key={line.key}><span>{line.name}{line.quantity !== 1 ? ` × ${line.quantity}` : ""}</span><b>{line.status === "CANCELLED" || line.status === "CANCELLED_INCIDENT" ? <s>{moneyText(line.unitPriceCents * line.quantity)}</s> : moneyText(line.unitPriceCents * line.quantity)}</b></li>)}</ul>
-        <dl>
-          {purchase.discountCents > 0 && <><dt>Descuento</dt><dd>−{moneyText(purchase.discountCents)}</dd></>}
-          <dt>Total</dt><dd>{moneyText(purchase.totalCents)}</dd>
-        </dl>
+        <ul>{purchase.lines.map((line) => <li key={line.key}><span>{line.name}{line.quantity !== 1 ? ` × ${line.quantity}` : ""}{line.planId ? <small> (precio con plan de pagos)</small> : null}</span><b>{line.status === "CANCELLED" || line.status === "CANCELLED_INCIDENT" ? <s>{moneyText(line.totalCents)}</s> : moneyText(line.totalCents)}</b></li>)}</ul>
+        {(purchase.discountCents > 0 || purchase.state === "CANCELLED") && <dl>
+          {purchase.discountCents > 0 && <><dt>Subtotal</dt><dd>{moneyText(purchase.subtotalCents)}</dd><dt>Descuento</dt><dd>−{moneyText(purchase.discountCents)}</dd></>}
+          <dt>{purchase.state === "CANCELLED" ? "Compra cancelada" : "Total"}</dt><dd>{moneyText(purchase.state === "CANCELLED" ? 0 : purchase.totalCents)}</dd>
+          {purchase.state === "CANCELLED" && purchase.paidCents > 0 && <><dt>Pagos registrados</dt><dd>{moneyText(purchase.paidCents)}</dd></>}
+        </dl>}
         {purchase.state !== "CANCELLED" && <MoneyRow total={purchase.totalCents} paid={purchase.paidCents} balance={purchase.balanceCents} />}
         {purchase.balanceCents > 0 && <Link className="button button-secondary acc-btn acc-btn-full" href={`/cuenta/pagos?ticket=${owedTicket ?? ""}#subir`}><Icon name="wallet" size={18} />Pagar / subir comprobante</Link>}
       </div>

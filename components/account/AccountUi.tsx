@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Badge } from "../ui/Badge";
 import { Icon } from "./AccountIcons";
 import {
-  TRACK_STEPS, formatDateShort, formatDayLong, formatTimeOnly, moneyText, statusLabel, statusPhrase, statusTone, trackIndex,
+  TRACK_STEPS, capitalize, formatDateShort, formatDayLong, formatTimeOnly, moneyText, statusLabel, statusPhrase, statusTone, trackIndex,
   type AccountAction, type AccountLine, type AccountMoney, type AccountPurchase,
 } from "../../lib/account-view";
 
@@ -168,7 +168,7 @@ export function SectionHead({ title, eyebrow, href, linkText, id }: { title: str
 }
 
 export function AppointmentWhen({ startsAt, endsAt }: { startsAt: string; endsAt: string }) {
-  return <>{formatDayLong(startsAt)} · {formatTimeOnly(startsAt)} a {formatTimeOnly(endsAt)}</>;
+  return <>{capitalize(formatDayLong(startsAt))} · {formatTimeOnly(startsAt)} a {formatTimeOnly(endsAt)}</>;
 }
 
 export function Notice({ tone = "info", children }: { tone?: "info" | "warning"; children: React.ReactNode }) {

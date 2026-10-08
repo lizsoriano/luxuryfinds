@@ -872,6 +872,7 @@ body{font-weight:400}
 .acc-appointment>svg{flex:0 0 auto;color:var(--success);margin-top:2px}
 .acc-appointment>div{display:grid;gap:3px;min-width:0}
 .acc-appointment strong{font-size:15px;line-height:1.35}
+.acc-appointment a{font-size:13px;font-weight:600}
 .acc-appointment span,.acc-appointment small{color:var(--muted);font-size:13px;line-height:1.45}
 .acc-appointment-card{display:grid;gap:10px}
 .acc-appointment-card .acc-appointment{padding:0}
@@ -970,7 +971,7 @@ body{font-weight:400}
 .acc-point .button{justify-self:start}
 .acc-point-days{list-style:none;margin:0;padding:0;display:grid;gap:8px}
 .acc-point-days li{display:flex;flex-wrap:wrap;gap:4px 10px;padding:10px 12px;border-radius:12px;background:var(--paper);font-size:13.5px}
-.acc-point-days b{flex:1 1 100%;text-transform:capitalize}
+.acc-point-days b{flex:1 1 100%}
 .acc-point-days span{color:var(--muted)}
 .acc-policy-points{list-style:none;margin:14px 0;padding:0;display:grid;gap:10px}
 .acc-policy-points li{display:flex;gap:10px;align-items:flex-start;font-size:14px}
@@ -996,10 +997,11 @@ body{font-weight:400}
 .acc-choice small{color:var(--muted);font-size:12.5px;line-height:1.4}
 .acc-choice.is-on{border-color:var(--rose);background:#fbf5ed;box-shadow:0 0 0 3px rgba(138,90,53,.12)}
 .acc-choice:has(input:focus-visible){outline:3px solid rgba(138,90,53,.34);outline-offset:2px}
-.acc-chips{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;scroll-snap-type:x proximity}
+.acc-chips{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;scroll-snap-type:x proximity;scrollbar-width:none}
+.acc-chips::-webkit-scrollbar{display:none}
 .acc-chips-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible}
-.acc-chip{min-height:46px;min-width:max-content;padding:0 14px;border:1.5px solid var(--line);border-radius:12px;background:var(--white);color:var(--ink);font-size:14px;font-weight:700;cursor:pointer;scroll-snap-align:start;text-transform:capitalize}
-.acc-chips-grid .acc-chip{min-width:0}
+.acc-chip{min-height:46px;min-width:max-content;padding:0 14px;border:1.5px solid var(--line);border-radius:12px;background:var(--white);color:var(--ink);font-size:14px;font-weight:700;cursor:pointer;scroll-snap-align:start;white-space:nowrap}
+.acc-chips-grid .acc-chip{min-width:0;padding:0 6px;font-size:13.5px}
 .acc-chip.is-on{background:var(--ink);border-color:var(--ink);color:white}
 .acc-scheduler-items{display:grid;gap:6px}
 .acc-scheduler-items p{margin:0;display:flex;gap:8px;align-items:flex-start;font-size:14px;line-height:1.4}
@@ -1007,7 +1009,6 @@ body{font-weight:400}
 .acc-scheduler-summary{padding:12px;border-radius:14px;background:rgba(97,122,98,.1)}
 .acc-scheduler-summary p{margin:0;display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.45;text-transform:none}
 .acc-scheduler-summary svg{flex:0 0 auto;color:var(--success);margin-top:2px}
-.acc-scheduler-summary strong{text-transform:capitalize}
 .acc-scheduler-summary small{color:var(--muted)}
 .acc-success{display:flex;gap:10px;align-items:flex-start;padding:14px;border-radius:14px;background:rgba(97,122,98,.12);color:#3f6144}
 .acc-success p{margin:4px 0 0;font-size:13px;color:var(--muted)}
@@ -1018,4 +1019,4 @@ body{font-weight:400}
 .account-bottom-nav.acc-bottom-nav a.active span{font-weight:800}
 @media(max-width:760px){.acc-content{width:min(100% - 32px,760px);padding:20px 0 110px}.acc-topbar .account-avatar{display:none}}
 @media(max-width:360px){.acc-money>div strong{font-size:15px}.acc-money-row dd{font-size:13.5px}.acc-step-label{font-size:9.5px}.acc-chips-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(min-width:761px){.acc-content{padding:36px 0 80px}.acc-hello h1{font-size:34px}.acc-page-head h1{font-size:32px}.acc-purchase-actions .button{flex:0 0 auto}.acc-pay-actions .button{min-width:200px}.acc-action{padding:24px}.acc-action-body h2{font-size:22px}.acc-action .acc-btn-full{width:auto;justify-self:start;min-width:240px}.acc-pad{padding:20px}.acc-purchase{padding:20px}.account-tabs a{font-size:13px;padding:16px 0 14px}.account-nav-wrap{padding-inline:max(16px,calc((100vw - 1100px)/2))}.acc-choice-row{grid-template-columns:1fr 1fr}.acc-chips-grid{grid-template-columns:repeat(5,minmax(0,1fr))}.acc-scheduler>.acc-btn-full{width:auto;justify-self:start;min-width:260px}}
+@media(min-width:761px){.acc-content{padding:36px 0 80px}.acc-hello h1{font-size:34px}.acc-page-head h1{font-size:32px}.acc-purchase-actions .button{flex:0 0 auto}.acc-pay-actions .button{min-width:200px}.acc-action{padding:24px}.acc-action-body h2{font-size:22px}.acc-action .acc-btn-full{width:auto;justify-self:start;min-width:240px}.acc-pad{padding:20px}.acc-purchase{padding:20px}.account-tabs a{font-size:13px;padding:16px 0 14px}.account-nav-wrap{padding-inline:max(16px,calc((100vw - 760px)/2))}.acc-topbar{padding:0 max(16px,calc((100vw - 760px)/2))}.acc-choice-row{grid-template-columns:1fr 1fr}.acc-chips-grid{grid-template-columns:repeat(5,minmax(0,1fr))}.acc-scheduler>.acc-btn-full{width:auto;justify-self:start;min-width:260px}}
