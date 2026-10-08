@@ -12,6 +12,7 @@ import { sendTelegramMessage } from "../../../lib/telegram/send";
 function revalidate(orderId?: string) {
   revalidatePath("/admin/pedidos");
   revalidatePath("/admin/vender");
+  revalidatePath("/cuenta");
   revalidatePath("/admin/vender/[id]", "page");
   if (orderId) revalidatePath(`/admin/pedidos/${orderId}`);
   revalidatePath("/admin/inventario");
