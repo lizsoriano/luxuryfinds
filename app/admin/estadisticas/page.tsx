@@ -215,7 +215,7 @@ export default async function EstadisticasPage({ searchParams }: { searchParams:
           <EmptyState
             title="Aún no hay ventas registradas en este periodo."
             description="Cuando registres una venta en Vender o confirmes un pedido del catálogo, la gráfica se llena sola. Prueba también con un periodo más amplio."
-            href="/admin/vender"
+            href="/admin/vender/nueva"
             action="Registrar una venta"
           />
         )}

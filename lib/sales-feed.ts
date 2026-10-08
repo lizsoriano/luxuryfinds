@@ -130,6 +130,17 @@ export type StageTicket = {
   paid_principal_cents: number | string;
 };
 
+function cents(value: number | string): bigint {
+  if (typeof value === "number" && !Number.isSafeInteger(value)) throw new Error("Importe fuera del rango seguro de centavos.");
+  return BigInt(value);
+}
+function sumCents(values: Array<number | string>) { return values.reduce<bigint>((sum, value) => sum + cents(value), BigInt(0)); }
+function safeCents(value: bigint) {
+  const number = Number(value);
+  if (!Number.isSafeInteger(number)) throw new Error("Importe fuera del rango seguro de centavos.");
+  return number;
+}
+
 export function saleStage(status: string): SalesStage {
   return status === "CANCELLED" ? "CANCELLED" : "DELIVERED";
 }
@@ -152,8 +163,8 @@ export function orderToCollect(status: string, tickets: StageTicket[]) {
   if (status !== "CONFIRMED" && status !== "COMPLETED") return false;
   const active = tickets.filter((ticket) => ticket.logistics_status !== "CANCELLED_INCIDENT");
   if (!active.length) return false;
-  const due = active.reduce((sum, ticket) => sum + Number(ticket.agreed_total_cents), 0);
-  const paid = active.reduce((sum, ticket) => sum + Number(ticket.paid_principal_cents), 0);
+  const due = sumCents(active.map(ticket => ticket.agreed_total_cents));
+  const paid = sumCents(active.map(ticket => ticket.paid_principal_cents));
   return paid < due;
 }
 
@@ -257,7 +268,7 @@ export function compareIndexRows(a: SalesFeedIndexRow, b: SalesFeedIndexRow, asc
   const left = new Date(a.occurred_at).getTime();
   const right = new Date(b.occurred_at).getTime();
   if (left !== right) return ascending ? left - right : right - left;
-  if (a.id === b.id) return 0;
+  if (a.id === b.id) return a.kind.localeCompare(b.kind);
   return ascending ? (a.id < b.id ? -1 : 1) : a.id < b.id ? 1 : -1;
 }
 
@@ -314,15 +325,15 @@ export type OrderPaymentInput = {
 
 export function orderPayment(input: OrderPaymentInput) {
   const active = input.tickets.filter((ticket) => ticket.logistics_status !== "CANCELLED_INCIDENT");
-  const due = active.reduce((sum, ticket) => sum + Number(ticket.agreed_total_cents), 0);
-  const paidActive = active.reduce((sum, ticket) => sum + Number(ticket.paid_principal_cents), 0);
-  const paidAll = input.tickets.reduce((sum, ticket) => sum + Number(ticket.paid_principal_cents), 0);
+  const due = sumCents(active.map(ticket => ticket.agreed_total_cents));
+  const paidActive = sumCents(active.map(ticket => ticket.paid_principal_cents));
+  const paidAll = sumCents(input.tickets.map(ticket => ticket.paid_principal_cents));
   const badges: PaymentBadge[] = [];
 
   if (input.stage === "CANCELLED") {
     badges.push({ label: "Cancelada", tone: "neutral", icon: "ban" });
     if (input.refundedCents > 0) {
-      badges.push({ label: input.refundedCents >= paidAll ? "Reembolsado" : "Reembolso parcial", tone: "neutral", icon: "refund" });
+      badges.push({ label: cents(input.refundedCents) >= paidAll ? "Reembolsado" : "Reembolso parcial", tone: "neutral", icon: "refund" });
     } else if (paidAll > 0) {
       badges.push({ label: "Pago sin reembolsar", tone: "warning", icon: "alert" });
     }
@@ -345,5 +356,11 @@ export function orderPayment(input: OrderPaymentInput) {
   const weeks = input.planWeeks ?? input.requestedWeeks;
   const plan = weeks ? `Plan semanal ${weeks} sem.` : "Pago completo";
   const methodText = methodLabels.length ? `${plan} - ${methodLabels.join(" + ")}` : `${plan} - Sin pagos registrados`;
-  return { badges, methodText, dueCents: due, paidCents: paidActive };
+  return { badges, methodText, dueCents: safeCents(due), paidCents: safeCents(paidActive) };
+}
+
+/** Quoted CSV cells also neutralize spreadsheet formulas in user-entered names. */
+export function salesCsvCell(value: string) {
+  const safe = /^(\s*[=+@-]|[\t\r\n])/.test(value) ? `'${value}` : value;
+  return `"${safe.replace(/"/g, '""')}"`;
 }

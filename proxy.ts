@@ -10,6 +10,13 @@ export async function proxy(request: NextRequest) {
     target.port = "";
     return NextResponse.redirect(target, 308);
   }
+  if (request.nextUrl.pathname.startsWith("/seguimiento/")) {
+    const response = NextResponse.next({ request });
+    response.headers.set("Cache-Control", "private, no-store, max-age=0");
+    response.headers.set("Referrer-Policy", "no-referrer");
+    response.headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
+    return response;
+  }
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
   if (!url || !publishableKey) return NextResponse.next({ request });

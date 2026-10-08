@@ -12,6 +12,7 @@ function normalizePhone(value: FormDataEntryValue | null) {
 function revalidate(id?: string) {
   revalidatePath("/admin/clientes");
   revalidatePath("/admin/vender");
+  revalidatePath("/admin/vender/nueva");
   if (id) revalidatePath(`/admin/clientes/${id}`);
 }
 

@@ -11,6 +11,8 @@ import { sendTelegramMessage } from "../../../lib/telegram/send";
 
 function revalidate(orderId?: string) {
   revalidatePath("/admin/pedidos");
+  revalidatePath("/admin/vender");
+  revalidatePath("/admin/vender/[id]", "page");
   if (orderId) revalidatePath(`/admin/pedidos/${orderId}`);
   revalidatePath("/admin/inventario");
   revalidatePath("/admin/clientes");

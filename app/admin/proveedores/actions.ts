@@ -9,6 +9,7 @@ function revalidate() {
   revalidatePath("/admin/proveedores");
   revalidatePath("/admin/compras/nueva");
   revalidatePath("/admin/vender");
+  revalidatePath("/admin/vender/nueva");
   revalidatePath("/admin/balance");
 }
 

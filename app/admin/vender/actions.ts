@@ -25,6 +25,8 @@ const RECEIPT_EXTENSIONS: Record<string, string> = {
 
 function revalidate() {
   revalidatePath("/admin/vender");
+  revalidatePath("/admin/vender/nueva");
+  revalidatePath("/admin/vender/[id]", "page");
   revalidatePath("/admin/balance");
   revalidatePath("/admin/inventario");
   revalidatePath("/admin/productos");

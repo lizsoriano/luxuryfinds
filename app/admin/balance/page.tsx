@@ -134,7 +134,7 @@ export default async function BalancePage({ searchParams }: { searchParams: Prom
           <Button type="submit" variant="secondary" size="small">
             Aplicar
           </Button>
-          <Button href="/admin/vender" size="small">
+          <Button href="/admin/vender/nueva" size="small">
             Registrar movimiento
           </Button>
         </div>
@@ -211,7 +211,7 @@ export default async function BalancePage({ searchParams }: { searchParams: Prom
             <EmptyState
               title="Aún no tienes registros creados en esta fecha."
               description="Registra una venta o un gasto desde la pantalla Vender para verlo reflejado aquí."
-              href="/admin/vender"
+              href="/admin/vender/nueva"
               action="Ir a Vender"
             />
           )}
@@ -272,7 +272,7 @@ export default async function BalancePage({ searchParams }: { searchParams: Prom
             <EmptyState
               title="Aún no tienes registros creados en esta fecha."
               description="Abre una caja desde la pantalla Vender para empezar a registrar cierres."
-              href="/admin/vender"
+              href="/admin/vender/nueva"
               action="Ir a Vender"
             />
           )}

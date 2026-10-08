@@ -6,7 +6,7 @@ import { PageHeader } from "../../../components/ui/PageHeader";
 export const dynamic = "force-dynamic";
 
 const READY = [
-  { title: "Vender", href: "/admin/vender", text: "Venta de mostrador: toca productos, arma la canasta y cobra. Descuenta inventario al confirmar." },
+  { title: "Vender", href: "/admin/vender/nueva", text: "Venta de mostrador: toca productos, arma la canasta y cobra. Descuenta inventario al confirmar." },
   { title: "Balance", href: "/admin/balance", text: "Ingresos menos gastos del periodo, con el historial de cada movimiento y los cierres de caja." },
   { title: "Inventario", href: "/admin/inventario", text: "Existencias, costo del inventario y alertas de stock bajo o agotado." },
   { title: "Productos", href: "/admin/productos", text: "Alta de productos básicos, con variantes o con medidas, con hasta 3 imágenes." },

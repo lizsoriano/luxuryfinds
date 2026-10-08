@@ -54,7 +54,7 @@ export default async function EnCaminoPage() {
             <h2>Productos en camino{ownProducts && !ownProducts.unavailable ? ` (${ownProducts.total})` : ""}</h2>
           </div>
           <span style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <Button href="/admin/vender" variant="secondary" size="small">Vender</Button>
+            <Button href="/admin/vender/nueva" variant="secondary" size="small">Vender</Button>
             <Button href="/admin/productos/en-camino" size="small">Administrar / marcar recibido</Button>
           </span>
         </div>

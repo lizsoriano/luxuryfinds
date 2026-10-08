@@ -1,61 +1,34 @@
+import Link from "next/link";
 import { Card } from "../../../components/ui/Card";
+import { Button } from "../../../components/ui/Button";
 import { PageHeader } from "../../../components/ui/PageHeader";
-import { businessToday } from "../../../lib/format";
-import { listPosVariants } from "../../../lib/supabase/admin-catalog";
-import { getOpenCashSession } from "../../../lib/supabase/admin-commerce";
-import { listClientOptions, listSupplierOptions } from "../../../lib/supabase/admin-contacts";
-import { SellTerminal } from "./SellTerminal";
+import { SALES_FILTERS, countForFilter, resolveSalesFilter } from "../../../lib/sales-feed";
+import { listSales, SALES_MIGRATION, SALES_PAGE_SIZE } from "../../../lib/supabase/sales";
+import { SalesTable } from "./SalesTable";
 
 export const dynamic = "force-dynamic";
-
-export default async function SellPage() {
-  let variants;
-  let clients: Array<{ id: string; label: string }> = [];
-  let suppliers: Array<{ id: string; label: string }> = [];
-  let session = null;
-
-  try {
-    [variants, clients, suppliers, session] = await Promise.all([
-      listPosVariants(),
-      listClientOptions(),
-      listSupplierOptions(),
-      getOpenCashSession(),
-    ]);
-  } catch (error) {
-    return (
-      <main className="admin-content">
-        <PageHeader eyebrow="GESTIONA TU NEGOCIO" title="Vender" />
-        <Card className="admin-panel" style={{ marginTop: 24 }}>
-          <p className="form-message form-error" role="alert">
-            No pudimos preparar el punto de venta: {error instanceof Error ? error.message : "error desconocido"}
-          </p>
-          <p className="admin-hint" style={{ marginTop: 12 }}>
-            Si es la primera vez que abres esta pantalla, aplica
-            database/migrations/002_business_management.sql en el editor SQL de Supabase.
-          </p>
-        </Card>
-      </main>
-    );
-  }
-
-  return (
-    <main className="admin-content">
-      <PageHeader
-        eyebrow="GESTIONA TU NEGOCIO"
-        title="Vender"
-        description="Venta directa de mostrador. No sustituye a los pedidos con plan de pagos: esto es para cobrar en el momento y descontar inventario al instante."
-      />
-      <SellTerminal
-        variants={variants}
-        clients={clients}
-        suppliers={suppliers}
-        session={
-          session
-            ? { id: session.id, opening_amount_cents: session.opening_amount_cents, opened_at: session.opened_at }
-            : null
-        }
-        today={businessToday()}
-      />
-    </main>
-  );
+export default async function SalesPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const params = await searchParams;
+  const text = (key: string) => typeof params[key] === "string" ? params[key] as string : "";
+  const search = text("q").slice(0, 160);
+  const filter = resolveSalesFilter(text("estado")).key;
+  const ascending = text("orden") === "asc";
+  const page = Math.max(1, Math.min(100000, Math.floor(Number(text("pagina")) || 1)));
+  const href = (changes: Record<string, string>) => {
+    const query = new URLSearchParams({ q: search, estado: filter, orden: ascending ? "asc" : "desc", pagina: String(page), ...changes });
+    return `/admin/vender?${query}`;
+  };
+  let result;
+  try { result = await listSales({ search, filter, ascending, page }); }
+  catch (error) { return <main className="admin-content"><PageHeader title="Ventas" action={<Button href="/admin/vender/nueva">Nueva venta</Button>} /><Card className="admin-panel"><p className="form-message form-error" role="alert">No pudimos cargar las ventas: {error instanceof Error ? error.message : "Intenta nuevamente."}</p></Card></main>; }
+  const pages = Math.max(1, Math.ceil(result.total / SALES_PAGE_SIZE));
+  return <main className="admin-content sales-page">
+    <PageHeader title={<>Ventas <span className="sales-open">{result.counts.open} abiertas</span></>} action={<Button href="/admin/vender/nueva">Nueva venta</Button>} />
+    <div className="sales-shortcuts"><Link href="/admin/vender/nueva?accion=caja">Abrir caja</Link><Link href="/admin/vender/nueva?accion=gasto">Nuevo gasto</Link></div>
+    {result.fallback && <p className="form-message" role="status">Vista de respaldo: las 1,000 ventas y 1,000 pedidos más recientes. Aplica {SALES_MIGRATION} para activar la lista completa.</p>}
+    <Card className="admin-panel sales-list-card"><div className="sales-toolbar"><form action="/admin/vender" className="sales-search"><label htmlFor="sales-search" className="sr-only">Buscar ventas</label><input id="sales-search" name="q" placeholder="Buscar" defaultValue={search} maxLength={160} /><input type="hidden" name="estado" value={filter} /><input type="hidden" name="orden" value={ascending ? "asc" : "desc"} /><button type="submit" className="button button-secondary button-small">Buscar</button></form>
+    <nav className="sales-chips" aria-label="Estado de las ventas">{SALES_FILTERS.map(f => <Link key={f.key} href={href({ estado: f.key, pagina: "1" })} className={`sales-chip ${filter === f.key ? "is-active" : ""}`} aria-current={filter === f.key ? "page" : undefined}>{f.label} <span>{countForFilter(result.counts, f.key)}</span></Link>)}</nav></div>
+    {result.records.length ? <SalesTable key={`${filter}-${search}-${page}-${ascending}`} records={result.records} dateHref={href({ orden: ascending ? "desc" : "asc", pagina: "1" })} ascending={ascending} /> : <div className="sales-empty"><div className="sales-empty-icon" aria-hidden="true">↗</div><h2>{result.counts.total ? "No encontramos ventas" : "Tu próxima venta empieza aquí"}</h2><p>{result.counts.total ? "Prueba otro estado o cambia tu búsqueda." : "Tus ventas de mostrador y pedidos aparecerán juntos para que puedas darles seguimiento."}</p><Button href={result.counts.total ? "/admin/vender" : "/admin/vender/nueva"}>{result.counts.total ? "Ver todas las ventas" : "Nueva venta"}</Button></div>}
+    <footer className="sales-footer"><span>Mostrando {result.records.length ? (page - 1) * SALES_PAGE_SIZE + 1 : 0}–{result.records.length ? (page - 1) * SALES_PAGE_SIZE + result.records.length : 0} ventas de {result.total}</span><nav aria-label="Páginas de ventas">{page > 1 && <Link href={href({ pagina: String(page - 1) })}>Anterior</Link>}<span>Página {page} de {pages}</span>{page < pages && <Link href={href({ pagina: String(page + 1) })}>Siguiente</Link>}</nav><Link href="/admin/ayuda">Ayuda con tus ventas</Link></footer></Card>
+  </main>;
 }
