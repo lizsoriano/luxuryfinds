@@ -55,3 +55,14 @@ function reset(options={}) {
 test('password assignment requires owner and excludes staff accounts',async()=>{for(const options of [{unauthorized:true},{staff:true}]){const h=reset(options);assert.ok((await h.action({},form({id:'client',password:'initial-password'}))).error);assert.equal(h.updates.length,0);}});
 test('existing phone-only client gets stable Auth identity; password is not logged',async()=>{const h=reset();assert.ok((await h.action({},form({id:'client',password:'initial-password'}))).success);assert.equal(h.updates[0].email,'client-client@access.luxuryfinds.invalid');assert.ok(!JSON.stringify(h.logs).includes('initial-password'));});
 test('password reset preserves existing email identity',async()=>{const h=reset({email:'existing@example.com'});assert.ok((await h.action({},form({id:'client',password:'initial-password'}))).success);assert.ok(!('email' in h.updates[0]));});
+const cookiesPolicy = load('lib/supabase/session-cookies.ts', {});
+test('remember me sets 30-day cookies; unchecked uses session cookies',()=>{
+  const options={path:'/',sameSite:'lax',maxAge:40000000,expires:new Date('2030-01-01')};
+  const remembered=cookiesPolicy.sessionCookieOptions(options,true);
+  assert.equal(remembered.maxAge,30*24*60*60);assert.ok(!('expires' in remembered));
+  const session=cookiesPolicy.sessionCookieOptions(options,false);
+  assert.ok(!('maxAge' in session));assert.ok(!('expires' in session));assert.equal(session.path,'/');
+});
+test('remember policy preserves sign-out cookie deletion',()=>{
+  const removal={path:'/',maxAge:0};assert.equal(cookiesPolicy.sessionCookieOptions(removal,true),removal);assert.equal(cookiesPolicy.sessionCookieOptions(removal,false),removal);
+});

@@ -30,7 +30,7 @@ export async function loginAction(
 
   let employee = false;
   try {
-    const supabase = await createServerSupabaseClient();
+    const supabase = await createServerSupabaseClient(formData.get("remember") === "on");
     const credentials = { email: identifier, password };
     const { data, error } = await supabase.auth.signInWithPassword(credentials);
     if (error) return { error: "Los datos de acceso no son correctos." };
@@ -67,7 +67,7 @@ export async function phoneLoginAction(
     if (staff.data) return invalid;
     const { data: account, error: accountError } = await admin.auth.admin.getUserById(client.id);
     if (accountError || !account.user?.email) return invalid;
-    const supabase = await createServerSupabaseClient();
+    const supabase = await createServerSupabaseClient(formData.get("remember") === "on");
     const { error: signInError } = await supabase.auth.signInWithPassword({ email: account.user.email, password });
     if (signInError) return invalid;
   } catch {
