@@ -614,7 +614,7 @@ export async function listSellableVariants(limit = SELLABLE_CAP): Promise<Sellab
  */
 export type PosVariant = SellableVariant & { inTransit: boolean };
 
-const POS_SELECT = `id, name, product_kind, is_active,
+const POS_SELECT = `id, name, product_kind, is_active, catalog_type,
          categories(name),
          product_variants(id, name, sku, barcode, unit_label, price_cents, cost_cents, is_active),
          product_images(storage_key, sort_order)`;
@@ -670,6 +670,7 @@ export async function listPosVariants(): Promise<PosVariant[]> {
     name: string;
     product_kind: ProductListRow["product_kind"];
     is_active: boolean;
+    catalog_type: "ON_DEMAND" | "IMMEDIATE";
     categories: unknown;
     product_variants: Array<{
       id: string;
@@ -694,7 +695,12 @@ export async function listPosVariants(): Promise<PosVariant[]> {
     rows.push(...((data ?? []) as unknown as Row[]));
   }
 
-  const variants: PosVariant[] = rows.flatMap((row) => {
+  // Vender is for Entrega inmediata and "en camino" merchandise only. Online-order
+  // products (ON_DEMAND, e.g. the synced catalogue) never show here, even if a
+  // quantity was typed into their stock.
+  const variants: PosVariant[] = rows
+    .filter((row) => row.catalog_type === "IMMEDIATE" || inTransitIds.has(row.id))
+    .flatMap((row) => {
     const image = [...(row.product_images ?? [])].sort((a, b) => a.sort_order - b.sort_order)[0];
     const categoryName = relationName(row.categories);
     const inTransit = inTransitIds.has(row.id);
