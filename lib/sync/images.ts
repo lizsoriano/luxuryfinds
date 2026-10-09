@@ -42,6 +42,41 @@ const IMAGE_EXTENSIONS: Record<string, string> = {
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
+/** Longest side and WebP quality of the stored copy (Supabase Free storage is 1 GB). */
+const OPTIMIZED_MAX_SIDE = 900;
+const OPTIMIZED_QUALITY = 74;
+/** Keep the re-encoded copy only when it is at least this much smaller. */
+const OPTIMIZED_MIN_SAVING = 0.25;
+
+type SharpFactory = (input: Buffer) => {
+  rotate(): ReturnType<SharpFactory>;
+  resize(options: { width: number; height: number; fit: "inside"; withoutEnlargement: boolean }): ReturnType<SharpFactory>;
+  webp(options: { quality: number; effort: number }): ReturnType<SharpFactory>;
+  toBuffer(): Promise<Buffer>;
+};
+
+/**
+ * Re-encodes a downloaded storefront photo as a smaller WebP (max 900 px). Purely an
+ * optimisation: if sharp is unavailable in the runtime, the bytes are not a readable
+ * image, or the result is not clearly smaller, the ORIGINAL bytes are stored unchanged.
+ */
+async function optimizeImage(bytes: Uint8Array, extension: string): Promise<{ bytes: Uint8Array; extension: string }> {
+  try {
+    const mod = (await import("sharp")) as unknown as { default?: SharpFactory } & SharpFactory;
+    const sharp: SharpFactory = mod.default ?? mod;
+    const input = Buffer.from(bytes);
+    const out = await sharp(input)
+      .rotate()
+      .resize({ width: OPTIMIZED_MAX_SIDE, height: OPTIMIZED_MAX_SIDE, fit: "inside", withoutEnlargement: true })
+      .webp({ quality: OPTIMIZED_QUALITY, effort: 4 })
+      .toBuffer();
+    if (out.length > 0 && out.length <= input.length * (1 - OPTIMIZED_MIN_SAVING)) return { bytes: out, extension: "webp" };
+  } catch {
+    // fall through to the original
+  }
+  return { bytes, extension };
+}
+
 /** Storefront CDNs sometimes answer a generic content-type; the path decides then. */
 const EXTENSION_BY_SUFFIX: Record<string, string> = {
   jpg: "jpg",
@@ -117,10 +152,11 @@ export async function copyProductImages(
       if (!extension) {
         return { error: `${url}: el servidor respondió "${contentType || "sin tipo"}", que no es una imagen` };
       }
+      const optimized = await optimizeImage(bytes, extension);
       // Same key shape as the admin panel's uploadImages(): <product id>/<uuid>.
-      const key = `${productId}/${crypto.randomUUID()}.${extension}`;
-      const { error } = await storage.from(PRODUCT_IMAGE_BUCKET).upload(key, bytes, {
-        contentType: `image/${extension === "jpg" ? "jpeg" : extension}`,
+      const key = `${productId}/${crypto.randomUUID()}.${optimized.extension}`;
+      const { error } = await storage.from(PRODUCT_IMAGE_BUCKET).upload(key, optimized.bytes, {
+        contentType: `image/${optimized.extension === "jpg" ? "jpeg" : optimized.extension}`,
         upsert: false,
       });
       if (error) return { error: `${url}: ${error.message}` };
