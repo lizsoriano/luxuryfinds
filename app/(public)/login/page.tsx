@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Card } from "../../../components/ui/Card";
-import { SectionLabel } from "../../../components/ui/SectionLabel";
 import { hasPublicSupabaseEnv } from "../../../lib/supabase/env";
 import { createServerSupabaseClient } from "../../../lib/supabase/server";
 import { LoginForm } from "./LoginForm";
@@ -20,5 +19,5 @@ export default async function LoginPage({
     if (data.user) redirect(next.startsWith("/") && !next.startsWith("//") ? next : "/cuenta");
   }
 
-  return <main className="login-page"><div className="login-intro"><SectionLabel>BIENVENIDA DE NUEVO</SectionLabel><h1>Todo lo que elegiste,<em>en un solo lugar.</em></h1><p>Consulta tus compras, pagos, entregas y novedades de Luxury Finds.</p><div className="login-quote"><span>“</span><p>Tu cuenta privada te acompaña desde el primer pago hasta la entrega.</p></div></div><Card className="login-card"><div className="login-card-heading"><span>LF</span><h2>Inicia sesión</h2><p>Entra con tu celular y contraseña, o con tu correo y contraseña.</p></div>{hasPublicSupabaseEnv() ? <><LoginForm next={next}/><p className="auth-switch-link">¿No tienes cuenta? <Link href={`/crear-cuenta?next=${encodeURIComponent(next)}`}>Crea una</Link></p></> : <p className="form-message form-error" role="alert">La conexión segura no está configurada en este entorno.</p>}<p className="login-help">¿Necesitas ayuda para entrar?<br/><Link href="/contacto">Escríbenos por Telegram</Link></p></Card></main>;
+  return <main className="login-page"><div className="login-visual"><div className="login-photo-frame"><img src="/images/login-shopping.png" alt="Selección de ropa, bolsos y accesorios de Luxury Finds en un carrito de compras" width={1189} height={1590} fetchPriority="high" /></div></div><Card className="login-card"><div className="login-card-heading"><span>LF</span><h2>Inicia sesión</h2><p>Entra con tu celular y contraseña, o con tu correo y contraseña.</p></div>{hasPublicSupabaseEnv() ? <><LoginForm next={next}/><p className="auth-switch-link">¿No tienes cuenta? <Link href={`/crear-cuenta?next=${encodeURIComponent(next)}`}>Crea una</Link></p></> : <p className="form-message form-error" role="alert">La conexión segura no está configurada en este entorno.</p>}<p className="login-help">¿Necesitas ayuda para entrar?<br/><Link href="/contacto">Escríbenos por Telegram</Link></p></Card></main>;
 }
