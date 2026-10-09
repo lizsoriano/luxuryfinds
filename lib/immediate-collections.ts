@@ -11,7 +11,7 @@ export const IMMEDIATE_COLLECTIONS: ImmediateCollection[] = [
   { id: "tazas", label: "Tazas", terms: ["taza", "mug"] },
   { id: "loncheras", label: "Loncheras", terms: ["lonchera", "lunch bag", "lunchbox", "lunch box"] },
   { id: "calcetines", label: "Calcetines", terms: ["calcetín", "calcetin", "calcetines", "sock"] },
-  { id: "bath-and-body", label: "Bath and Body", terms: ["bath and body", "bath & body", "b&bw", "bbw"], brandTerms: ["bath", "b&bw", "bbw"] },
+  { id: "bath-and-body", label: "Bath and Body", terms: ["bath and body", "bath & body", "b&bw", "bbw"], categorySlugs: ["bath-and-body"], brandTerms: ["bath", "b&bw", "bbw"] },
   { id: "victoria-secret", label: "Victoria Secret", terms: ["victoria secret", "victoria's secret", "victorias secret"], brandTerms: ["victoria secret", "victoria's secret", "victorias secret"] },
   { id: "hombre", label: "Hombre", terms: ["hombre", "caballero", "men's", "mens", "for men"], categorySlugs: ["hombre", "caballero"] },
   { id: "termos", label: "Termos", terms: ["termo", "botella", "tumbler", "bottle", "owala", "stanley"], categorySlugs: ["termos-y-botellas"], brandTerms: ["owala", "stanley"] },
