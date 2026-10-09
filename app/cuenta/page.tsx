@@ -1,54 +1,73 @@
-import { PaymentProofForm } from "../../components/account/PaymentProofForm";
-import { RefundRequestForm } from "../../components/account/RefundRequestForm";
-import { AccountPurchases } from "../../components/account/AccountPurchases";
-import { Button } from "../../components/ui/Button";
-import { Card } from "../../components/ui/Card";
+import Link from "next/link";
+import { Icon } from "../../components/account/AccountIcons";
+import { ActionCard, AppointmentWhen, MoneySummary, PurchaseCard, SectionHead } from "../../components/account/AccountUi";
+import { TelegramCard } from "../../components/account/TelegramCard";
+import { Badge } from "../../components/ui/Badge";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { PageHeader } from "../../components/ui/PageHeader";
-import { StatCard } from "../../components/ui/StatCard";
-import { getAccountData } from "../../lib/supabase/account";
-import { createServerSupabaseClient } from "../../lib/supabase/server";
+import { formatDateShort, nextActions } from "../../lib/account-view";
+import { getAccountOverview } from "../../lib/supabase/account";
 import { getTelegramLinkUrl } from "../../lib/telegram/env";
 
 export const dynamic = "force-dynamic";
 
-const money = (cents: number) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: 0 }).format(cents / 100);
-const date = (value: string) => new Intl.DateTimeFormat("es-MX", { dateStyle: "medium", timeZone: "America/Mazatlan" }).format(new Date(value));
+const TODAY = new Intl.DateTimeFormat("es-MX", { weekday: "long", day: "numeric", month: "long", timeZone: "America/Mazatlan" });
 
 export default async function AccountPage() {
   let data;
-  try { data = await getAccountData(); }
-  catch { return <main className="account-content"><EmptyState title="No pudimos cargar tu cuenta" description="Intenta de nuevo en unos minutos."/></main>; }
-  if (!data.profile) return <main className="account-content"><EmptyState title="Tu perfil aún no está listo" description="Tu acceso existe en Supabase Auth, pero falta crear tu perfil de cliente. Contacta a Luxury Finds."/></main>;
+  try { data = await getAccountOverview(); }
+  catch (error) { console.error("[cuenta]", error); return <main className="account-content acc-content"><EmptyState title="No pudimos cargar tu cuenta" description="Intenta de nuevo en unos minutos." /></main>; }
+  if (!data.profile || !data.overview) return <main className="account-content acc-content"><EmptyState title="Tu perfil aún no está listo" description="Tu acceso existe, pero falta crear tu perfil de clienta. Escríbenos y lo resolvemos." href="/contacto" action="Contactar" /></main>;
 
-  const reservationSection = data.reservations.length > 0 && <section className="proof-section"><Card className="proof-card"><p className="micro-label">MIS APARTADOS</p><h2>Fecha límite para liquidar</h2>{data.reservations.slice(0, 8).map((reservation) => { const ticket = data.tickets.find((item) => item.id === reservation.ticket_id); return <div key={reservation.id}><strong>{ticket?.product_name_snapshot ?? "Apartado"}</strong><p>{reservation.status === "ACTIVE" ? `Liquida antes del ${date(reservation.expires_at)}. Si no se liquida, el producto pasa a disponible.` : reservation.status === "PAID" ? "Liquidado: tu apartado permanece reservado." : "Apartado cerrado: el producto pasa a disponible. Consulta con Luxury Finds la resolución de tus abonos."}</p></div>; })}</Card></section>;
-  const tickets = data.tickets;
-  const activeTickets = [...tickets, ...data.salePurchases].filter((ticket) => !["DELIVERED", "CANCELLED_INCIDENT"].includes(ticket.logistics_status));
-  const nextInstallment = data.installments.find((item) => ["PENDING", "PARTIAL", "OVERDUE"].includes(item.status));
-  const unread = data.notifications.filter((item) => !item.read_at).length;
-  const activePlan = data.plans.find((plan) => plan.status === "ACTIVE");
-  const planInstallments = activePlan ? data.installments.filter((item) => item.payment_plan_id === activePlan.id) : [];
-  const paidInstallments = planInstallments.filter((item) => item.status === "PAID").length;
-  const progress = planInstallments.length ? Math.round((paidInstallments / planInstallments.length) * 100) : 0;
-  const firstName = data.profile.first_name;
+  const { overview, profile } = data;
+  const actions = nextActions(overview);
+  const active = overview.purchases.filter((p) => p.state === "ACTIVE" || p.state === "PENDING");
+  const plan = overview.plans.find((p) => p.status === "ACTIVE");
+  const appointment = overview.appointments[0];
+  const telegramUrl = data.telegramLinked ? null : getTelegramLinkUrl(data.user.id);
+  const hasPurchases = overview.purchases.length > 0;
 
-  // Telegram order-confirmation linking. Read independently of getAccountData()
-  // (which doesn't select this column) via the client's own session, respecting
-  // RLS. Only shown once TELEGRAM_BOT_USERNAME/TELEGRAM_BOT_TOKEN are configured
-  // and the account isn't linked yet — see lib/telegram/env.ts.
-  let telegramLinkUrl: string | null = null;
-  try {
-    const supabase = await createServerSupabaseClient();
-    const { data: telegramRow } = await supabase
-      .schema("luxury_finds")
-      .from("clients")
-      .select("telegram_chat_id")
-      .eq("id", data.user.id)
-      .maybeSingle();
-    if (!telegramRow?.telegram_chat_id) telegramLinkUrl = getTelegramLinkUrl(data.user.id);
-  } catch {
-    telegramLinkUrl = null;
-  }
+  return <main className="account-content acc-content">
+    <header className="acc-hello">
+      <p className="acc-eyebrow">{TODAY.format(new Date())}</p>
+      <h1>Hola, {profile.first_name.split(/\s+/)[0]}</h1>
+    </header>
 
-  return <main className="account-content"><PageHeader eyebrow={new Intl.DateTimeFormat("es-MX", { dateStyle: "full", timeZone: "America/Mazatlan" }).format(new Date()).toUpperCase()} title={<>Hola, {firstName} <em>♡</em></>} description="Aquí tienes un resumen de tus compras y próximos pasos."/>{telegramLinkUrl && <Card className="telegram-card" style={{ marginBottom: 24 }}><p>Vincula Telegram para recibir la confirmación de tus pedidos ahí también.</p><Button href={telegramLinkUrl} variant="secondary" size="small">Vincular Telegram</Button></Card>}<section className="account-stats"><StatCard label="TU PRÓXIMO PAGO" value={nextInstallment ? money(nextInstallment.amount_cents - nextInstallment.paid_cents) : "Sin pendientes"} note={nextInstallment ? date(nextInstallment.due_at) : "Estás al corriente"} tone="rose"/><StatCard label="COMPRAS ACTIVAS" value={String(activeTickets.length)} note={data.deliveries.some((item) => item.status === "BOOKED") ? "Tienes una entrega programada" : "Consulta el avance abajo"}/><StatCard label="NOTIFICACIONES" value={String(unread)} note={unread ? "Tienes novedades pendientes" : "No hay nuevas hoy"}/></section>{reservationSection}<section className="account-grid"><div><div className="section-heading"><div><p className="micro-label">MIS COMPRAS</p><h2>En movimiento</h2></div><Button href="/cuenta/compras" variant="secondary" size="small">Ver todas</Button></div>{activeTickets.length ? <AccountPurchases tickets={activeTickets}/> : <EmptyState title="Aún no tienes compras activas" description="Cuando tengas un pedido, podrás seguir aquí cada paso." href="/catalogo" action="Ver catálogo"/>}</div><Card className="account-side-card"><p className="micro-label">PROGRESO DEL PLAN</p><h2>{activePlan ? "Ya falta poco." : "Sin plan activo."}</h2><div className="progress-ring" style={{ background: `conic-gradient(var(--rose) ${progress}%, var(--cream) 0)` }}><span>{progress}<small>%</small></span></div><p>{activePlan ? `Has completado ${paidInstallments} de ${planInstallments.length} pagos de tu plan.` : "No tienes pagos semanales pendientes."}</p><div className="mini-progress"><span style={{ width: `${progress}%` }}/></div><Button href="/cuenta/pagos" variant="secondary" fullWidth>Ver mis pagos</Button></Card></section>{tickets.length > 0 && <section className="proof-section"><Card className="proof-card"><div className="section-heading"><div><p className="micro-label">COMPROBANTES</p><h2>Reportar un pago</h2></div></div><PaymentProofForm tickets={tickets.map(({ id, ticket_number }) => ({ id, ticket_number }))}/></Card><Card className="proof-card"><div className="section-heading"><div><p className="micro-label">REEMBOLSOS</p><h2>Solicitar un reembolso</h2></div></div><RefundRequestForm tickets={tickets.map(({ id, ticket_number }) => ({ id, ticket_number }))}/></Card></section>}</main>;
+    <ActionCard action={actions[0]} primary />
+    {actions.length > 1 && <div className="acc-action-list">{actions.slice(1, 4).map((action) => <ActionCard key={action.title} action={action} />)}</div>}
+
+    {hasPurchases && <MoneySummary money={overview.money} />}
+
+    <section className="acc-section">
+      <SectionHead eyebrow="Mis compras" title={active.length ? "Dónde están tus pedidos" : "Tus pedidos"} href="/cuenta/compras" linkText="Ver todas" />
+      {active.length
+        ? <div className="acc-stack">{active.slice(0, 3).map((purchase) => <PurchaseCard key={purchase.key} purchase={purchase} />)}</div>
+        : hasPurchases
+          ? <p className="acc-muted acc-card acc-pad">No tienes pedidos en camino. Tus compras anteriores están en <Link className="acc-inline-link" href="/cuenta/compras">Mis compras</Link>.</p>
+          : <EmptyState title="Aún no tienes compras" description="Cuando compres, aquí verás tu pedido, lo que has pagado y dónde está en cada momento." href="/catalogo" action="Ver catálogo" />}
+      {active.length > 3 && <Link className="acc-link acc-more-link" href="/cuenta/compras">Ver {active.length - 3} pedido(s) más <Icon name="arrow" size={16} /></Link>}
+    </section>
+
+    {appointment && <section className="acc-section">
+      <SectionHead eyebrow="Entregas" title={appointment.pending ? "Tu solicitud de entrega" : "Tu próxima cita"} href="/cuenta/entregas" linkText={appointment.pending ? "Ver solicitud" : "Ver citas"} />
+      <div className={`acc-card acc-appointment${appointment.pending ? " is-pending" : " is-confirmed"}`}>
+        <Icon name={appointment.pending ? "clock" : "calendar"} size={24} />
+        <div><Badge tone={appointment.pending ? "warning" : "success"}>{appointment.pending ? "Solicitud enviada · esperando confirmación" : "Cita confirmada · puedes pasar"}</Badge><strong><AppointmentWhen startsAt={appointment.startsAt} endsAt={appointment.endsAt} /></strong><span>{appointment.locationName} · {appointment.deliveryType === "DIDI" ? "Envío por DiDi" : "Recoges en el punto"}</span><small>{appointment.lines.map((l) => l.name).join(", ")}</small></div>
+      </div>
+    </section>}
+
+    {plan && <section className="acc-section">
+      <SectionHead eyebrow="Plan de pagos" title={plan.productName} href="/cuenta/pagos#plan" linkText="Ver calendario" />
+      <div className="acc-card acc-pad acc-plan-mini">
+        <p><strong>{plan.paidCount} de {plan.installments.length}</strong> pagos completos · {plan.modeLabel}</p>
+        <div className="acc-bar" role="progressbar" aria-valuenow={plan.progress} aria-valuemin={0} aria-valuemax={100} aria-label="Avance del plan"><span style={{ width: `${plan.progress}%` }} /></div>
+      </div>
+    </section>}
+
+    {overview.notifications.length > 0 && <section className="acc-section">
+      <SectionHead eyebrow="Avisos" title="Lo más reciente" href="/cuenta/notificaciones" linkText="Ver todos" />
+      <ul className="acc-card acc-notice-list">{overview.notifications.slice(0, 3).map((n) => <li key={n.id} className={n.read_at ? "" : "is-unread"}><span className="acc-dot" aria-hidden="true" /><div><strong>{n.title}</strong><p>{n.body}</p><small>{formatDateShort(n.created_at)}</small></div></li>)}</ul>
+    </section>}
+
+    {telegramUrl && <TelegramCard href={telegramUrl} />}
+  </main>;
 }

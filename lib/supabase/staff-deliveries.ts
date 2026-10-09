@@ -5,6 +5,7 @@ import { productImageUrl } from "./admin-catalog";
 import { PAYMENT_PROOF_BUCKET } from "./admin-cobranza";
 import { allocateCollection } from "./delivery-math";
 import { adminDb, adminStorage, logActivity } from "./business";
+import { getBookingRequestStates } from "./delivery-requests";
 import { STAFF_DELIVERIES_UNAVAILABLE_MESSAGE, STAFF_SELECTS, isMissingStaffDeliverySchema } from "./staff-schema";
 
 // ---------------------------------------------------------------------------
@@ -38,6 +39,8 @@ export type DeliveryItem = {
   reportedPendingCents: number;
   /** False when the ticket left "Entrega programada" or was cancelled: it cannot be handed over. */
   deliverable: boolean;
+  /** A client's request the owner has not confirmed yet (migration 020): never handed over. */
+  pendingConfirmation: boolean;
 };
 
 const NOT_DELIVERABLE_FINANCIAL = new Set(["CANCELLED_INCIDENT", "REFUND_PENDING", "REFUNDED"]);
@@ -56,6 +59,8 @@ export type ScheduledDelivery = {
   locationAddress: string | null;
   items: DeliveryItem[];
   balanceCents: number;
+  /** "Por confirmar por la dueña": shown, never delivered (migration 020). */
+  pendingConfirmation: boolean;
 };
 
 type BookingRaw = {
@@ -109,11 +114,14 @@ async function loadDeliveries(bookings: BookingRaw[]): Promise<ScheduledDelivery
   const db = adminDb();
   const ticketIds = [...new Set(bookings.map((booking) => booking.ticket_id))];
   const clientIds = [...new Set(bookings.map((booking) => booking.client_id))];
-  const [ticketsResult, clientsResult, proofsResult] = await Promise.all([
+  const [ticketsResult, clientsResult, proofsResult, requestStates] = await Promise.all([
     db.from("tickets").select(STAFF_SELECTS.tickets).in("id", ticketIds),
     db.from("clients").select(STAFF_SELECTS.clients).in("id", clientIds),
     db.from("payment_proofs").select(STAFF_SELECTS.reportedProofs).in("ticket_id", ticketIds).eq("status", "PENDING"),
+    // null without migration 020: every BOOKED row is a confirmed appointment.
+    getBookingRequestStates(bookings.map((booking) => booking.id)),
   ]);
+  const isPending = (bookingId: string) => requestStates?.get(bookingId)?.confirmedAt === null;
   if (ticketsResult.error) throw new Error(ticketsResult.error.message);
   if (clientsResult.error) throw new Error(clientsResult.error.message);
 
@@ -138,7 +146,8 @@ async function loadDeliveries(bookings: BookingRaw[]): Promise<ScheduledDelivery
     const ticket = tickets.get(booking.ticket_id);
     if (!ticket) continue;
     const day = businessDayOf(slot.startsAt);
-    const key = `${booking.client_id}|${slot.locationId}|${day}`;
+    const pending = isPending(booking.id);
+    const key = `${booking.client_id}|${slot.locationId}|${day}|${pending ? "pending" : "confirmed"}`;
     let group = groups.get(key);
     if (!group) {
       const client = clients.get(booking.client_id);
@@ -155,6 +164,7 @@ async function loadDeliveries(bookings: BookingRaw[]): Promise<ScheduledDelivery
         locationAddress: slot.locationAddress,
         items: [],
         balanceCents: 0,
+        pendingConfirmation: pending,
       };
       groups.set(key, group);
     }
@@ -178,7 +188,8 @@ async function loadDeliveries(bookings: BookingRaw[]): Promise<ScheduledDelivery
       financialStatus: String(ticket.financial_status ?? ""),
       reportedPendingCents: reported.get(String(ticket.id)) ?? 0,
       deliverable:
-        ticket.logistics_status === "DELIVERY_SCHEDULED" && !NOT_DELIVERABLE_FINANCIAL.has(String(ticket.financial_status ?? "")),
+        !pending && ticket.logistics_status === "DELIVERY_SCHEDULED" && !NOT_DELIVERABLE_FINANCIAL.has(String(ticket.financial_status ?? "")),
+      pendingConfirmation: pending,
     });
     group.balanceCents += balance;
   }
@@ -266,7 +277,9 @@ export async function getDeliveryDetail(bookingId: string): Promise<{
     const candidateSlot = slotOf(candidate);
     return candidateSlot && candidateSlot.locationId === slot.locationId && businessDayOf(candidateSlot.startsAt) === day;
   });
-  const [delivery] = await loadDeliveries(sameDelivery);
+  // Confirmed and still-pending bookings of the same day form separate groups: take the anchor's.
+  const groups = await loadDeliveries(sameDelivery);
+  const delivery = groups.find((group) => group.items.some((item) => item.bookingId === bookingId)) ?? null;
   return { delivery: delivery ? { ...delivery, id: bookingId } : null, receipt: null, confirmAvailable };
 }
 
@@ -392,6 +405,7 @@ export async function confirmStaffDelivery(input: ConfirmDeliveryInput): Promise
   for (const ticket of input.tickets) {
     const item = byTicket.get(ticket.ticketId);
     if (!item) return { ok: false, error: "Uno de los artículos ya no pertenece a esta entrega. Recarga la entrega." };
+    if (item.pendingConfirmation) return { ok: false, error: `La cita del ticket ${item.ticketNumber} está por confirmar por la dueña: todavía no se entrega.` };
     if (!item.deliverable) return { ok: false, error: `El ticket ${item.ticketNumber} ya no está listo para entregarse.` };
     if (!Number.isInteger(ticket.balanceCents) || ticket.balanceCents < 0) return { ok: false, error: "Saldo no válido. Recarga la entrega." };
     selected.push({ ...item, balanceCents: ticket.balanceCents });

@@ -29,6 +29,17 @@ export function ProductCard({ product }: { product: CatalogProduct }) {
       </button>
       <a className="product-card-link" href={`/catalogo/${product.id}`}>
         <div className="product-photo">
+          {product.isNew ? (
+            <span className="product-new-badge">
+              New!
+              <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden>
+                <circle cx="12" cy="12" r="4.6" fill="#f6b73c" />
+                <g stroke="#f6b73c" strokeWidth="2.2" strokeLinecap="round">
+                  <path d="M12 1.8v3M12 19.2v3M1.8 12h3M19.2 12h3M4.8 4.8l2.1 2.1M17.1 17.1l2.1 2.1M4.8 19.2l2.1-2.1M17.1 6.9l2.1-2.1" />
+                </g>
+              </svg>
+            </span>
+          ) : null}
           {product.imageUrl ? (
             <img src={product.imageUrl} alt={product.name} loading="lazy" />
           ) : (

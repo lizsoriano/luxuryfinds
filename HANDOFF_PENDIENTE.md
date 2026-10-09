@@ -58,6 +58,7 @@ Documento pensado para que **otra IA o persona retome el proyecto sin releer tod
 | 012 | `admin_users.role` ('OWNER'/'EMPLOYEE') + `phone` | roles del panel de empleado | aplicada |
 | 013 | `delivery_confirmations(+items)`, `confirm_staff_delivery()`, columnas de `payment_proofs`, `inventory_movements.evidence_storage_key`, GRANT sobre `payments` | confirmar entregas del empleado | aplicada |
 | 014 | `shipments`, `shipment_lines`, `shipment_receipts`, vistas `purchase_item_shipping`/`shipment_overview`, funciones `create_shipment`…`receive_shipment` | Compras con shopper, Fase 3 (embarques y recepción) | aplicada |
+| 020 | `delivery_bookings.visit_id/confirmed_at/confirmed_by_admin_id/rejected_at/rejected_by_admin_id`, trigger `trg_delivery_bookings_visit` + índice `uq_delivery_slot_visit_leader` (sustituyen a `uq_delivery_slot_active`), `confirm_delivery_request`, `reject_delivery_request`, nuevas `client_book_delivery`/`client_cancel_delivery` | "Solicitudes por confirmar": la clienta aparta UNA ventana de 10 min por visita y solo la dueña la confirma (Agenda). Sin ella, todo sigue como 019. Pruebas: `tests/delivery-requests.pglite.mjs` | pendiente de aplicar (2026-10-08) |
 
 **Todas las migraciones 000–014 están aplicadas** (verificado con GET crudo el 2026-10-04). **Siguiente número libre: 015.** Si se vuelven a correr en otra base, el orden es 010 → 011 → 012 → 013 → 014 (cada una se detiene sola si falta una anterior). No renumeres migraciones ya fusionadas.
 
