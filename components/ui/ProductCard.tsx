@@ -31,13 +31,10 @@ export function ProductCard({ product }: { product: CatalogProduct }) {
         <div className="product-photo">
           {product.isNew ? (
             <span className="product-new-badge">
-              New!
-              <svg width="13" height="13" viewBox="0 0 24 24" aria-hidden>
-                <circle cx="12" cy="12" r="4.6" fill="#f6b73c" />
-                <g stroke="#f6b73c" strokeWidth="2.2" strokeLinecap="round">
-                  <path d="M12 1.8v3M12 19.2v3M1.8 12h3M19.2 12h3M4.8 4.8l2.1 2.1M17.1 17.1l2.1 2.1M4.8 19.2l2.1-2.1M17.1 6.9l2.1-2.1" />
-                </g>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true">
+                <path d="m12 2 2.8 7.2L22 12l-7.2 2.8L12 22l-2.8-7.2L2 12l7.2-2.8Z" />
               </svg>
+              <span>New in</span>
             </span>
           ) : null}
           {product.imageUrl ? (
