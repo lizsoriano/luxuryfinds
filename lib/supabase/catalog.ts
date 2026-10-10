@@ -68,21 +68,18 @@ function firstRelation<T>(value: Relation<T>): T | null {
 
 const TONES = ["rose", "cream", "wine", "beige"] as const;
 
-/** Calendar day (YYYY-MM-DD) of an instant in the shop's time zone (La Paz, UTC-7, no DST). */
-function businessDay(instant: Date) {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mazatlan", year: "numeric", month: "2-digit", day: "2-digit" }).format(instant);
-}
-
 /**
- * "New!" = a product someone uploaded by hand from the panel (created_by_admin_id is
- * set; the store syncs and bulk imports leave it empty so they never flood the badge)
- * on the current business day. Every public page is force-dynamic, so this is
- * recomputed on each request and the badge disappears by itself at midnight.
+ * "New!" = a product created in the last 24 hours, whether the owner uploaded it by
+ * hand from the panel or the daily catalogue sync added it. Every public page is
+ * force-dynamic, so this is recomputed on each request: each product keeps the badge
+ * for 24 hours from the moment it was uploaded and then loses it by itself.
  */
+const NEW_BADGE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 function isUploadedToday(row: ProductRow) {
-  if (!row.created_by_admin_id || !row.created_at) return false;
-  const created = new Date(row.created_at);
-  return !Number.isNaN(created.getTime()) && businessDay(created) === businessDay(new Date());
+  if (!row.created_at) return false;
+  const age = Date.now() - new Date(row.created_at).getTime();
+  return Number.isFinite(age) && age >= 0 && age < NEW_BADGE_WINDOW_MS;
 }
 
 function mapProductRow(
