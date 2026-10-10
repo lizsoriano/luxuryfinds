@@ -16,6 +16,7 @@ export default async function CheckoutPage() {
       <div className="shell">
         <SectionLabel>ÚLTIMO PASO</SectionLabel>
         <h1>Confirmar pedido</h1>
+        <p className="checkout-intro">Revisa tu selección antes de confirmar. Ya casi es tuya.</p>
         <CheckoutClient />
       </div>
     </main>

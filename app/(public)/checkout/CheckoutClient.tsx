@@ -96,25 +96,32 @@ export function CheckoutClient() {
   }
 
   return (
-    <Card>
+    <Card className="checkout-order-card">
+      <div className="checkout-order-heading"><h2>Tu pedido</h2><span>{items.reduce((sum, item) => sum + item.quantity, 0)} artículos</span></div>
       <div className="checkout-summary-list">
         {items.map((item) => (
           <div className="checkout-summary-row" key={`${item.productId}-${item.variantId ?? "base"}`}>
-            <span>
-              {item.name}
-              <small>{item.brand} · x{item.quantity}</small>
-            </span>
-            <span>{money(item.priceCents * item.quantity)}</span>
+            <div className="checkout-product">
+              <span className="checkout-product-photo">
+                {item.imageUrl ? (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img src={item.imageUrl} alt={item.name} />
+                ) : <span aria-hidden="true">LF</span>}
+              </span>
+              <div><span className="checkout-product-name">{item.name}</span><small>{item.brand} · Cantidad: {item.quantity}</small></div>
+            </div>
+            <strong className="checkout-product-price">{money(item.priceCents * item.quantity)}</strong>
           </div>
         ))}
       </div>
+      <div className="checkout-order-footer">
       <div className="checkout-total">
         <span>Total</span>
         <strong>{money(subtotalCents)}</strong>
       </div>
 
       {weeklyPlanAvailable && (
-        <div style={{ marginTop: 18 }}>
+        <div className="checkout-payment-options">
           <span className="field" style={{ marginBottom: 8, display: "block" }}>
             Modalidad de pago
           </span>
@@ -159,14 +166,15 @@ export function CheckoutClient() {
       )}
 
       {error && <p className="form-message form-error" role="alert">{error}</p>}
-      <div style={{ marginTop: 18 }}>
+      <div className="checkout-confirm-action">
         <Button type="button" variant="primary" fullWidth disabled={pending} onClick={handleConfirm}>
           {pending ? "Confirmando…" : "Confirmar pedido"} <span aria-hidden>→</span>
         </Button>
       </div>
-      <p className="login-help" style={{ marginTop: 14 }}>
+      <p className="checkout-back-link">
         <Link href="/carrito">← Volver al carrito</Link>
       </p>
+      </div>
     </Card>
   );
 }
