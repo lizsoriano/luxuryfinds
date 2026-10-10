@@ -36,5 +36,6 @@ export function LoginForm({ next }: { next: string }) {
       {error && <p className="form-message form-error" role="alert">{error}</p>}
       <Button type="submit" fullWidth disabled={busy}>{busy ? "Entrando…" : phone ? "Entrar con mi celular" : "Entrar a mi cuenta"} <span aria-hidden>→</span></Button>
     </form>
+    <p className="auth-switch-link">¿Aún no tienes cuenta? <Link href={`/crear-cuenta?next=${encodeURIComponent(next)}`}>Regístrate</Link></p>
   </div>;
 }
