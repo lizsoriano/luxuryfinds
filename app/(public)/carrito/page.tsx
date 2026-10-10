@@ -20,6 +20,8 @@ export default function CartPage() {
     let cancelled = false;
     getWeeklyPlanOptionAction(items).then((response) => {
       if (!cancelled) setWeeklyPlanAvailable(response.eligible);
+    }).catch(() => {
+      if (!cancelled) setWeeklyPlanAvailable(false);
     });
     return () => {
       cancelled = true;
@@ -33,6 +35,7 @@ export default function CartPage() {
       <div className="shell">
         <SectionLabel>TU SELECCIÓN</SectionLabel>
         <h1>Carrito de compras</h1>
+        <p className="cart-intro">Tus favoritos, un paso más cerca de ti.</p>
 
         {items.length === 0 ? (
           <div className="cart-empty">
@@ -45,7 +48,8 @@ export default function CartPage() {
           </div>
         ) : (
           <div className="cart-grid">
-            <Card>
+            <Card className="cart-products-panel">
+              <div className="cart-panel-heading"><h2>Tu selección</h2><span>{items.reduce((sum, item) => sum + item.quantity, 0)} artículos</span></div>
               <div className="cart-table-wrap">
                 <div className="cart-table" role="table" aria-label="Productos en el carrito">
                   <div className="cart-table-row cart-table-head" role="row">
@@ -84,6 +88,8 @@ export default function CartPage() {
                       <span role="cell" className="cart-col-center cart-col-price">{money(item.priceCents)}</span>
                       <span role="cell" className="cart-col-center cart-cell-quantity">
                         <span className="cart-mobile-label" aria-hidden="true">Cantidad</span>
+                        <div className="cart-quantity-control">
+                        <button type="button" aria-label={`Disminuir cantidad de ${item.name}`} disabled={item.quantity <= 1} onClick={() => updateQuantity(item.productId, item.variantId, item.quantity - 1)}>−</button>
                         <input
                           className="cart-qty-input"
                           type="number"
@@ -95,6 +101,8 @@ export default function CartPage() {
                             if (Number.isFinite(next) && next > 0) updateQuantity(item.productId, item.variantId, next);
                           }}
                         />
+                        <button type="button" aria-label={`Aumentar cantidad de ${item.name}`} onClick={() => updateQuantity(item.productId, item.variantId, item.quantity + 1)}>+</button>
+                        </div>
                       </span>
                       <span role="cell" className="cart-col-right cart-cell-subtotal"><span className="cart-mobile-label" aria-hidden="true">Subtotal</span><strong>{money(item.priceCents * item.quantity)}</strong></span>
                     </div>
@@ -104,7 +112,8 @@ export default function CartPage() {
             </Card>
 
             <Card className="cart-totals">
-              <h2>Totales del carrito</h2>
+              <span className="cart-summary-eyebrow">CASI ES TUYO</span>
+              <h2>Resumen de tu compra</h2>
               <div className="cart-totals-row">
                 <span>Subtotal</span>
                 <strong>{money(subtotalCents)}</strong>
@@ -113,6 +122,7 @@ export default function CartPage() {
                 <span>Total</span>
                 <strong>{money(subtotalCents)}</strong>
               </div>
+              <p className="cart-summary-note">Revisa las opciones de entrega y pago en el siguiente paso.</p>
 
               {weeklyPlanAvailable && (
                 <p className="cart-plan-banner">
@@ -124,8 +134,8 @@ export default function CartPage() {
               <Button href="/checkout" variant="primary" fullWidth>
                 Proceder al pago <span aria-hidden>→</span>
               </Button>
-              <p className="login-help" style={{ marginTop: 14 }}>
-                <Link href="/catalogo">Seguir viendo el catálogo</Link>
+              <p className="cart-continue">
+                <Link href="/catalogo">← Seguir explorando</Link>
               </p>
             </Card>
           </div>
