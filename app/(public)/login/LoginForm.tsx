@@ -23,5 +23,6 @@ export function LoginForm({ next }: { next: string }) {
     {state.error && <p className="form-message form-error" role="alert">{state.error}</p>}
     <Button type="submit" disabled={pending}>{pending ? "Ingresando…" : "Ingresar"}</Button>
     <Link className="login-forgot-link" href="/recuperar-acceso">Olvidé mi contraseña</Link>
+    <p className="auth-switch-link">¿Aún no tienes cuenta? <Link href={`/crear-cuenta?next=${encodeURIComponent(next)}`}>Crear cuenta</Link></p>
   </form>;
 }
