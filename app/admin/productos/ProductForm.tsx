@@ -385,7 +385,7 @@ export function ProductForm({
           <Select
             id="product-catalog-type"
             name="catalogType"
-            label="Disponibilidad"
+            label="Tipo de catálogo"
             value={catalogType}
             onChange={(event) => setCatalogType(event.target.value === "ON_DEMAND" ? "ON_DEMAND" : "IMMEDIATE")}
           >
@@ -446,22 +446,15 @@ export function ProductForm({
           </label>
 
           {catalogType === "IMMEDIATE" ? (
-            <label className="admin-switch field-wide" htmlFor="product-in-transit">
-              <input
-                id="product-in-transit"
-                type="checkbox"
-                name="inTransit"
-                defaultChecked={product?.in_transit ?? defaults?.inTransit ?? false}
-              />
-              <span>
-                Viene en camino (ya lo pedí)
-                <small>
-                  Mercancía que ya compraste y todavía no llega a la tienda. Aparece en Inventario › Productos en
-                  camino y no se puede vender (ni en Vender ni en el sitio) hasta que la marques como recibida.
-                  Requiere database/migrations/008_products_in_transit.sql aplicada en Supabase.
-                </small>
-              </span>
-            </label>
+            <Select
+              id="product-in-transit"
+              name="inTransit"
+              label="Disponibilidad"
+              defaultValue={(product?.in_transit ?? defaults?.inTransit ?? false) ? "on" : "off"}
+            >
+              <option value="off">Entrega inmediata</option>
+              <option value="on">En camino</option>
+            </Select>
           ) : null}
 
           {isEdit && product ? (

@@ -55,7 +55,7 @@ const WEEKLY_PLAN_MIGRATION_WARNING =
  * instead of dropped. (in_transit = false is dropped silently: it is exactly
  * what every product already is before the migration.)
  */
-const IN_TRANSIT_MIGRATION_BLOCKED = `No se guardó: para marcar mercancía “en camino” primero aplica ${IN_TRANSIT_MIGRATION_FILE} en el editor SQL de Supabase. Si ya la tienes en la tienda, desmarca “Viene en camino”.`;
+const IN_TRANSIT_MIGRATION_BLOCKED = `No se guardó: para marcar mercancía “en camino” primero aplica ${IN_TRANSIT_MIGRATION_FILE} en el editor SQL de Supabase. Si ya la tienes en la tienda, elige “Entrega inmediata”.`;
 
 type OptionalColumn = { column: string; value: unknown; warning: string; blockIfMissing?: string };
 
