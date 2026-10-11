@@ -46,6 +46,7 @@ const ACTION_TITLE: Record<BulkActionKind, string> = {
   restore: "Restaurar",
   category: "Cambiar categoría",
   brand: "Cambiar marca",
+  transit: "Cambiar a En camino",
 };
 
 type Props = {
@@ -159,6 +160,9 @@ export function BulkActionBar({ scope, selection, totalResults, morePages, filte
           </button>
           <button type="button" className="button button-secondary button-small" onClick={() => open("show")}>
             Mostrar
+          </button>
+          <button type="button" className="button button-secondary button-small" onClick={() => open("transit")}>
+            Cambiar a En camino
           </button>
           <details className="bulk-more" ref={moreRef}>
             <summary className="button button-secondary button-small">Más acciones</summary>
@@ -665,6 +669,7 @@ function ActionExplanation({ kind, scope }: { kind: BulkActionKind; scope: BulkS
     restore: `Vuelven al inventario activo, ocultos: márcalos como visibles cuando quieras.${perProduct}`,
     category: `Cambia la categoría de los productos seleccionados.${perProduct}`,
     brand: `Cambia la marca de los productos seleccionados (solo marcas que ya existen).${perProduct}`,
+    transit: `Pasan de Entrega inmediata a Productos en camino: mercancía tuya que todavía no llega. Salen del sitio hasta que los marques como recibidos. Se omiten los de catálogo por pedido, los archivados y los que ya estaban en camino.${perProduct}`,
   };
   return text[kind] ? <p className="admin-hint">{text[kind]}</p> : null;
 }

@@ -432,6 +432,7 @@ const LEDGER_ACTION: Record<BulkActionKind, string> = {
   restore: "PRODUCT_BULK_RESTORED",
   category: "PRODUCT_BULK_CATEGORY",
   brand: "PRODUCT_BULK_BRAND",
+  transit: "PRODUCT_BULK_IN_TRANSIT",
 };
 
 type Claim = { kind: "claimed"; logId: number } | { kind: "replay"; result: BulkChunkResult } | { kind: "busy" } | { kind: "failed"; error: string };
@@ -559,7 +560,7 @@ export type BulkChunkInput = {
   brandName?: unknown;
 };
 
-const KINDS: readonly BulkActionKind[] = ["price", "hide", "show", "archive", "restore", "category", "brand"];
+const KINDS: readonly BulkActionKind[] = ["price", "hide", "show", "archive", "restore", "category", "brand", "transit"];
 
 export async function runBulkChunk(input: BulkChunkInput): Promise<BulkChunkResult> {
   const { adminId, kind } = input;
@@ -638,7 +639,9 @@ export async function runBulkChunk(input: BulkChunkInput): Promise<BulkChunkResu
           ? await runVisibility(ids, kind === "show", adminId, key)
           : kind === "archive" || kind === "restore"
             ? await runActive(ids, kind === "restore", adminId, key)
-            : await runColumn(ids, kind === "category" ? "category_id" : "brand_id", (kind === "category" ? categoryId : brand?.id) as string, adminId, key);
+            : kind === "transit"
+              ? await runTransit(ids, adminId, key)
+              : await runColumn(ids, kind === "category" ? "category_id" : "brand_id", (kind === "category" ? categoryId : brand?.id) as string, adminId, key);
     result = outcome.result;
     changedIds = outcome.changedIds;
   } catch (error) {
@@ -777,6 +780,60 @@ async function runActive(ids: string[], active: boolean, adminId: string, key: s
       entityId: id,
       previousData: { is_active: !active, is_public: active ? false : products.get(id)?.is_public },
       newData: { is_active: active },
+    })),
+  );
+  return { result: done(changedIds.length, 0, omitted, errors), changedIds };
+}
+
+/**
+ * "Cambiar a En camino": owned stock (Entrega inmediata) that has not arrived yet.
+ * Only active IMMEDIATE products that are not already in transit change; the
+ * update itself is guarded by those three columns, so nothing else is touched.
+ */
+async function runTransit(ids: string[], adminId: string, key: string): Promise<BatchOutcome> {
+  const products = await loadProducts(ids);
+  const omitted: BulkItemIssue[] = [];
+  const errors: BulkItemIssue[] = [];
+  const candidates: LoadedProduct[] = [];
+  for (const id of ids) {
+    const product = products.get(id);
+    if (!product) omitted.push({ id, name: "Producto", reason: MISSING_REASON });
+    else if (!product.is_active) omitted.push({ id, name: product.name, reason: "Producto archivado: restáuralo primero." });
+    else candidates.push(product);
+  }
+
+  const changedIds: string[] = [];
+  for (const batch of chunkList(candidates, STOCK_BATCH_SIZE)) {
+    const { data, error } = await adminDb()
+      .from("products")
+      .update({ in_transit: true, updated_at: new Date().toISOString() })
+      .in(
+        "id",
+        batch.map((product) => product.id),
+      )
+      .eq("catalog_type", "IMMEDIATE")
+      .eq("is_active", true)
+      .eq("in_transit", false)
+      .select("id");
+    if (error) {
+      for (const product of batch) errors.push({ id: product.id, name: product.name, reason: describeError(new Error(error.message), "No se pudo guardar.") });
+      continue;
+    }
+    const written = new Set(((data ?? []) as Array<{ id: string }>).map((row) => row.id));
+    for (const product of batch) {
+      if (written.has(product.id)) changedIds.push(product.id);
+      else omitted.push({ id: product.id, name: product.name, reason: "Es de catálogo por pedido o ya estaba en camino." });
+    }
+  }
+  await insertItemLogs(
+    adminId,
+    key,
+    changedIds.map((id) => ({
+      action: "PRODUCT_MARKED_IN_TRANSIT",
+      entityType: "products",
+      entityId: id,
+      previousData: { in_transit: false },
+      newData: { in_transit: true },
     })),
   );
   return { result: done(changedIds.length, 0, omitted, errors), changedIds };

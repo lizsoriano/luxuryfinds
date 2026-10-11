@@ -20,7 +20,7 @@ export type BulkFilter = {
   stockFilter?: "all" | "out" | "low";
 };
 
-export type BulkActionKind = "price" | "hide" | "show" | "archive" | "restore" | "category" | "brand";
+export type BulkActionKind = "price" | "hide" | "show" | "archive" | "restore" | "category" | "brand" | "transit";
 
 /** Most units one bulk action may touch (a selection by filter beyond this is refused). */
 export const BULK_SELECTION_CAP = 5000;
@@ -34,6 +34,7 @@ export const BULK_CHUNK_SIZE: Record<BulkActionKind, number> = {
   restore: 250,
   category: 250,
   brand: 250,
+  transit: 250,
 };
 
 /** Ids per preview / count call. */
