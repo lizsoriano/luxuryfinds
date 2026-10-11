@@ -50,7 +50,7 @@ const policies = [
     "Envíos nacionales desde $150 MXN mediante Estafeta. Entregas en La Paz desde $45 MXN, según ubicación. El envío se cobra por separado del producto. Confirma el costo de tu destino antes de pagar.",
     "Villas del Encanto: de 4:00 p. m. a 8:00 p. m. Indeco: de 8:30 a. m. a 12:00 p. m.",
     "Tec de La Paz: aproximadamente de 1:00 p. m. a 9:00 p. m.; puede variar dependiendo del día.",
-    "Zona Centro, cerca de la Normal Urbana: únicamente a las 9:00 a. m. o a las 5:00 p. m. Son dos horarios puntuales, no un intervalo continuo.",
+    "Zona Centro, cerca de la Normal Urbana: únicamente a las 9:00 a. m., 12:00 p. m., 2:30 p. m. o 4:30 p. m. Son cuatro horarios puntuales, no un intervalo continuo.",
     "Confirma con anticipación el día, horario y punto por WhatsApp o mensaje directo y espera nuestra confirmación antes de acudir. Un horario publicado no equivale a una cita confirmada.",
     "Para DiDi Entregas proporciona dirección, nombre y teléfono correctos y mantente pendiente para recibir al mensajero. Los costos adicionales por entregas fallidas o reprogramaciones corren por cuenta de la compradora. Si hay una incidencia durante el traslado, avísanos para darle seguimiento con la plataforma.",
     "Solicitar o reprogramar una entrega no amplía el mes de resguardo. Coordina con tiempo suficiente para concretarla dentro del plazo.",
