@@ -114,5 +114,5 @@ export const POLICY_DELIVERY_POINTS = [
   { name: "Villas del Encanto", hours: "De 4:00 p. m. a 8:00 p. m." },
   { name: "Indeco", hours: "De 8:30 a. m. a 12:00 p. m." },
   { name: "Tec de La Paz", hours: "Aproximadamente de 1:00 p. m. a 9:00 p. m. (puede variar según el día)" },
-  { name: "Zona Centro, cerca de la Normal Urbana", hours: "Únicamente a las 9:00 a. m. o a las 5:00 p. m." },
+  { name: "Zona Centro, cerca de la Normal Urbana", hours: "Únicamente a las 9:00 a. m., 12:00 p. m., 2:30 p. m. o 4:30 p. m." },
 ];
