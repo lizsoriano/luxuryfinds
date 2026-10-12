@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { runSync } from "../../../../lib/sync/engine";
-import { matchesSyncCronSecret, hasSyncCronSecret } from "../../../../lib/sync/env";
+import { AUTO_SYNC_ENABLED, matchesSyncCronSecret, hasSyncCronSecret } from "../../../../lib/sync/env";
 import { SYNC_SOURCES, type SyncSource, type SyncType } from "../../../../lib/sync/types";
 import { processReservationExpiry } from "../../../../lib/supabase/incoming-reservations";
 
@@ -91,6 +91,11 @@ async function handle(request: NextRequest) {
   if (!dryRun) {
     try { reservations = await processReservationExpiry(8000); }
     catch (error) { reservations = { error: error instanceof Error ? error.message : "No se pudieron revisar los apartados." }; }
+  }
+  if (!AUTO_SYNC_ENABLED) {
+    // Automatic sync is stopped (lib/sync/env.ts): only the reservation expiry above ran.
+    const failed = Boolean(reservations && "error" in reservations);
+    return NextResponse.json({ ok: !failed, syncPaused: true, reservations, runs: [] }, { status: failed ? 500 : 200 });
   }
   const maxPages = Number(params.get("maxPages")) || undefined;
   // Escape hatch for the checkpoint described in lib/sync/cursor.ts: forces the

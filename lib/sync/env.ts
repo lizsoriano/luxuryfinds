@@ -6,6 +6,16 @@
 // bundler refuses to ship it to the browser.
 
 /**
+ * Master switch for the AUTOMATIC catalogue sync: the daily Vercel cron and any
+ * external scheduler calling /api/sync/run. The owner asked to stop it on
+ * 2026-10-11. While false, that endpoint still runs its other daily job (expiring
+ * "Próximamente" reservations) but no longer reads Maw Maw or Oskin, so nothing is
+ * imported and no price moves on its own. "Sincronizar ahora" in the panel is a
+ * deliberate, manual run and is not affected. Set it back to true to resume.
+ */
+export const AUTO_SYNC_ENABLED = false;
+
+/**
  * Shared secret that authorises POST /api/sync/run. Set it in .env locally and
  * in the Vercel project's environment variables for production.
  */

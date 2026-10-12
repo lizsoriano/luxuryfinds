@@ -9,6 +9,7 @@ import { formatDateTime, formatMoney } from "../../../../lib/format";
 import { loadSyncDashboard, type SourceCard, type SyncRunRow } from "../../../../lib/sync/report";
 import { SOURCE_HOMEPAGES } from "../../../../lib/sync/types";
 import { resetSyncCursorAction, resolveMatchReviewAction, runSyncNowAction } from "./actions";
+import { AUTO_SYNC_ENABLED } from "../../../../lib/sync/env";
 import { SyncNowButton } from "./SyncNowButton";
 
 export const dynamic = "force-dynamic";
@@ -138,7 +139,7 @@ function SourcePanel({ card }: { card: SourceCard }) {
       <p className="admin-hint" style={{ margin: 0 }}>
         Última sincronización: {run ? formatDateTime(run.finished_at ?? run.started_at) : "nunca"}
         <br />
-        Próxima automática: {card.nextRunAt ? formatDateTime(card.nextRunAt) : "en cuanto corra el cron"}
+        Próxima automática: {!AUTO_SYNC_ENABLED ? "detenida" : card.nextRunAt ? formatDateTime(card.nextRunAt) : "en cuanto corra el cron"}
         <br />
         Último contacto con la tienda: {card.lastSeenAt ? formatDateTime(card.lastSeenAt) : "—"}
       </p>
@@ -205,13 +206,24 @@ export default async function SyncPage() {
       <PageHeader
         eyebrow="OPERACIÓN"
         title="Sincronización de catálogo"
-        description="Maw Maw Beauty y Oskin se leen automáticamente y se comparan contra el catálogo de Luxury Finds. El precio publicado nunca baja solo: se aplica el más alto entre los tres."
+        description={AUTO_SYNC_ENABLED
+          ? "Maw Maw Beauty y Oskin se leen automáticamente y se comparan contra el catálogo de Luxury Finds. El precio publicado nunca baja solo: se aplica el más alto entre los tres."
+          : "La lectura automática de Maw Maw Beauty y Oskin está detenida. Aquí queda el historial y puedes sincronizar a mano cuando quieras."}
         action={
           <Button href="/admin/inventario" variant="secondary" size="small">
             Volver a inventario
           </Button>
         }
       />
+
+      {!AUTO_SYNC_ENABLED ? (
+        <div className="admin-notice">
+          <strong>La sincronización automática está detenida</strong>
+          Ya no se leen Maw Maw Beauty ni Oskin cada día: no entran productos nuevos ni se actualizan precios por sí
+          solos. Los productos que ya estaban importados se quedan como están. Si alguna vez quieres actualizar, usa
+          “Sincronizar ahora” en la tienda que quieras.
+        </div>
+      ) : null}
 
       {!dashboard.ready ? (
         <div className="admin-notice">
@@ -226,8 +238,8 @@ export default async function SyncPage() {
       <section className="admin-stats">
         <StatCard
           label="INTERVALO"
-          value={`${dashboard.intervalMinutes} min`}
-          note="Cron en vercel.json; el endpoint también acepta un programador externo"
+          value={AUTO_SYNC_ENABLED ? `${dashboard.intervalMinutes} min` : "Detenida"}
+          note={AUTO_SYNC_ENABLED ? "Cron en vercel.json; el endpoint también acepta un programador externo" : "La automática está apagada; solo corre si la inicias a mano"}
         />
         <StatCard
           label="ÚLTIMA CORRIDA"
@@ -290,7 +302,7 @@ export default async function SyncPage() {
         ) : (
           <EmptyState
             title="Todavía no hay corridas"
-            description="Usa “Sincronizar ahora” en cualquiera de las dos tiendas, o espera a que el cron la ejecute."
+            description={AUTO_SYNC_ENABLED ? "Usa “Sincronizar ahora” en cualquiera de las dos tiendas, o espera a que el cron la ejecute." : "Usa “Sincronizar ahora” en cualquiera de las dos tiendas."}
           />
         )}
         {lastRun?.errors?.length ? (
