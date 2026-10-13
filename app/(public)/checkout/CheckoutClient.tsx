@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Button } from "../../../components/ui/Button";
 import { Card } from "../../../components/ui/Card";
+import { Dialog } from "../../../components/ui/Dialog";
+import { CancelOrder } from "../../../components/account/CancelOrder";
 import { EmptyState } from "../../../components/ui/EmptyState";
 import { useCart } from "../../../lib/cart/CartContext";
 import { createOrderAction, getWeeklyPlanOptionAction, type CreateOrderResult } from "./actions";
@@ -21,6 +23,8 @@ export function CheckoutClient() {
   const [weeklyPlanAvailable, setWeeklyPlanAvailable] = useState(false);
   const [paymentMode, setPaymentMode] = useState<"FULL" | "WEEKLY_PLAN">("FULL");
   const [numberOfWeeks, setNumberOfWeeks] = useState(8);
+  const [thanksOpen, setThanksOpen] = useState(false);
+  const [orderCancelled, setOrderCancelled] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,6 +57,7 @@ export function CheckoutClient() {
       }
       clear();
       setResult(response);
+      setThanksOpen(true);
     } catch {
       setError("No fue posible confirmar tu pedido. Intenta de nuevo.");
     } finally {
@@ -60,15 +65,40 @@ export function CheckoutClient() {
     }
   }
 
-  if (result) {
+  if (result && orderCancelled) {
     return (
       <Card className="checkout-confirmation">
-        <span aria-hidden style={{ fontSize: 32 }}>✓</span>
-        <h2>¡Pedido confirmado!</h2>
+        <h2>Pedido cancelado</h2>
         <p>
-          Folio <strong>{result.orderId.slice(0, 8).toUpperCase()}</strong> · {result.itemsCount} artículo(s) · {money(result.totalCents)}
+          Cancelaste el pedido <strong>{result.orderId.slice(0, 8).toUpperCase()}</strong>. No se realizó ningún cobro.
         </p>
-        <p>Nos pondremos en contacto contigo por Telegram para continuar con el pago.</p>
+        <div style={{ marginTop: 22 }}>
+          <Button href="/catalogo" variant="primary">Volver al catálogo <span aria-hidden>→</span></Button>
+        </div>
+      </Card>
+    );
+  }
+
+  if (result) {
+    const folio = result.orderId.slice(0, 8).toUpperCase();
+    return (
+      <>
+      <Dialog open={thanksOpen} title="¡Gracias por tu compra!" onClose={() => setThanksOpen(false)} className="checkout-thanks">
+        <p className="checkout-thanks-text">En breve nos comunicaremos contigo para realizar tu pago.</p>
+        <p className="checkout-thanks-folio">Folio {folio} · {result.itemsCount} artículo(s) · {money(result.totalCents)}</p>
+        <div className="checkout-thanks-actions">
+          <Button href={`/cuenta/compras/p-${result.orderId}`} variant="primary" fullWidth>Ver mi pedido <span aria-hidden>→</span></Button>
+          <Button href="/catalogo" variant="secondary" fullWidth>Seguir comprando</Button>
+        </div>
+        <CancelOrder orderId={result.orderId} onCancelled={() => setOrderCancelled(true)} />
+      </Dialog>
+      <Card className="checkout-confirmation">
+        <span aria-hidden style={{ fontSize: 32 }}>✓</span>
+        <h2>¡Gracias por tu compra!</h2>
+        <p>
+          Folio <strong>{folio}</strong> · {result.itemsCount} artículo(s) · {money(result.totalCents)}
+        </p>
+        <p>En breve nos comunicaremos contigo para realizar tu pago.</p>
         {result.telegramLinkUrl && (
           <Card className="telegram-card" style={{ marginTop: 18, textAlign: "left" }}>
             <p>Vincula Telegram para recibir la confirmación de tus pedidos ahí también.</p>
@@ -78,7 +108,9 @@ export function CheckoutClient() {
         <div style={{ marginTop: 22 }}>
           <Button href="/cuenta" variant="primary">Ir a mi cuenta <span aria-hidden>→</span></Button>
         </div>
+        <CancelOrder orderId={result.orderId} onCancelled={() => setOrderCancelled(true)} />
       </Card>
+      </>
     );
   }
 

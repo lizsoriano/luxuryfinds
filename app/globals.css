@@ -1119,3 +1119,18 @@ body{font-weight:400}
 .checkout-page .checkout-confirmation{padding:40px 28px;margin-top:30px;border-radius:24px}
 .checkout-page .checkout-confirmation p{font-size:15px;line-height:1.7}
 @media(max-width:600px){.checkout-page{padding:32px 0 60px}.checkout-intro{font-size:14px;margin-bottom:24px}.checkout-order-heading{margin-inline:20px;padding-block:22px}.checkout-order-card .checkout-summary-list{padding-inline:20px}.checkout-order-card .checkout-summary-row{grid-template-columns:minmax(0,1fr);gap:14px;padding-block:22px}.checkout-product{gap:14px;align-items:flex-start}.checkout-product-photo{flex-basis:64px;width:64px;height:80px}.checkout-product-name{font-size:15px}.checkout-product-price{justify-self:end;font-size:17px}.checkout-order-footer{padding:24px 20px}.checkout-order-card .checkout-total strong{font-size:28px}.checkout-confirm-action .button{font-size:15px}.checkout-order-heading h2{font-size:19px}}
+/* Thank-you window after placing an order, and the client's own "cancel order". */
+.checkout-thanks{text-align:center;padding:30px 28px}
+.checkout-thanks .dialog-header{justify-content:center;position:relative;padding:0 36px}
+.checkout-thanks .dialog-header h2{font-size:26px;letter-spacing:-.6px}
+.checkout-thanks .dialog-header button{position:absolute;right:-8px;top:-8px}
+.checkout-thanks-text{margin:14px 0 0;font-size:17px;line-height:1.6;color:var(--ink)}
+.checkout-thanks-folio{margin:10px 0 0;color:var(--muted);font-size:13px}
+.checkout-thanks-actions{display:grid;gap:10px;margin-top:24px}
+.checkout-thanks-actions .button{min-height:50px;border-radius:999px}
+.checkout-thanks .acc-cancel,.checkout-confirmation .acc-cancel{margin-top:16px}
+.checkout-thanks .acc-cancel-confirm,.checkout-confirmation .acc-cancel-confirm{text-align:left}
+.checkout-thanks .acc-cancel-confirm>div,.checkout-confirmation .acc-cancel-confirm>div{justify-content:center}
+.acc-pending-order{display:grid;gap:4px;border-style:dashed}
+.acc-pending-order>strong{font-size:16px}
+.acc-pending-order .acc-cancel{margin-top:6px}
