@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Icon } from "../../../../components/account/AccountIcons";
+import { CancelOrder } from "../../../../components/account/CancelOrder";
 import { AppointmentWhen, MoneyRow, ProductThumb, StatusBadge, TrackProgress } from "../../../../components/account/AccountUi";
 import { Badge } from "../../../../components/ui/Badge";
 import { CLIENT_CHANGE_RULE, PICKUP_REMINDER, formatDateShort, formatDayLong, moneyText, statusLabel } from "../../../../lib/account-view";
@@ -32,6 +33,14 @@ export default async function PurchaseDetailPage({ params }: { params: Promise<{
       <p className="acc-eyebrow">{purchase.channel} · {formatDateShort(purchase.createdAt)}</p>
       <h1>{purchase.reference}</h1>
     </header>
+
+    {purchase.kind === "ORDER" && purchase.state === "PENDING" && <section className="acc-section">
+      <div className="acc-card acc-pad acc-pending-order">
+        <strong>Tu pedido está por confirmar</strong>
+        <p className="acc-muted">En breve nos comunicaremos contigo para realizar tu pago. Mientras no lo confirmemos puedes cancelarlo aquí mismo, sin ningún cargo.</p>
+        <CancelOrder orderId={purchase.key.slice(2)} />
+      </div>
+    </section>}
 
     <section className="acc-section">
       <h2 className="acc-h2">¿Dónde está?</h2>

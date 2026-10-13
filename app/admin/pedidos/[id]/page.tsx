@@ -7,6 +7,7 @@ import { EmptyState } from "../../../../components/ui/EmptyState";
 import { PageHeader } from "../../../../components/ui/PageHeader";
 import { FINANCIAL_STATUS_LABELS, formatDateTime, formatMoney, LOGISTICS_STATUS_LABELS } from "../../../../lib/format";
 import { getOrderDetail, type OrderStatus } from "../../../../lib/supabase/admin-orders";
+import { adminDb } from "../../../../lib/supabase/business";
 import { getPurchaseLinksForTickets } from "../../../../lib/supabase/admin-purchases";
 import { hasReservationTickets } from "../../../../lib/supabase/incoming-reservations";
 import { cancelOrderAction, confirmOrderAction } from "../actions";
@@ -72,6 +73,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const purchaseLinks = await getPurchaseLinksForTickets(tickets.map((ticket) => ticket.id));
   const purchaseLink = [...purchaseLinks.values()][0] ?? null;
   const isReservation = await hasReservationTickets(tickets.map((ticket) => ticket.id));
+  // Set when the client cancelled it herself from her account (before the owner confirmed it).
+  let cancelledByClientAt: string | null = null;
+  if (order.status === "CANCELLED") {
+    const { data: log } = await adminDb().from("activity_logs").select("created_at").eq("action", "ORDER_CANCELLED_BY_CLIENT").eq("entity_type", "orders").eq("entity_id", order.id).order("id", { ascending: false }).limit(1);
+    cancelledByClientAt = (log?.[0]?.created_at as string | undefined) ?? null;
+  }
 
   return (
     <main className="admin-content">
@@ -123,6 +130,13 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           </span>
         }
       />
+
+      {cancelledByClientAt ? (
+        <div className="admin-notice" style={{ marginTop: 20 }}>
+          <strong>Cancelado por la clienta</strong>
+          Lo canceló desde su cuenta el {formatDateTime(cancelledByClientAt)}, antes de que lo confirmaras. No se generaron tickets ni se descontó inventario.
+        </div>
+      ) : null}
 
       <Card className="admin-panel" style={{ marginTop: 20 }}>
         <div className="section-heading">
